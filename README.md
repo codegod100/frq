@@ -33,20 +33,18 @@ Android is logcat.
 
 ## Running
 
-`libvidya` from Vidya's Rust/egui backend, then the app:
+Both native libraries, then the app:
 
 ```bash
 just lib
 just run
 ```
 
-Calls need one more object, `libjoltmoq`, from
-[jolt-native](https://gitlab.com/nandithebull/jolt-native). Everything else
-works without it:
-
-```bash
-just av
-```
+`just lib` builds [jolt-native](https://gitlab.com/nandithebull/jolt-native),
+which is where every shared object this client loads comes from: `libvidya`,
+the retained-tree ABI glimmer paints through, and `libjoltmoq`, the AV media
+plane. They come out of one directory, and `just run` puts that one directory
+on the loader path.
 
 `just run` is `jolt -M:frq` with `LD_LIBRARY_PATH` pointed at the built
 library. It connects to `irc.freeq.at:6697` over TLS and joins `#test`. Untick
