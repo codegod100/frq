@@ -70,6 +70,16 @@
 (defn reply-to! [m] (reset! replying-to (select-keys m [:id :from :text])))
 (defn cancel-reply! [] (reset! replying-to nil))
 
+;; The message the emoji picker is choosing for, as `{:channel :id}`, or nil
+;; when it is closed. The picker is a panel over the compose bar rather than a
+;; screen: what is being reacted to has to stay in sight.
+(defonce reacting (atom nil))
+
+;; What the picker is showing: the search box, and which group is on screen
+;; when nothing has been typed. `nil` is the popular row it opens on.
+(defonce emoji-search (atom ""))
+(defonce emoji-group (atom nil))
+
 ;; The picture being looked at full size, or nil. Vidya's tree has no overlay,
 ;; so this is a screen of its own rather than a layer over the chat.
 (defonce lightbox (atom nil))            ; {:path :url}
@@ -158,6 +168,9 @@
   [name]
   (reset! current name)
   (reset! screen :chat)
+  ;; A picker belongs to the message it was opened on; carrying it into another
+  ;; buffer would offer to react to something that is no longer on screen.
+  (reset! reacting nil)
   (swap! channels #(-> (ensure-channel % name)
                        (assoc-in [name :unread] 0)
                        (assoc-in [name :accessed] (swap! access-tick inc))))
@@ -513,16 +526,6 @@
       (reset! replying-to nil)
       (reset! draft ""))))
 
-;; The message the emoji picker is choosing for, as `{:channel :id}`, or nil
-;; when it is closed. The picker is a screen of its own — the tree backend
-;; paints in one layer, so there is no floating it over the conversation.
-(defonce reacting (atom nil))
-
-;; What the picker is showing: the search box, and which group is on screen
-;; when nothing has been typed. `nil` is the popular row it opens on.
-(defonce emoji-search (atom ""))
-(defonce emoji-group (atom nil))
-
 (defn open-picker!
   "Choose an emoji for this message. Opening it fresh — no leftover search from
   the last time, which would be a screen of somebody else's question."
@@ -549,7 +552,9 @@
   face, and by the emoji itself, so pasting one finds it."
   []
   (let [q (str/lower-case (str/trim @emoji-search))
-        group @emoji-group]
+        ;; A blank group is no group: the popular row is what nothing selected
+        ;; means, and an empty string would filter the catalog down to nothing.
+        group (when (seq (or @emoji-group "")) @emoji-group)]
     (cond
       (seq q) (->> emoji/catalog
                    (filter (fn [[glyph name _]]
