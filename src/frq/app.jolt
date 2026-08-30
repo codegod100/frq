@@ -442,8 +442,12 @@
            [reaction-row @s/current m])]]]
       ;; And the picker, when this is the message it was opened on: under the
       ;; line it is about, where the reader is already looking.
+      ;;
+      ;; The id has to exist, not merely match: a line this client sent itself
+      ;; has no msgid, and neither does a closed picker — so `nil = nil` was
+      ;; every one of those messages opening a picker of its own at startup.
       [:vbox {:key :picker :margin-bottom 4}
-       (when (= (:id m) (:id @s/reacting))
+       (when (and (:id m) (= (:id m) (:id @s/reacting)))
          [emoji-picker])]
       ;; Pictures under the line that linked them. The link stays: it is what a
       ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
