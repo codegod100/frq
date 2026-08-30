@@ -108,6 +108,8 @@ surface — that surface does not work on Android either, while the syscalls do.
   `$XDG_CACHE_HOME/frq/media`; click one to see it full size
 * Join/part notices, DMs bucketed under the sender's nick
 * Discover list, search over buffers, disconnect
+* The rooms you have opened, remembered across runs and listed in the order
+  you last used them (`$XDG_CONFIG_HOME/frq/channels.edn`)
 * Conversations listed most recently opened first
 
 ## Limits

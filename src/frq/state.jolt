@@ -71,6 +71,15 @@
 
 (defn connected? [] (some? @conn))
 
+(declare channel-order)
+
+(defn- remember-channels!
+  "Write the order out. Off the caller's thread: opening a channel should not
+  wait on a file, and the order it records is read from the same atom either
+  way."
+  []
+  (future (store/save-channels! (channel-order))))
+
 (defn normalize-channel [s]
   (let [s (str/trim (or s ""))]
     (cond (str/blank? s) ""
@@ -114,6 +123,7 @@
   (swap! channels #(-> (ensure-channel % name)
                        (assoc-in [name :unread] 0)
                        (assoc-in [name :accessed] (swap! access-tick inc))))
+  (remember-channels!)
   ;; `joining?` as well as `joined?`: the JOIN echo takes a round trip, and a
   ;; second JOIN sent in the meantime is what makes the server replay nothing.
   (let [buffer (get @channels name)]
@@ -400,6 +410,37 @@
                       (str/includes? (str/lower-case (:name %)) q)))
          (sort-by (juxt #(- (:accessed % 0)) :name))
          vec)))
+
+(defn channel-order
+  "Just the channel names, most recently opened first — what gets written to
+  disk. Buffers never opened are left out: a DM that arrived once is not a
+  place this client has been."
+  []
+  (->> (vals @channels)
+       (filter #(and (str/starts-with? (:name %) "#") (pos? (:accessed % 0))))
+       (sort-by #(- (:accessed % 0)))
+       (mapv :name)))
+
+(defn restore-channels!
+  "Bring back the channels of earlier runs, in the order they were last used.
+
+  Empty buffers, not memberships: opening one is what joins it, and a list of
+  rooms is the part worth keeping — the messages in them come from the server.
+  The tick is seeded so this run's first open still sorts above all of them."
+  []
+  (when-let [saved (seq (store/load-channels))]
+    (let [ordered (reverse saved)]                 ; oldest first, so ticks ascend
+      (swap! channels
+             (fn [m]
+               (reduce (fn [acc name]
+                         (if (contains? acc name)
+                           acc
+                           (assoc acc name {:name name :messages [] :unread 0
+                                            :joined? false :joining? false
+                                            :accessed (swap! access-tick inc)})))
+                       m
+                       ordered))))
+    (count saved)))
 
 (defn last-preview [buffer]
   (if-let [m (last (:messages buffer))]

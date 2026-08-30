@@ -365,8 +365,9 @@
       [chats-screen])))
 
 (defn -main [& _]
-  ;; Before the window: a saved sign-in decides which mode the connect screen
-  ;; opens in, and what it says.
+  ;; Before the window: the rooms this client has been in, and a saved sign-in
+  ;; deciding which mode the connect screen opens in and what it says.
+  (s/restore-channels!)
   (when (s/restore-session!)
     ;; And then it connects on its own. A remembered account has already said
     ;; what it wants; making it say so again at every launch is a click that
