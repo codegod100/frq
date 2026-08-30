@@ -73,14 +73,37 @@
      :command (str/upper-case (or (first parts) ""))
      :params (cond-> (vec (rest parts)) trailing (conj trailing))}))
 
+(defn unescape-tag
+  "An IRCv3 tag value with its escapes undone.
+
+  `\\:` is a semicolon, `\\s` a space, and `\\\\`, `\\r` and `\\n` themselves —
+  the escaping exists because `;` separates tags and a space ends them. It
+  matters for any value that can contain either: a reaction tally is
+  `emoji:nick;emoji:nick` on the wire and arrives with every one of those
+  semicolons written `\\:`, so a reader that skips this step sees one tally
+  where there were three, and counts to match."
+  [v]
+  (when v
+    (loop [in (seq v) out []]
+      (if-let [c (first in)]
+        (if (and (= \\ c) (second in))
+          (recur (drop 2 in)
+                 (conj out (case (second in)
+                             \: \;
+                             \s \space
+                             \r \return
+                             \n \newline
+                             (second in))))
+          (recur (rest in) (conj out c)))
+        (apply str out)))))
+
 (defn tag-value
-  "One IRCv3 tag's value, or nil. Tag values escape `;` and space; the ids and
-  timestamps read here contain neither, so they are taken as they come."
+  "One IRCv3 tag's value, unescaped, or nil."
   [tags key]
   (when tags
     (some (fn [pair]
             (let [[k v] (str/split pair #"=" 2)]
-              (when (= k key) v)))
+              (when (= k key) (unescape-tag v))))
           (str/split tags #";"))))
 
 (defn nick-of
