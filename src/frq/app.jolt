@@ -285,6 +285,71 @@
                    :mine (s/my-reaction? m emoji)
                    :on-click #(s/toggle-reaction! channel m emoji)}])]))
 
+(def ^:private picker-columns
+  "Emoji to a row, at the picker's own size. Narrow enough that the grid fits a
+  phone-width window, which is the width this app is laid out for."
+  9)
+
+(def ^:private picker-size 20)
+
+;; A row of chips, and the most the grid may take before it scrolls.
+
+
+(defn emoji-picker
+  "The whole set to choose from, under the message it is for.
+
+  It opens in the list itself, directly under the line it was opened on:
+  choosing a reaction is something done *to* a message, and the message has to
+  stay in front of the reader while it is chosen — which is not something a
+  panel at the bottom of the window, or a screen of its own, can promise.
+
+  It opens on the emoji people actually react with; the groups and the search
+  box are for the rest."
+  []
+  (let [shown (s/picker-emoji)
+        over (max 0 (- (count shown) s/picker-limit))
+        rows (partition-all picker-columns (take s/picker-limit shown))
+        searching? (seq (str/trim @s/emoji-search))]
+    [:vbox {:key :picker :spacing 4}
+     [:hbox {:spacing 6}
+      [:entry {:text @s/emoji-search
+               :width-request 240
+               :placeholder "Search emoji"
+               :on-change #(reset! s/emoji-search %)}]
+      [:button {:label "✕" :on-click s/close-picker!}]]
+     ;; The groups are what the search box is not: a way in for someone who has
+     ;; no word for what they want. Their first word is enough to tell them
+     ;; apart, and is what keeps them to two rows. They give way to the
+     ;; search's own answer while something is typed.
+     [:vbox {:key :groups :spacing 4}
+      (when-not searching?
+        (for [[i row] (map-indexed vector (partition-all 5 (cons nil s/emoji-groups)))]
+          [:hbox {:key i :spacing 4}
+           (for [g row]
+             [:button {:key (or g "popular")
+                       :label (if g (first (str/split g #" ")) "Popular")
+                       :kind (if (= g @s/emoji-group) :primary :normal)
+                       :on-click #(reset! s/emoji-group g)}])]))]
+     ;; The grid itself, not a scroll around it: the picker sits inside the
+     ;; message list, and a scroll within a scroll takes the wheel away from
+     ;; the conversation it is standing in. What it shows is bounded instead,
+     ;; and the search box is how you reach past that.
+     [:vbox {:key :grid :spacing 2}
+      (if (seq rows)
+        (for [[i row] (map-indexed vector rows)]
+          [:hbox {:key i :spacing 2}
+           (for [[glyph] row]
+             [:reaction {:key glyph
+                         :emoji glyph
+                         :size picker-size
+                         :count 0
+                         :on-click #(s/react-from-picker! glyph)}])])
+        [:dim-label {:label "No emoji by that name."}])]
+     ;; What was left out, said rather than silently dropped.
+     [:vbox {:key :more}
+      (when (pos? over)
+        [:dim-label {:label (str "and " over " more — keep typing to narrow it")}])]]))
+
 (defn message-row
   "One message. `prev` is the message above it, which decides whether this one
   repeats the sender.
@@ -365,6 +430,11 @@
       [:vbox {:key :reactions-row :margin-top 6 :margin-bottom 2}
        (when (and (:id m) (not (:system? m)) (seq (:reactions m)))
          [reaction-row @s/current m])]
+      ;; And the picker, when this is the message it was opened on: under the
+      ;; line it is about, where the reader is already looking.
+      [:vbox {:key :picker :margin-bottom 4}
+       (when (= (:id m) (:id @s/reacting))
+         [emoji-picker])]
       ;; Pictures under the line that linked them. The link stays: it is what a
       ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
       [:vbox {:key :images :spacing 4}
@@ -419,86 +489,6 @@
       ;; Clicking the picture closes it too — the same gesture that opened it.
       [:image {:src path :max-height 20000 :on-click #(reset! s/lightbox nil)}]]]))
 
-(def ^:private picker-columns
-  "Emoji to a row, at the picker's own size. Narrow enough that the grid fits a
-  phone-width window, which is the width this app is laid out for."
-  9)
-
-(def ^:private picker-size 20)
-
-(def ^:private picker-row-height 48)
-(def ^:private picker-grid-max 170)
-
-(defn- picker-reserve
-  "How much room the picker panel wants under the message list.
-
-  Measured rather than fixed: a panel is as tall as the grid it is showing, and
-  a reserve that assumed the tallest would leave a hole above a short one — the
-  popular row is two rows deep, a group is as deep as the grid allows."
-  []
-  (let [n (min s/picker-limit (count (s/picker-emoji)))
-        rows (quot (+ n picker-columns -1) picker-columns)
-        searching? (seq (str/trim @s/emoji-search))]
-    (+ 82                                         ; the separator and compose bar
-       44                                         ; the search box
-       (if searching? 0 88)                       ; the two rows of groups
-       (min picker-grid-max (* picker-row-height rows))
-       ;; The spacing between the panel's own rows, which is small and adds up
-       ;; — a reserve that came up short would put the compose bar under the
-       ;; bottom of the window.
-       60)))
-
-(defn emoji-picker
-  "The whole set to choose from, over the compose bar, for one message.
-
-  A panel under the conversation rather than a screen of its own: choosing a
-  reaction is something done *to* a message, and a picker that hid the message
-  would be asking about something no longer on screen. It takes the bottom of
-  the window; the list above it gives up that much room and keeps the rest.
-
-  It opens on the emoji people actually react with; the groups and the search
-  box are for the rest."
-  []
-  (let [shown (s/picker-emoji)
-        over (max 0 (- (count shown) s/picker-limit))
-        rows (partition-all picker-columns (take s/picker-limit shown))
-        searching? (seq (str/trim @s/emoji-search))]
-    [:vbox {:key :picker :spacing 4}
-     [:hbox {:spacing 6}
-      [:entry {:text @s/emoji-search
-               :width-request 240
-               :placeholder "Search emoji"
-               :on-change #(reset! s/emoji-search %)}]
-      [:button {:label "✕" :on-click s/close-picker!}]]
-     ;; The groups are what the search box is not: a way in for someone who has
-     ;; no word for what they want. Their first word is enough to tell them
-     ;; apart, and is what keeps them to two rows. They give way to the
-     ;; search's own answer while something is typed.
-     [:vbox {:key :groups :spacing 4}
-      (when-not searching?
-        (for [[i row] (map-indexed vector (partition-all 5 (cons nil s/emoji-groups)))]
-          [:hbox {:key i :spacing 4}
-           (for [g row]
-             [:button {:key (or g "popular")
-                       :label (if g (first (str/split g #" ")) "Popular")
-                       :kind (if (= g @s/emoji-group) :primary :normal)
-                       :on-click #(reset! s/emoji-group g)}])]))]
-     [:scroll {:orientation :vertical :max-height picker-grid-max}
-      (if (seq rows)
-        (for [[i row] (map-indexed vector rows)]
-          [:hbox {:key i :spacing 2}
-           (for [[glyph] row]
-             [:reaction {:key glyph
-                         :emoji glyph
-                         :size picker-size
-                         :count 0
-                         :on-click #(s/react-from-picker! glyph)}])])
-        [:dim-label {:label "No emoji by that name."}])]
-     ;; What was left out, said rather than silently dropped.
-     [:vbox {:key :more}
-      (when (pos? over)
-        [:dim-label {:label (str "and " over " more — keep typing to narrow it")}])]]))
-
 (defn chat-screen []
   (let [name @s/current
         buffer (get @s/channels name)]
@@ -522,12 +512,7 @@
                ;; move the compose bar, and should: it appears because the
                ;; reader asked to answer something, unlike the jump button,
                ;; which appears on its own and must not shift what is under it.
-               ;; And the picker's, which takes the bottom of the window
-               ;; while it is open — the list gives up that room rather than
-               ;; being painted under it.
-               :reserve (cond @s/reacting (picker-reserve)
-                              @s/replying-to 150
-                              :else 116)
+               :reserve (if @s/replying-to 150 116)
                :stick-to-bottom true
                :scroll-to-bottom @s/jump-tick
                :on-change #(reset! s/at-present? (= "end" %))}
@@ -538,17 +523,10 @@
      ;; back to the present belongs next to the thing that puts you there.
      ;; The row keeps its height whether or not the button is in it, so the
      ;; compose bar below stays where the reader last saw it.
-     ;; Choosing an emoji is the only thing being done while the picker is
-     ;; open, so it takes the row the way back to the present would have had.
-     [:vbox {:key :picker-panel}
-      (when @s/reacting [emoji-picker])]
      [:vbox {:key :jump}
-      (cond
-        ;; Not even the spacer while the picker is open: the panel is what is
-        ;; holding the compose bar's place, and a gap under it is just a gap.
-        @s/reacting nil
-        @s/at-present? [:spacer {:size 34}]
-        :else [:button {:label "↓ Jump to present" :on-click s/jump-to-present!}])]
+      (if @s/at-present?
+        [:spacer {:size 34}]
+        [:button {:label "↓ Jump to present" :on-click s/jump-to-present!}])]
      [:separator {}]
      ;; What the draft is answering, directly above where it is being typed.
      [:vbox {:key :replying}

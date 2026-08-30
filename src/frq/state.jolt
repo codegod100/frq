@@ -542,9 +542,11 @@
   emoji/groups)
 
 (def picker-limit
-  "How many glyphs one screen of the picker will show. A search that matches
-  more says so rather than laying out hundreds of pictures nobody scrolled to."
-  240)
+  "How many glyphs the picker will lay out at once — twelve rows of the nine it
+  fits across. It stands inside the message list, so what it shows pushes the
+  conversation down; a group that has more says so, and the search box is how
+  you reach the rest."
+  108)
 
 (defn picker-emoji
   "What the picker is showing right now: the popular row, one group, or
