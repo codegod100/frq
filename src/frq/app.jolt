@@ -374,9 +374,6 @@
             ;; The jump target is what a "go to message" click scrolls to.
             :scroll-here (boolean (and (:id m) (= (:id m) @s/jump-to)))}
      [(if highlit? :card :vbox) {:key :body :spacing 2 :margin 0}
-      [:vbox {:key :reply-chip}
-       (when-let [reply-to (:reply-to m)]
-         [reply-chip @s/current reply-to])]
       ;; A run from one person reads as one block; repeating the nick on every
       ;; line is what made a busy channel look like a list of headers. The time
       ;; rides on that same line, for the same reason: once per run, not once
@@ -427,6 +424,13 @@
        ;; a message and the reactions on it, coming from nothing anyone asked
        ;; for.
        [:vbox {:key :text :spacing 2}
+        ;; What this answers, in the column the answer itself is in: the chip
+        ;; is a quote of a line, so it wraps to the width a line has. Outside
+        ;; this column it wrapped to the whole row instead — wider than any
+        ;; message, and out to the window's edge on a narrow screen.
+        [:vbox {:key :reply-chip}
+         (when-let [reply-to (:reply-to m)]
+           [reply-chip @s/current reply-to])]
         (map-indexed (fn [j run] (run-node j run (:system? m)))
                      (text-runs (:text m)))
         [:vbox {:key :reactions-row :margin-top 6}
