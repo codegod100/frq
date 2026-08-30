@@ -6,6 +6,7 @@
   is the only place a wire message turns into UI state."
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
+            [jolt.host :as host]
             [frq.atproto :as atproto]
             [frq.clock :as clock]
             [frq.emoji :as emoji]
@@ -13,7 +14,9 @@
             [frq.avatars :as avatars]
             [frq.media :as media]
             [frq.oauth :as oauth]
-            [frq.store :as store]))
+            [frq.store :as store]
+            [frq.upload :as upload]
+            [glimmer-vidya.core :as vidya]))
 
 (def default-host "irc.freeq.at")
 (def default-port "6697")
@@ -512,19 +515,121 @@
     (when (seq ch)
       (open-channel! ch))))
 
-(defn send-draft! []
+;; ------------------------------------------------------------------ pasting
+
+;; The picture waiting to go out with the next line, or nil:
+;;
+;;   {:path  the copy on disk, which is what the preview paints
+;;    :url   where freeq serves it, once the upload has landed
+;;    :status :uploading | :ready}
+;;
+;; Held apart from the draft rather than written into it. A link pasted into
+;; the entry is a line of unreadable text in the middle of whatever the reader
+;; was typing, and it puts their cursor somewhere they did not put it. The
+;; picture is a picture until it is sent; the draft stays theirs.
+;;
+;; One at a time — a second paste replaces the first, which is what a reader
+;; who pasted the wrong thing means by pasting the right one.
+(defonce attachment (atom nil))
+
+;; Each paste gets a file of its own rather than overwriting the last: the
+;; preview is painted from the file, and an upload may still be reading it.
+(defonce ^:private paste-count (atom 0))
+
+(defn- paste-path []
+  (let [n (swap! paste-count inc)]
+    (str (media/cache-dir) "/outgoing/paste-" n ".png")))
+
+(defn- discard-file!
+  "Drop a paste's copy on disk. Nothing else keeps it: the picture that matters
+  after sending is the one the server serves back, which the media cache
+  fetches like any other."
+  [path]
+  (when path (try (host/delete-file! path) (catch Exception _ nil))))
+
+(defn clear-attachment!
+  "Drop the pasted picture without sending it."
+  []
+  (when-let [a @attachment]
+    (reset! attachment nil)
+    (discard-file! (:path a))))
+
+(defn paste-image!
+  "Take the picture on the clipboard and hold it against the next line.
+
+  IRC has nowhere to put an image, so a link is the whole of what sending one
+  means — but that is a fact about the wire, not something the reader should
+  have to type around. The picture is attached: shown under the draft while
+  they write whatever they are sending it with, and turned into a link only on
+  the way out.
+
+  The upload runs off the UI thread and starts at once rather than at send, so
+  by the time a line is written the picture is usually already up. A failure
+  lands in `error` like any other, and takes the attachment with it — there is
+  nothing to send and nothing to show."
+  []
+  (let [path (paste-path)]
+    (host/mkdirs! (str (media/cache-dir) "/outgoing"))
+    (if-not (vidya/clipboard-image-png! path)
+      (reset! error "No picture on the clipboard.")
+      (let [did (:did @session)
+            host-name @form-host
+            channel @current]
+        (reset! error nil)
+        (clear-attachment!)
+        (reset! attachment {:path path :status :uploading})
+        (future
+          (try
+            (let [url (upload/upload! host-name did channel path "paste.png")]
+              ;; Only if this is still the paste on screen: a reader who
+              ;; pasted again, or cleared it, has said what they want, and an
+              ;; upload landing afterwards does not get to undo that.
+              (swap! attachment #(if (= (:path %) path)
+                                   (assoc % :url url :status :ready)
+                                   %))
+              (when-not (= (:path @attachment) path) (discard-file! path)))
+            (catch Exception e
+              (swap! attachment #(if (= (:path %) path) nil %))
+              (discard-file! path)
+              (reset! error (or (ex-message e) (str e))))))))))
+
+(defn send-draft!
+  "Send the draft, with whatever picture is attached to it.
+
+  The picture becomes its link, at the end of the line: what goes on the wire
+  is the text the reader wrote and a URL after it, which is what every other
+  client in the channel knows how to show. A line that is only a picture is
+  only the link.
+
+  A picture still on its way up holds the send rather than losing it: the line
+  is left in the box, said so, and the reader presses send again a moment
+  later. Sending the text without its picture would be the one outcome nobody
+  asked for."
+  []
   (let [text (str/trim @draft)
         target @current
-        reply-to @replying-to]
-    (when (and (seq text) target)
-      ;; Saying something is a way of asking to see it.
-      (jump-to-present!)
-      (when-let [c @conn] (irc/privmsg! c target text (:id reply-to)))
-      ;; The local echo carries the same link, so the chip is there before the
-      ;; server's copy of the line comes back — if it ever does.
-      (push-message! target @form-nick text {:reply-to (:id reply-to)})
-      (reset! replying-to nil)
-      (reset! draft ""))))
+        reply-to @replying-to
+        {:keys [url status path] :as att} @attachment]
+    (cond
+      (not target) nil
+      (= :uploading status) (reset! error "The picture is still uploading.")
+      (and (str/blank? text) (not url)) nil
+      :else
+      (let [line (str/trim (str text (when url (str " " url))))]
+        ;; Saying something is a way of asking to see it.
+        (jump-to-present!)
+        (when-let [c @conn] (irc/privmsg! c target line (:id reply-to)))
+        ;; The local echo carries the same link, so the chip is there before
+        ;; the server's copy of the line comes back — if it ever does.
+        (push-message! target @form-nick line {:reply-to (:id reply-to)})
+        (reset! replying-to nil)
+        (reset! draft "")
+        (when att
+          (reset! attachment nil)
+          ;; The picture on screen from here on is the one fetched back from
+          ;; the link, like everyone else's.
+          (discard-file! path))))))
+
 
 (defn open-picker!
   "Choose an emoji for this message. Opening it fresh — no leftover search from

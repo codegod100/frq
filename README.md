@@ -17,6 +17,7 @@ src/frq/oauth.jolt   the broker flow: login URL, loopback capture, /session
 src/frq/store.jolt   the saved sign-in, mode 600 in the config directory
 src/frq/avatars.jolt profile pictures, by DID or handle
 src/frq/media.jolt   image links: spot them, fetch them once, cache on disk
+src/frq/upload.jolt  a pasted picture to freeq's media endpoint, as multipart
 src/frq/clock.jolt   the reader's own zone, twelve-hour times, day headings
 src/frq/emoji.jolt   the picker's catalog: every drawable emoji and its name
 src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
@@ -118,6 +119,12 @@ surface — that surface does not work on Android either, while the syscalls do.
   backlog comes back
 * Inline previews for PNG links, fetched once and cached under
   `$XDG_CACHE_HOME/frq/media`; click one to see it full size
+* Ctrl+V in the draft attaches the picture on the clipboard: it is previewed
+  under the box and uploaded to freeq's media endpoint while you write the line
+  it goes with, and only on the way out does it become the link — which is the
+  whole of what sending an image over IRC means. The draft itself is never
+  written into. Text pastes as text, as it always did: the picture path is the
+  keystroke the field had no text to answer with
 * Join/part notices, DMs bucketed under the sender's nick
 * Discover list, search over buffers, disconnect
 * The rooms you have opened, remembered across runs and listed in the order
@@ -138,6 +145,12 @@ surface — that surface does not work on Android either, while the syscalls do.
   format, and a fetch needs TLS, so the phone shows links. The link is left in
   place either way.
 * **Nothing evicts the media cache.**
+* **Pasting a picture needs a sign-in and a desktop.** The upload is filed
+  under the DID of a live session, so a guest cannot make one; and it is read
+  off the clipboard through the ABI's `vidya_clipboard_image_png`, which
+  arboard backs on desktop and nothing backs on Android. It also shares
+  nothing to your PDS and posts nothing to Bluesky — those fields are opt-in
+  and this client does not send them.
 * **No scrollback trimming, reactions, threads, or calls.**
 * A sent line waits up to 200ms for the reader thread to flush it.
 * Message lists are keyed vboxes; glimmer-vidya has no `:listbox` yet.

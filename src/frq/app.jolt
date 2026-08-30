@@ -486,22 +486,22 @@
           messages))
 
 (defn lightbox-screen
-  "One picture, as big as the window allows.
+  "One picture, as big as the window will paint it.
 
-  A screen rather than an overlay: the tree backend paints in one layer and
-  has no z-order to put something on top of everything else with."
+  A screen rather than an overlay: the tree backend paints in one layer and has
+  no z-order to put something on top of everything else with. So the picture
+  takes the window — `:fit` gives it every point below the one row that is not
+  it, centred and in proportion, scaled up as readily as down.
+
+  That row is the way back. Clicking the picture closes it too — the same
+  gesture that opened it — but a way out you have to guess at is not one, and
+  the row costs the picture a line."
   []
-  (let [{:keys [path url]} @s/lightbox]
-    [:vbox {:spacing 8 :margin 12}
+  (let [{:keys [path]} @s/lightbox]
+    [:vbox {:spacing 4 :margin 4}
      [:hbox {:spacing 8}
-      [:button {:label "← Back" :on-click #(reset! s/lightbox nil)}]
-      [:dim-label {:label url}]]
-     ;; A picture fits the window's width, and a tall one is then taller than
-     ;; the window — so it scrolls. No `:reserve`: nothing follows it here, so
-     ;; the rest of the window is the picture's to use.
-     [:scroll {:orientation :vertical}
-      ;; Clicking the picture closes it too — the same gesture that opened it.
-      [:image {:src path :max-height 20000 :on-click #(reset! s/lightbox nil)}]]]))
+      [:button {:label "← Back" :on-click #(reset! s/lightbox nil)}]]
+     [:image {:src path :fit true :on-click #(reset! s/lightbox nil)}]]))
 
 (defn chat-screen []
   (let [name @s/current
@@ -521,12 +521,21 @@
      ;; is showing, and neither does that row — a reserve that changed would
      ;; move the compose bar under the reader every time the button came and
      ;; went.
-     [:scroll {:orientation :vertical
-               ;; Plus the reply banner's row when there is one. That row does
-               ;; move the compose bar, and should: it appears because the
-               ;; reader asked to answer something, unlike the jump button,
-               ;; which appears on its own and must not shift what is under it.
-               :reserve (if @s/replying-to 150 116)
+     ;; Named, so the list is the same list when the reader comes back to it.
+     ;; The lightbox is a screen rather than a layer, so looking at a picture
+     ;; unmounts the backlog behind it; without a name of its own the position
+     ;; would come back as a fresh one, and ← Back would answer a click on a
+     ;; message halfway up a week of history with the top of the buffer.
+     [:scroll {:scroll-key "chat-messages"
+               :orientation :vertical
+               ;; Plus the reply banner's row when there is one, and the
+               ;; pasted picture when there is one. Those rows do move the
+               ;; compose bar, and should: each appears because the reader just
+               ;; asked for something — unlike the jump button, which appears
+               ;; on its own and must not shift what is under it.
+               :reserve (+ 116
+                           (if @s/replying-to 34 0)
+                           (if @s/attachment 76 0))
                :stick-to-bottom true
                :scroll-to-bottom @s/jump-tick
                :on-change #(reset! s/at-present? (= "end" %))}
@@ -548,12 +557,32 @@
         [:hbox {:spacing 8}
          [:dim-label {:label (str "↩ " (:from target) ": " (summarise target 36))}]
          [:button {:label "✕" :on-click s/cancel-reply!}]])]
+     ;; The pasted picture, above the line it will go out with. Shown rather
+     ;; than written into the draft: what is being sent is a picture, and a URL
+     ;; dropped into the entry would be an unreadable line of text sitting in
+     ;; the middle of whatever the reader was in the middle of typing.
+     [:vbox {:key :attachment}
+      (when-let [att @s/attachment]
+        [:hbox {:spacing 8}
+         ;; Small: it is a reminder of what is attached, not the picture
+         ;; itself, and the backlog above it is what the reader is here for.
+         [:image {:src (:path att) :max-height 64}]
+         [:dim-label {:label (if (= :uploading (:status att))
+                               "Uploading…"
+                               "Picture attached")}]
+         [:button {:label "✕" :on-click s/clear-attachment!}]])]
      [:hbox {:spacing 8}
       ;; narrow enough that Send keeps its place on a phone-width row
+      ;; A picture is pasted where everything else is typed: Ctrl+V. The field
+      ;; answers a paste of text with the text, and one of a picture reaches
+      ;; `:on-paste-empty` — a keystroke the field had nothing to put in
+      ;; itself, which is exactly the one that means "the clipboard has
+      ;; something else on it".
       [:entry {:text @s/draft
                :width-request 300
                :placeholder "Message"
                :on-change #(reset! s/draft %)
+               :on-paste-empty s/paste-image!
                :on-activate s/send-draft!}]
       [:button {:label "Send" :kind :primary :on-click s/send-draft!}]]]))
 
