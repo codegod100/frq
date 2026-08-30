@@ -281,10 +281,11 @@
          [:dim-label {:label (:from m)}]
          (when-let [at (:at m)]
            [:dim-label {:label (clock/clock-time at)}])
-         ;; Answering is offered where the sender is named: a run of lines from
-         ;; one person is answered as the thing it is, rather than every line
-         ;; of it carrying a button of its own.
-         [:vbox {:key :reply-action}
+         ;; Answering is offered where the sender is named — a run of lines
+         ;; from one person is answered as the thing it is — and against the
+         ;; right edge, out of the way of the name and the time, which are what
+         ;; the eye is going down the column for.
+         [:hbox {:key :reply-action :align :end}
           (when (:id m)
             [:button {:label "↩" :on-click #(s/reply-to! m)}])]])]
      [:vbox {:key :text :spacing 2}
