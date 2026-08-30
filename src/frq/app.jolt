@@ -200,11 +200,28 @@
         (let [_ @s/media-tick]
           (for [url (:images m)]
             (when-let [path (media/path-when-ready url)]
-              [:image {:key url :src path :max-height 260}]))))]]))
+              [:image {:key url
+                     :src path
+                     :max-height 260
+                     :on-click #(reset! s/lightbox {:path path :url url})}]))))]]))
 
 (defn- message-rows [messages]
   (map-indexed (fn [i m] [message-row i (when (pos? i) (nth messages (dec i))) m])
                messages))
+
+(defn lightbox-screen
+  "One picture, as big as the window allows.
+
+  A screen rather than an overlay: the tree backend paints in one layer and
+  has no z-order to put something on top of everything else with."
+  []
+  (let [{:keys [path url]} @s/lightbox]
+    [:vbox {:spacing 8 :margin 12}
+     [:hbox {:spacing 8}
+      [:button {:label "← Back" :on-click #(reset! s/lightbox nil)}]
+      [:dim-label {:label url}]]
+     ;; Clicking the picture closes it too — the same gesture that opened it.
+     [:image {:src path :max-height 2000 :on-click #(reset! s/lightbox nil)}]]))
 
 (defn chat-screen []
   (let [name @s/current
@@ -289,12 +306,14 @@
 ;; ---------------------------------------------------------------- shell
 
 (defn app []
-  (case @s/screen
-    :connect [connect-screen]
-    :chat [chat-screen]
-    :discover [discover-screen]
-    :settings [settings-screen]
-    [chats-screen]))
+  (if @s/lightbox
+    [lightbox-screen]
+    (case @s/screen
+      :connect [connect-screen]
+      :chat [chat-screen]
+      :discover [discover-screen]
+      :settings [settings-screen]
+      [chats-screen])))
 
 (defn -main [& _]
   ;; Before the window: a saved sign-in decides which mode the connect screen

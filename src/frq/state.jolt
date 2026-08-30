@@ -59,6 +59,10 @@
 (defonce channels (atom {}))
 (defonce current (atom nil))
 (defonce draft (atom ""))
+
+;; The picture being looked at full size, or nil. Vidya's tree has no overlay,
+;; so this is a screen of its own rather than a layer over the chat.
+(defonce lightbox (atom nil))            ; {:path :url}
 (defonce join-input (atom ""))
 ;; A counter rather than a clock: the list only needs their order, and a
 ;; monotonic tick cannot be surprised by the system time moving.

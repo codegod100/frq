@@ -104,7 +104,7 @@ surface — that surface does not work on Android either, while the syscalls do.
 * Join channels, channel buffers with unread counts, send and receive `PRIVMSG`
 * Backlog on join, and `CHATHISTORY` for the channels freeq restores instead
 * Inline previews for PNG links, fetched once and cached under
-  `$XDG_CACHE_HOME/frq/media`
+  `$XDG_CACHE_HOME/frq/media`; click one to see it full size
 * Join/part notices, DMs bucketed under the sender's nick
 * Discover list, search over buffers, disconnect
 * Conversations listed most recently opened first

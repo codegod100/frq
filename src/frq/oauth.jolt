@@ -12,6 +12,7 @@
   from the broker token on every later connection."
   (:require [clojure.string :as str]
             [frq.atproto :as atproto]
+            [frq.platform :as platform]
             [jolt.ffi :as ffi]
             [jolt.host :as host]
             [jolt.socket :as socket]))
@@ -46,9 +47,7 @@
   "Hand the URL to the desktop. A failure here is not fatal — the caller shows
   the URL so it can be opened by hand."
   [url]
-  (try
-    (zero? (host/sh (str "xdg-open '" (str/replace url "'" "%27") "' >/dev/null 2>&1 &")))
-    (catch Exception _ false)))
+  (platform/open-url! url))
 
 ;; ------------------------------------------------------------------ capture
 

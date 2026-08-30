@@ -1,0 +1,12 @@
+(ns frq.platform
+  "The few things that are the desktop's job rather than the app's."
+  (:require [clojure.string :as str]
+            [jolt.host :as host]))
+
+(defn open-url!
+  "Hand a URL to the desktop. Android has no xdg-open, so this is a no-op
+  there — the same reason sign-in is desktop-only."
+  [url]
+  (try
+    (zero? (host/sh (str "xdg-open '" (str/replace (or url "") "'" "%27") "' >/dev/null 2>&1 &")))
+    (catch Exception _ false)))
