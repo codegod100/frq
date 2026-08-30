@@ -235,19 +235,22 @@
   [channel id]
   [:vbox {:key :reply}
    (if-let [target (s/message-by-id channel id)]
-     [:button {:label (str "↩ " (:from target) ": " (summarise target 48))
-               :on-click #(do (reset! s/jump-to id)
-                              (reset! s/highlight id)
-                              ;; Off again once the frame that scrolled has
-                              ;; been painted, so the reader keeps the view.
-                              (vidya/after! 120 (fn [] (reset! s/jump-to nil)))
-                              ;; The highlight stays long enough to be read,
-                              ;; and only clears itself: a later jump elsewhere
-                              ;; owns the highlight from then on.
-                              (vidya/after! 2000
-                                            (fn []
-                                              (when (= id @s/highlight)
-                                                (reset! s/highlight nil)))))}]
+     ;; A link, not a button: the chip is a pointer back to a line, not an
+     ;; action, and a filled pill above every answer was the loudest thing in
+     ;; the column.
+     [:link {:label (str "↩ " (:from target) ": " (summarise target 48))
+             :on-click #(do (reset! s/jump-to id)
+                            (reset! s/highlight id)
+                            ;; Off again once the frame that scrolled has
+                            ;; been painted, so the reader keeps the view.
+                            (vidya/after! 120 (fn [] (reset! s/jump-to nil)))
+                            ;; The highlight stays long enough to be read,
+                            ;; and only clears itself: a later jump elsewhere
+                            ;; owns the highlight from then on.
+                            (vidya/after! 2000
+                                          (fn []
+                                            (when (= id @s/highlight)
+                                              (reset! s/highlight nil)))))}]
      ;; The message it answers is older than this buffer goes.
      [:dim-label {:label "↩ replying to an earlier message"}])])
 
@@ -268,6 +271,10 @@
         ;; than in the reader's count of rows.
         highlit? (boolean (and (:id m) (= (:id m) @s/highlight)))]
     [:vbox {:key i :spacing 2 :margin 0
+            ;; Space above a new speaker, none inside their run: the gap is
+            ;; what separates one person's block from the next, and evenly
+            ;; spaced lines are what made the column read as one dense list.
+            :margin-top (if same-sender? 0 10)
             ;; The jump target is what a "go to message" click scrolls to.
             :scroll-here (boolean (and (:id m) (= (:id m) @s/jump-to)))}
      [(if highlit? :card :vbox) {:key :body :spacing 2 :margin 0}
@@ -290,8 +297,11 @@
           (let [_ @s/media-tick]
             [:avatar {:label (:from m)
                       :src (or (avatars/path-when-ready (:actor m)) "")
-                      :size 22}])
-          [:dim-label {:label (:from m)}]
+                      :size 32}])
+          ;; The name carries the row, so it is set at body size in the plain
+          ;; text colour: dimmed caption made the one thing you scan a column
+          ;; for the faintest thing on it.
+          [:label {:label (:from m)}]
           (when-let [at (:at m)]
             [:dim-label {:label (clock/clock-time at)}])
           ;; Answering is offered where the sender is named — a run of lines
