@@ -349,13 +349,13 @@
       [:button {:label "← Chats" :on-click #(reset! s/screen :chats)}]
       [:title {:label (or name "Chat")}]]
      [error-note]
-     ;; :reserve leaves room for the separator and compose bar below, so the
-     ;; list fills whatever the window has and no more.
-     ;; Sticking follows the reader rather than a flag of its own: while the
-     ;; view is at the end it stays there, and a jump to an old message reports
-     ;; "away", which is what stops the next arriving line from dragging the
-     ;; view off whatever was jumped to.
-     [:scroll {:orientation :vertical :reserve 72 :stick-to-bottom @s/at-present?
+     ;; :reserve leaves room for what sits below — the separator and compose
+     ;; bar, and the jump button when it is there. A reserve that does not
+     ;; count the button is a list that grows over the compose bar and pushes
+     ;; it off the bottom of the window the moment the button appears.
+     [:scroll {:orientation :vertical
+               :reserve (if @s/at-present? 72 116)
+               :stick-to-bottom true
                :scroll-to-bottom @s/jump-tick
                :on-change #(reset! s/at-present? (= "end" %))}
       (if (seq (:messages buffer))
