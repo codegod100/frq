@@ -377,7 +377,10 @@
             :margin-top (if same-sender? 0 10)
             ;; The jump target is what a "go to message" click scrolls to.
             :scroll-here (boolean (and (:id m) (= (:id m) @s/jump-to)))}
-     [(if highlit? :card :vbox) {:key :body :spacing 2 :margin 0}
+     ;; Likewise a key each: the surface a jump leaves behind is a different
+     ;; node from the plain column, not the same node wearing another tag.
+     [(if highlit? :card :vbox) {:key (if highlit? :body-card :body-plain)
+                                 :spacing 2 :margin 0}
       ;; A run from one person reads as one block; repeating the nick on every
       ;; line is what made a busy channel look like a list of headers. The time
       ;; rides on that same line, for the same reason: once per run, not once
@@ -416,12 +419,19 @@
        ;; it, and one with a width takes the column's whole height. Reacting
        ;; comes first in the source because a row laid out from the right lays
        ;; its first child furthest right: on screen this reads ↩ then ☺.
+       ;; A key of its own for each branch, rather than one key whose node
+       ;; changes tag under it: a line this client sent has no msgid until the
+       ;; server echoes it back, and swapping a `:spacer` for a `:button` in
+       ;; place is what left the row rebuilt in the wrong order — the actions
+       ;; ended up after the text, and every row beside it laid out from an
+       ;; edge that was no longer the row's. Two keys make it a removal and an
+       ;; addition, which is what it is.
        (if (:id m)
-         [react-button @s/current m]
-         [:spacer {:key :react :size 0}])
+         [react-button {:key :react-button} @s/current m]
+         [:spacer {:key :react-gap :size 0}])
        (if (:id m)
-         [:button {:key :reply :label "↩" :on-click #(s/reply-to! m)}]
-         [:spacer {:key :reply :size 0}])
+         [:button {:key :reply-button :label "↩" :on-click #(s/reply-to! m)}]
+         [:spacer {:key :reply-gap :size 0}])
        ;; The text column carries the pills as well as the words: put them
        ;; outside this row and they sit below it, and the row is as tall as
        ;; the buttons at its right edge — which is half a line of air between
@@ -481,7 +491,13 @@
                 new-day? (conj (day-separator (str "day-" i) (clock/day-label (:at m))))
                 ;; A new day breaks the run: the first line under a heading
                 ;; names its sender and its time, whoever spoke last night.
-                true (conj [message-row i (when-not new-day? prev) m]))))
+                ;; Keyed by the line itself, not by where it sits: the list is
+                ;; reconciled by position when its children are not all keyed,
+                ;; and a line that arrives anywhere but the end — a backlog
+                ;; replay, an echo taking the place of what was sent — shifts
+                ;; every row after it onto the widgets of its neighbour.
+                true (conj ^{:key (or (:id m) (str "row-" i))}
+                           [message-row i (when-not new-day? prev) m]))))
           (range (count messages))
           messages))
 

@@ -2,9 +2,12 @@
 
  ;; glimmer owns the reactive half (ratom, components, reconciler);
  ;; glimmer-vidya paints it as Vidya/egui through libvidya's retained-tree ABI.
- :deps {jolt-lang/glimmer   {:git/url "https://github.com/jolt-lang/glimmer"
-                             :git/tag "v0.1.0"
-                             :git/sha "5581c331c51aff989259b9e8e92ec920fe5e6741"}
+ ;; Our fork of glimmer, until the reconciler fix in it lands upstream: a
+ ;; component unmounted between a cell firing and the queued render running
+ ;; used to render anyway, into widgets the backend had already freed and
+ ;; handed out again — which took the message list apart in a busy channel.
+ :deps {jolt-lang/glimmer   {:git/url "https://gitlab.com/nandithebull/glimmer"
+                             :git/sha "4e733aa26343cef0478d8dfd3f2b76c0113b0969"}
         nandi/glimmer-vidya {:local/root "../vidya/glimmer"}}
 
  ;; libvidya, the Rust/egui build (the C/raylib one does not export the tree
