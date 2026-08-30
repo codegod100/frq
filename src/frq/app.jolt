@@ -4,10 +4,12 @@
   The screens follow sleek's: connect, chats, chat, discover, settings, under a
   tab bar. Where sleek draws them in Rust against egui directly, here each is a
   hiccup component over the same widgets."
-  (:require [glimmer.ratom :as r :refer [atom]]
+  (:require [clojure.string :as str]
+            [glimmer.ratom :as r :refer [atom]]
             [glimmer.core :as ui]
             [glimmer-vidya.core :as vidya]
             [frq.media :as media]
+            [frq.platform :as platform]
             [frq.state :as s]))
 
 ;; ---------------------------------------------------------------- pieces
@@ -171,6 +173,49 @@
 
 ;; ---------------------------------------------------------------- chat
 
+(def ^:private url-pattern #"https?://[^\s<>\"]+")
+
+(defn- trim-trailing-punctuation
+  "A URL at the end of a sentence would otherwise keep the sentence's
+  punctuation. A closing bracket only counts as trailing when the URL does not
+  open one itself, which is what keeps a wikipedia-style path intact."
+  [url]
+  (loop [u url]
+    (let [c (last u)]
+      (cond
+        (nil? c) u
+        (contains? #{\. \, \; \: \! \?} c) (recur (subs u 0 (dec (count u))))
+        (and (= \) c) (not (str/includes? u "("))) (recur (subs u 0 (dec (count u))))
+        :else u))))
+
+(defn text-runs
+  "Message text as alternating [:text s] and [:link url] runs.
+
+  Runs because a link has to be its own widget to be clickable, and stacked
+  rather than laid out in a row because a wrapping label inside a horizontal
+  row lays out against the row's width, not the column's — which is what drags
+  long URLs off the left edge."
+  [text]
+  (let [text (or text "")]
+    (loop [pos 0 acc []]
+      (if-let [raw (re-find url-pattern (subs text pos))]
+        (let [url (trim-trailing-punctuation raw)
+              at (+ pos (str/index-of (subs text pos) raw))
+              before (subs text pos at)
+              acc (cond-> acc (seq before) (conj [:text before]))]
+          (recur (+ at (count url)) (conj acc [:link url])))
+        (let [tail (subs text pos)]
+          (cond-> acc (seq tail) (conj [:text tail])))))))
+
+(defn- run-node
+  "One run as a widget. A link is accent-coloured and opens on click; the rest
+  is body text, or dim text for the lines the client writes itself."
+  [j [kind value] system?]
+  (cond
+    (= :link kind) [:link {:key j :label value :on-click #(platform/open-url! value)}]
+    system? [:dim-label {:key j :label (str/trim value)}]
+    :else [:label {:key j :label (str/trim value)}]))
+
 (defn message-row
   "One message. `prev` is the message above it, which decides whether this one
   repeats the sender.
@@ -189,9 +234,9 @@
      [:vbox {:key :who}
       (when-not (or same-sender? (:system? m))
         [:dim-label {:label (:from m)}])]
-     (if (:system? m)
-       [:dim-label {:label (:text m)}]
-       [:label {:label (:text m)}])
+     [:vbox {:key :text :spacing 2}
+      (map-indexed (fn [j run] (run-node j run (:system? m)))
+                   (text-runs (:text m)))]
      ;; Pictures under the line that linked them. The link stays: it is what a
      ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
      [:vbox {:key :images :spacing 4}
@@ -220,8 +265,12 @@
      [:hbox {:spacing 8}
       [:button {:label "← Back" :on-click #(reset! s/lightbox nil)}]
       [:dim-label {:label url}]]
-     ;; Clicking the picture closes it too — the same gesture that opened it.
-     [:image {:src path :max-height 2000 :on-click #(reset! s/lightbox nil)}]]))
+     ;; A picture fits the window's width, and a tall one is then taller than
+     ;; the window — so it scrolls. No `:reserve`: nothing follows it here, so
+     ;; the rest of the window is the picture's to use.
+     [:scroll {:orientation :vertical}
+      ;; Clicking the picture closes it too — the same gesture that opened it.
+      [:image {:src path :max-height 20000 :on-click #(reset! s/lightbox nil)}]]]))
 
 (defn chat-screen []
   (let [name @s/current
