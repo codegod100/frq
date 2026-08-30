@@ -73,6 +73,16 @@
      :command (str/upper-case (or (first parts) ""))
      :params (cond-> (vec (rest parts)) trailing (conj trailing))}))
 
+(defn tag-value
+  "One IRCv3 tag's value, or nil. Tag values escape `;` and space; the ids and
+  timestamps read here contain neither, so they are taken as they come."
+  [tags key]
+  (when tags
+    (some (fn [pair]
+            (let [[k v] (str/split pair #"=" 2)]
+              (when (= k key) v)))
+          (str/split tags #";"))))
+
 (defn nick-of
   "The nick half of a `nick!user@host` prefix."
   [prefix]
@@ -126,9 +136,18 @@
       (locking (:lock conn) (swap! (:outbox conn) conj text))
       (locking (:lock conn) (write! conn text)))))
 
+(declare flush-outbox-tls!)
+
 (defn- flush-outbox!
-  "Write whatever has been queued. Only ever called on the reader thread."
+  "Write whatever has been queued. Only ever called on the reader thread.
+
+  Only a TLS connection has a queue: a raw socket is written straight from
+  whichever thread is sending, so there is nothing here to drain."
   [conn]
+  (when (:outbox conn)
+    (flush-outbox-tls! conn)))
+
+(defn- flush-outbox-tls! [conn]
   (let [pending (locking (:lock conn)
                   (let [q @(:outbox conn)]
                     (reset! (:outbox conn) [])

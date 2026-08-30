@@ -114,9 +114,10 @@
   The extras are what the message carried beyond its text: `:at` when it was
   said, from the server's own `time` tag where there is one, and `:did` who
   said it, from the `account` tag — an identity that outlasts whatever nick
-  they are using today."
+  they are using today. `:id` names this message so a reply can point at it,
+  and `:reply-to` is the one it answers."
   ([channel from text] (push-message! channel from text {}))
-  ([channel from text {:keys [at did]}]
+  ([channel from text {:keys [at did id reply-to]}]
    (let [at (or at (clock/now-ms))
          who (avatars/actor did from)]
      (doseq [url (media/image-urls text)]
@@ -133,7 +134,10 @@
                                {:from from :text text :system? (= "*" from)
                                 :actor who
                                 :images (media/image-urls text)
-                                :at at})
+                                :at at
+                                ;; `:id` is what a reply points at, and
+                                ;; `:reply-to` is what this one points at.
+                                :id id :reply-to reply-to})
                     (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))))
 
 (defn open-channel!
@@ -176,10 +180,19 @@
                       ;; backlog is hours or weeks old, and stamping it with
                       ;; the moment it arrived would say it all happened now.
                       at (or (clock/parse-time-tag (:tags msg)) (clock/now-ms))
+                      tags (:tags msg)
                       ;; a DM addressed to us belongs in a buffer named for the
                       ;; sender, not for our own nick
                       buffer (if (str/starts-with? (or target "") "#") target from)]
-                  (push-message! buffer from text {:at at :did (:account msg)}))
+                  (push-message! buffer from text
+                                 {:at at
+                                  :did (:account msg)
+                                  :id (irc/tag-value tags "msgid")
+                                  ;; The server canonicalises +draft/reply to
+                                  ;; +reply; a client that sent the draft name
+                                  ;; may still reach us before it does.
+                                  :reply-to (or (irc/tag-value tags "+reply")
+                                                (irc/tag-value tags "+draft/reply"))}))
       "JOIN" (let [ch (first params)]
                (if (= from @form-nick)
                  (let [fresh? (empty? (get-in @channels [ch :messages]))]
@@ -470,6 +483,18 @@
                        m
                        ordered))))
     (count saved)))
+
+(defn message-by-id
+  "The message a reply points at, if this buffer still holds it."
+  [channel id]
+  (when id
+    (first (filter #(= id (:id %)) (get-in @channels [channel :messages])))))
+
+;; The message a "go to" is currently aiming at. Set for the frame that scrolls
+;; to it and taken off again — a scroll target that stays set would pin the
+;; view there and take scrolling away from the reader.
+(defonce jump-to (atom nil))
+
 
 (defn last-preview [buffer]
   (if-let [m (last (:messages buffer))]

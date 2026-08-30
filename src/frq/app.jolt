@@ -218,6 +218,31 @@
     system? [:dim-label {:key j :label (str/trim value)}]
     :else [:label {:key j :label (str/trim value)}]))
 
+(defn- summarise
+  "A message in one line's worth of words."
+  [m limit]
+  (let [text (str/replace (or (:text m) "") #"\s+" " ")]
+    (if (> (count text) limit)
+      (str (subs text 0 (dec limit)) "…")
+      text)))
+
+(defn- reply-chip
+  "What a message is replying to, above it, and a way back to it.
+
+  The chip carries the quote rather than only a marker: a reply is unreadable
+  without knowing what it answers, and the message it answers is usually off
+  the top of the screen. Clicking takes you there."
+  [channel id]
+  [:vbox {:key :reply}
+   (if-let [target (s/message-by-id channel id)]
+     [:button {:label (str "↩ " (:from target) ": " (summarise target 48))
+               :on-click #(do (reset! s/jump-to id)
+                              ;; Off again once the frame that scrolled has
+                              ;; been painted, so the reader keeps the view.
+                              (vidya/after! 120 (fn [] (reset! s/jump-to nil))))}]
+     ;; The message it answers is older than this buffer goes.
+     [:dim-label {:label "↩ replying to an earlier message"}])])
+
 (defn message-row
   "One message. `prev` is the message above it, which decides whether this one
   repeats the sender.
@@ -230,7 +255,12 @@
                           (not (:system? m))
                           (not (:system? prev))
                           (= (:from prev) (:from m)))]
-    [:vbox {:key i :spacing 2 :margin 0}
+    [:vbox {:key i :spacing 2 :margin 0
+            ;; The jump target is what a "go to message" click scrolls to.
+            :scroll-here (boolean (and (:id m) (= (:id m) @s/jump-to)))}
+     [:vbox {:key :reply-chip}
+      (when-let [reply-to (:reply-to m)]
+        [reply-chip @s/current reply-to])]
      ;; A run from one person reads as one block; repeating the nick on every
      ;; line is what made a busy channel look like a list of headers. The time
      ;; rides on that same line, for the same reason: once per run, not once
@@ -321,7 +351,11 @@
      [error-note]
      ;; :reserve leaves room for the separator and compose bar below, so the
      ;; list fills whatever the window has and no more.
-     [:scroll {:orientation :vertical :reserve 72 :stick-to-bottom true
+     ;; Sticking follows the reader rather than a flag of its own: while the
+     ;; view is at the end it stays there, and a jump to an old message reports
+     ;; "away", which is what stops the next arriving line from dragging the
+     ;; view off whatever was jumped to.
+     [:scroll {:orientation :vertical :reserve 72 :stick-to-bottom @s/at-present?
                :scroll-to-bottom @s/jump-tick
                :on-change #(reset! s/at-present? (= "end" %))}
       (if (seq (:messages buffer))
