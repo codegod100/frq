@@ -519,6 +519,61 @@
       [:button {:label "← Back" :on-click #(reset! s/lightbox nil)}]]
      [:image {:src path :fit true :on-click #(reset! s/lightbox nil)}]]))
 
+(defn image-picker-screen
+  "The pictures on this device, to send one of.
+
+  A screen rather than a panel over the compose bar: choosing a file is
+  browsing, and browsing wants the window — the backend paints in one layer
+  anyway, so there is no overlay to put it in.
+
+  A directory at a time, PNG only. Which directories there are to start from is
+  the platform's answer, not this screen's: a desktop opens on ~/Pictures, and
+  a phone on what the app can read without a permission it has no code to ask
+  for, which may be very little. Either way the list says what it found."
+  []
+  (let [dir @s/image-picker
+        {:keys [dirs files]} (s/picker-entries dir)
+        up (s/parent-dir dir)]
+    [:vbox {:spacing 8 :margin 12}
+     [:hbox {:spacing 8}
+      [:button {:label "← Back" :on-click s/close-image-picker!}]
+      [:title {:label "Send a picture"}]]
+     [:dim-label {:label (str dir)}]
+     [error-note]
+     ;; The places worth starting from, always in reach: browsing into a corner
+     ;; of the filesystem should not cost the way back to the pictures folder.
+     [:hbox {:key :roots :spacing 6}
+      (for [root (s/picker-roots)]
+        [:button {:key root
+                  :label (or (last (str/split root #"/")) root)
+                  :kind (if (= root dir) :primary :default)
+                  :on-click #(s/browse! root)}])]
+     [:separator {}]
+     [:scroll {:scroll-key "image-picker"
+               :orientation :vertical
+               :reserve 40}
+      [:vbox {:spacing 6}
+       [:vbox {:key :up}
+        (when up
+          [:button {:label "⬆ Up" :on-click #(s/browse! up)}])]
+       [:vbox {:key :dirs :spacing 4}
+        (for [d dirs]
+          [:button {:key d
+                    :label (str "📁 " (last (str/split d #"/")))
+                    :on-click #(s/browse! d)}])]
+       ;; The picture itself is the button: a filename is not what anyone is
+       ;; choosing between, and a thumbnail answers "is this the one" in a way
+       ;; no name does.
+       [:vbox {:key :files :spacing 6}
+        (for [f files]
+          [:hbox {:key f :spacing 8}
+           [:image {:src f :max-height 72 :on-click #(s/pick-image! f)}]
+           [:button {:label (last (str/split f #"/"))
+                     :on-click #(s/pick-image! f)}]])]
+       [:vbox {:key :empty}
+        (when (and (empty? dirs) (empty? files))
+          [:dim-label {:label "No pictures here that this app can read."}])]]]]))
+
 (defn chat-screen []
   (let [name @s/current
         buffer (get @s/channels name)]
@@ -594,8 +649,11 @@
       ;; `:on-paste-empty` — a keystroke the field had nothing to put in
       ;; itself, which is exactly the one that means "the clipboard has
       ;; something else on it".
+      ;; And the same picture chosen rather than pasted, for a phone — which has
+      ;; no Ctrl+V, and no clipboard of pictures to read if it had.
+      [:button {:label "🖼" :on-click s/open-image-picker!}]
       [:entry {:text @s/draft
-               :width-request 300
+               :width-request 260
                :placeholder "Message"
                :on-change #(reset! s/draft %)
                :on-paste-empty s/paste-image!
@@ -658,8 +716,10 @@
 ;; ---------------------------------------------------------------- shell
 
 (defn app []
-  (if @s/lightbox
-    [lightbox-screen]
+  (cond
+    @s/lightbox [lightbox-screen]
+    @s/image-picker [image-picker-screen]
+    :else
     (case @s/screen
       :connect [connect-screen]
       :chat [chat-screen]
