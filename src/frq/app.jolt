@@ -254,13 +254,23 @@
      ;; The message it answers is older than this buffer goes.
      [:dim-label {:label "↩ replying to an earlier message"}])])
 
+(defn- react-button
+  "The way to put an emoji on a message, beside the way to answer it.
+
+  Both are things done *to* a message rather than parts of it, so they share
+  the sender's line and the right edge. It opens the quick row for this message
+  alone — the emoji are only worth their space while someone is choosing one."
+  [m]
+  (let [open? (= (:id m) @s/reacting)]
+    [:button {:label (if open? "×" "☺")
+              :on-click #(reset! s/reacting (when-not open? (:id m)))}]))
+
 (defn- reaction-row
-  "What people have put on a message, and the way to put something there too.
+  "What people have put on a message, under it, and the emoji to choose from
+  while the react button is open.
 
   A pill carries its count and toggles: clicking one you are already on takes
-  yours off, which is the same gesture that put it there. The `+` opens the
-  quick row for this message alone — the emoji are only worth their space while
-  someone is choosing one."
+  yours off, which is the same gesture that put it there."
   [channel m]
   (let [reactions (:reactions m)
         open? (= (:id m) @s/reacting)]
@@ -271,10 +281,7 @@
           [:button {:key emoji
                     :label (str emoji " " (count nicks))
                     :kind (if (s/my-reaction? m emoji) :primary :normal)
-                    :on-click #(s/toggle-reaction! channel m emoji)}]))
-      [:button {:key :add
-                :label (if open? "×" "+")
-                :on-click #(reset! s/reacting (when-not open? (:id m)))}]]
+                    :on-click #(s/toggle-reaction! channel m emoji)}]))]
      [:hbox {:key :picker :spacing 4}
       (when open?
         (for [emoji s/quick-reactions]
@@ -339,9 +346,16 @@
       ;; takes the width that is left. The text keeps a column of its own:
       ;; a wrapping label directly in a row wraps against the row.
       [:hbox {:key :line :align :end :spacing 6}
-       ;; The button sits in the row itself rather than in a box of its own:
-       ;; a box with no width takes the rest of the row and puts the text on a
-       ;; line below it, and one with a width takes the column's whole height.
+       ;; Answering and reacting sit together because they are the same kind
+       ;; of thing: what you do to a message rather than what it says. Both
+       ;; are in the row itself rather than in a box of their own — a box with
+       ;; no width takes the rest of the row and puts the text on a line below
+       ;; it, and one with a width takes the column's whole height. Reacting
+       ;; comes first in the source because a row laid out from the right lays
+       ;; its first child furthest right: on screen this reads ↩ then ☺.
+       (if (:id m)
+         [react-button @s/current m]
+         [:spacer {:key :react :size 0}])
        (if (:id m)
          [:button {:key :reply :label "↩" :on-click #(s/reply-to! m)}]
          [:spacer {:key :reply :size 0}])
