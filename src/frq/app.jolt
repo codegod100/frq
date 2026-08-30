@@ -429,7 +429,7 @@
        [:vbox {:key :text :spacing 2}
         (map-indexed (fn [j run] (run-node j run (:system? m)))
                      (text-runs (:text m)))
-        [:vbox {:key :reactions-row}
+        [:vbox {:key :reactions-row :margin-top 6}
          (when (and (:id m) (not (:system? m)) (seq (:reactions m)))
            [reaction-row @s/current m])]]]
       ;; And the picker, when this is the message it was opened on: under the
