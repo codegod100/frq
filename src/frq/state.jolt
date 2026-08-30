@@ -68,7 +68,7 @@
 (defn- ensure-channel [m name]
   (if (contains? m name)
     m
-    (assoc m name {:name name :messages [] :unread 0 :joined? false})))
+    (assoc m name {:name name :messages [] :unread 0 :joined? false :joining? false})))
 
 (defn push-message!
   "Append a line to a buffer, creating it if needed, and bump the unread count
@@ -90,10 +90,15 @@
   (reset! current name)
   (reset! screen :chat)
   (swap! channels #(assoc-in (ensure-channel % name) [name :unread] 0))
-  (when (and @conn
-             (str/starts-with? name "#")
-             (not (get-in @channels [name :joined?])))
-    (irc/join! @conn name)))
+  ;; `joining?` as well as `joined?`: the JOIN echo takes a round trip, and a
+  ;; second JOIN sent in the meantime is what makes the server replay nothing.
+  (let [buffer (get @channels name)]
+    (when (and @conn
+               (str/starts-with? name "#")
+               (not (:joined? buffer))
+               (not (:joining? buffer)))
+      (swap! channels #(assoc-in % [name :joining?] true))
+      (irc/join! @conn name))))
 
 (declare join!)
 
@@ -117,12 +122,14 @@
       "JOIN" (let [ch (first params)]
                (if (= from @form-nick)
                  (do (swap! channels #(-> (ensure-channel % ch)
-                                          (assoc-in [ch :joined?] true)))
+                                          (assoc-in [ch :joined?] true)
+                                          (assoc-in [ch :joining?] false)))
                      (push-message! ch "*" (str "You joined " ch)))
                  (push-message! ch "*" (str from " joined"))))
       "PART" (let [ch (first params)]
                (if (= from @form-nick)
-                 (swap! channels #(assoc-in % [ch :joined?] false))
+                 (swap! channels #(-> % (assoc-in [ch :joined?] false)
+                                        (assoc-in [ch :joining?] false)))
                  (push-message! ch "*" (str from " left"))))
       "QUIT" nil
       ("NOTICE" "372" "375" "376" "002" "003" "004")
@@ -140,7 +147,8 @@
       "*DISCONNECTED*" (do (reset! conn nil)
                            (reset! connecting? false)
                            (swap! channels
-                                  #(reduce-kv (fn [m k v] (assoc m k (assoc v :joined? false)))
+                                  #(reduce-kv (fn [m k v]
+                                                (assoc m k (assoc v :joined? false :joining? false)))
                                               {} %))
                            (reset! status "Disconnected"))
       "*ERROR*" (do (reset! error (first params))
@@ -238,17 +246,24 @@
 (defn connect!
   "Start connecting. The work happens on another thread: the OAuth wait sits on
   a loopback accept until the browser comes back, and the UI has frames to
-  paint in the meantime."
+  paint in the meantime.
+
+  A second call while one is in flight is ignored. Dialling twice does not just
+  waste a socket: the server treats the second session as a reconnect of the
+  first, and a reconnect is not replayed the channel history a fresh join gets,
+  so the second connection — the one the UI ends up holding — shows an empty
+  channel."
   []
-  (reset! error nil)
-  (reset! connecting? true)
-  (future
-    (try (connect-blocking!)
-         (catch Exception e
-           (reset! connecting? false)
-           (reset! conn nil)
-           (reset! status "Not connected")
-           (reset! error (str "Could not connect: " (describe e)))))))
+  (when-not (or @connecting? @conn)
+    (reset! error nil)
+    (reset! connecting? true)
+    (future
+      (try (connect-blocking!)
+           (catch Exception e
+             (reset! connecting? false)
+             (reset! conn nil)
+             (reset! status "Not connected")
+             (reset! error (str "Could not connect: " (describe e))))))))
 
 (defn disconnect! []
   (when-let [c @conn] (irc/close! c))
@@ -256,7 +271,9 @@
   (reset! session nil)
   ;; The buffers survive, the memberships do not — leaving `joined?` set would
   ;; have the next Open show a channel nobody is in.
-  (swap! channels #(reduce-kv (fn [m k v] (assoc m k (assoc v :joined? false))) {} %))
+  (swap! channels #(reduce-kv (fn [m k v]
+                                (assoc m k (assoc v :joined? false :joining? false)))
+                              {} %))
   (reset! status "Not connected")
   (reset! screen :connect))
 

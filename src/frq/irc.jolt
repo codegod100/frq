@@ -27,10 +27,18 @@
 ;; ---------------------------------------------------------------- parsing
 
 (defn parse-line
-  "An IRC line into {:prefix :command :params}. The trailing parameter (after
-  \" :\") keeps its spaces; everything before it splits on whitespace."
+  "An IRC line into {:tags :prefix :command :params}. The trailing parameter
+  (after \" :\") keeps its spaces; everything before it splits on whitespace.
+
+  IRCv3 tags come first when there are any. A connection that negotiates CAP
+  gets them where a bare one does not — which is why a client that ignores them
+  looks fine as a guest and goes silent once it authenticates."
   [line]
   (let [line (str/trimr line)
+        [tags line] (if (str/starts-with? line "@")
+                      (let [i (str/index-of line " ")]
+                        [(subs line 1 i) (str/triml (subs line i))])
+                      [nil line])
         [prefix rest-line] (if (str/starts-with? line ":")
                              (let [i (str/index-of line " ")]
                                [(subs line 1 i) (subs line (inc i))])
@@ -39,7 +47,8 @@
         head (if i (subs rest-line 0 i) rest-line)
         trailing (when i (subs rest-line (+ i 2)))
         parts (remove str/blank? (str/split head #" "))]
-    {:prefix prefix
+    {:tags tags
+     :prefix prefix
      :command (str/upper-case (or (first parts) ""))
      :params (cond-> (vec (rest parts)) trailing (conj trailing))}))
 
