@@ -15,6 +15,7 @@ of an `AppState` struct.
 src/frq/atproto.jolt handle → DID → PDS → session, and the SASL payloads
 src/frq/oauth.jolt   the broker flow: login URL, loopback capture, /session
 src/frq/store.jolt   the saved sign-in, mode 600 in the config directory
+src/frq/avatars.jolt profile pictures, by DID or handle
 src/frq/media.jolt   image links: spot them, fetch them once, cache on disk
 src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
 src/frq/state.jolt   the ratoms every screen reads, and `apply-msg!`
@@ -108,6 +109,8 @@ surface — that surface does not work on Android either, while the syscalls do.
 * Join/part notices, DMs bucketed under the sender's nick
 * Discover list, search over buffers, disconnect
 * Conversations listed most recently opened first
+* Bluesky avatars beside the sender, resolved from the DID freeq tags each
+  message with
 
 ## Limits
 
@@ -121,6 +124,6 @@ surface — that surface does not work on Android either, while the syscalls do.
   format, and a fetch needs TLS, so the phone shows links. The link is left in
   place either way.
 * **Nothing evicts the media cache.**
-* **No scrollback trimming, avatars, reactions, threads, or calls.**
+* **No scrollback trimming, reactions, threads, or calls.**
 * A sent line waits up to 200ms for the reader thread to flush it.
 * Message lists are keyed vboxes; glimmer-vidya has no `:listbox` yet.

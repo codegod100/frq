@@ -8,6 +8,7 @@
             [glimmer.ratom :as r :refer [atom]]
             [glimmer.core :as ui]
             [glimmer-vidya.core :as vidya]
+            [frq.avatars :as avatars]
             [frq.media :as media]
             [frq.platform :as platform]
             [frq.state :as s]))
@@ -233,7 +234,15 @@
      ;; line is what made a busy channel look like a list of headers.
      [:vbox {:key :who}
       (when-not (or same-sender? (:system? m))
-        [:dim-label {:label (:from m)}])]
+        ;; The picture sits beside the name rather than beside the message: a
+        ;; run of lines from one person has one header, and this belongs to it.
+        [:hbox {:spacing 6}
+         [:vbox {:key :avatar}
+          ;; Reading the tick subscribes this row to the fetch finishing.
+          (let [_ @s/media-tick]
+            (when-let [path (avatars/path-when-ready (:actor m))]
+              [:image {:src path :max-height 20}]))]
+         [:dim-label {:label (:from m)}]])]
      [:vbox {:key :text :spacing 2}
       (map-indexed (fn [j run] (run-node j run (:system? m)))
                    (text-runs (:text m)))]

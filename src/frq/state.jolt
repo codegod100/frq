@@ -8,6 +8,7 @@
             [glimmer.ratom :as r :refer [atom]]
             [frq.atproto :as atproto]
             [frq.irc :as irc]
+            [frq.avatars :as avatars]
             [frq.media :as media]
             [frq.oauth :as oauth]
             [frq.store :as store]))
@@ -90,19 +91,28 @@
 (defn push-message!
   "Append a line to a buffer, creating it if needed, and bump the unread count
   unless that buffer is the one on screen. Any image it links to is fetched in
-  the background."
-  [channel from text]
-  (doseq [url (media/image-urls text)]
-    (media/fetch! url #(swap! media-tick inc)))
-  (swap! channels
-         (fn [m]
-           (let [m (ensure-channel m channel)
-                 viewing? (and (= :chat @screen) (= channel @current))]
-             (-> m
-                 (update-in [channel :messages] conj
-                            {:from from :text text :system? (= "*" from)
-                             :images (media/image-urls text)})
-                 (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))
+  the background, as is the sender's avatar.
+
+  `did` is the sender's identity from the message's `account` tag, when the
+  server sent one — it outlasts whatever nick they are using today."
+  ([channel from text] (push-message! channel from text nil))
+  ([channel from text did]
+   (doseq [url (media/image-urls text)]
+     (media/fetch! url #(swap! media-tick inc)))
+   (let [who (avatars/actor did from)]
+     ;; The same tick: an avatar arriving is a picture arriving, and the chat
+     ;; view already repaints on it.
+     (when who (avatars/fetch! who #(swap! media-tick inc)))
+     (swap! channels
+            (fn [m]
+              (let [m (ensure-channel m channel)
+                    viewing? (and (= :chat @screen) (= channel @current))]
+                (-> m
+                    (update-in [channel :messages] conj
+                               {:from from :text text :system? (= "*" from)
+                                :actor who
+                                :images (media/image-urls text)})
+                    (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))))
 
 (defn open-channel!
   "Show a buffer. A channel we are not in is joined on the way — a row can
@@ -142,7 +152,7 @@
                       ;; a DM addressed to us belongs in a buffer named for the
                       ;; sender, not for our own nick
                       buffer (if (str/starts-with? (or target "") "#") target from)]
-                  (push-message! buffer from text))
+                  (push-message! buffer from text (:account msg)))
       "JOIN" (let [ch (first params)]
                (if (= from @form-nick)
                  (let [fresh? (empty? (get-in @channels [ch :messages]))]

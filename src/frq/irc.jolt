@@ -67,6 +67,8 @@
         trailing (when i (subs rest-line (+ i 2)))
         parts (remove str/blank? (str/split head #" "))]
     {:tags tags
+     :account (when tags
+                (second (re-find #"(?:^|;)account=([^;]*)" tags)))
      :prefix prefix
      :command (str/upper-case (or (first parts) ""))
      :params (cond-> (vec (rest parts)) trailing (conj trailing))}))
@@ -220,18 +222,33 @@
           (when (= sasl-chunk (count rest))
             (send-line! conn "AUTHENTICATE +"))))))
 
-(defn- sasl-step!
-  "Drive the SASL exchange from the lines the server sends during registration.
+(def ^:private wanted-caps
+  "What this client can actually use.
+
+  `account-tag` is why a guest connection negotiates at all: it puts the
+  sender's DID on every message, which is the only identity a client is given —
+  a nick may be anything, and the hostmask carries eight characters of a DID,
+  too few to resolve. It needs `message-tags` beside it: IRCv3 sends tags only
+  to clients that asked for tags at all, so `account-tag` alone is ACKed and
+  then nothing arrives."
+  ["message-tags" "account-tag"])
+
+(defn- cap-step!
+  "Drive capability negotiation, and the SASL exchange when there is a session.
   Returns the message unchanged, so the caller can go on handling it."
   [conn session msg]
   (let [{:keys [command params]} msg]
     (case command
-      "CAP" (let [[_ sub caps] params]
+      "CAP" (let [[_ sub caps] params
+                  offered (set (str/split (or caps "") #"\s+"))
+                  sasl? (and session (contains? offered "sasl"))
+                  wanted (cond-> (filterv offered wanted-caps) sasl? (conj "sasl"))]
               (case sub
-                "LS" (if (str/includes? (or caps "") "sasl")
-                       (send-line! conn "CAP REQ :sasl")
+                "LS" (if (seq wanted)
+                       (send-line! conn (str "CAP REQ :" (str/join " " wanted)))
                        (send-line! conn "CAP END"))
-                "ACK" (if (str/includes? (or caps "") "sasl")
+                ;; SASL, when acknowledged, is what CAP END now waits for.
+                "ACK" (if (contains? offered "sasl")
                         (send-line! conn "AUTHENTICATE ATPROTO-CHALLENGE")
                         (send-line! conn "CAP END"))
                 "NAK" (send-line! conn "CAP END")
@@ -259,16 +276,14 @@
   ([host port nick on-msg tls?] (connect! host port nick on-msg tls? nil))
   ([host port nick on-msg tls? session]
    (let [conn (open host port tls? nick)
-         on-msg (if session
-                  (fn [msg] (on-msg (sasl-step! conn session msg)))
-                  on-msg)]
+         on-msg (fn [msg] (on-msg (cap-step! conn session msg)))]
      (future
        (try (reader-loop! conn on-msg)
             (catch Exception e
               (on-msg {:command "*ERROR*" :params [(str e)]}))))
-     ;; CAP first when authenticating: registration waits for CAP END, which
-     ;; the SASL exchange sends once it has an answer either way.
-     (when session (send-line! conn "CAP LS 302"))
+     ;; CAP first: registration waits for the CAP END that negotiation sends
+     ;; once it has an answer, either way.
+     (send-line! conn "CAP LS 302")
      (send-line! conn (str "NICK " nick))
      (send-line! conn (str "USER " nick " 0 * :" nick))
      conn)))
