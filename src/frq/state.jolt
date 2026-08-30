@@ -1,0 +1,209 @@
+(ns frq.state
+  "Every cell the UI reads, and the reducers that write them.
+
+  glimmer components re-render from ratoms, so the whole app state is a handful
+  of `atom`s here; the IRC reader thread pushes into the same ones. `apply-msg!`
+  is the only place a wire message turns into UI state."
+  (:require [clojure.string :as str]
+            [glimmer.ratom :as r :refer [atom]]
+            [frq.irc :as irc]))
+
+(def default-host "irc.freeq.at")
+(def default-port "6697")
+
+(def popular-channels
+  [["#general" "General discussion"]
+   ["#test"    "Test channel"]
+   ["#freeq"   "freeq development & support"]
+   ["#dev"     "Programming & technology"]
+   ["#music"   "Music recommendations"]
+   ["#random"  "Off-topic chat"]])
+
+;; screen: :connect | :chats | :chat | :discover | :settings
+(defonce screen (atom :connect))
+(defonce conn (atom nil))
+(defonce status (atom "Not connected"))
+(defonce error (atom nil))
+(defonce connecting? (atom false))
+
+(defonce form-host (atom default-host))
+(defonce form-port (atom default-port))
+;; TLS is the default; untick it for a server's plain :6667 listener
+(defonce form-tls? (atom true))
+(defonce form-nick (atom "frq-guest"))
+
+;; joined as soon as the server sends 001
+(def auto-join "#test")
+
+;; name -> {:name :messages [{:from :text}] :unread n :joined? bool}
+(defonce channels (atom {}))
+(defonce current (atom nil))
+(defonce draft (atom ""))
+(defonce join-input (atom ""))
+(defonce search (atom ""))
+
+(defn connected? [] (some? @conn))
+
+(defn normalize-channel [s]
+  (let [s (str/trim (or s ""))]
+    (cond (str/blank? s) ""
+          (str/starts-with? s "#") s
+          :else (str "#" s))))
+
+(defn- ensure-channel [m name]
+  (if (contains? m name)
+    m
+    (assoc m name {:name name :messages [] :unread 0 :joined? false})))
+
+(defn push-message!
+  "Append a line to a buffer, creating it if needed, and bump the unread count
+  unless that buffer is the one on screen."
+  [channel from text]
+  (swap! channels
+         (fn [m]
+           (let [m (ensure-channel m channel)
+                 viewing? (and (= :chat @screen) (= channel @current))]
+             (-> m
+                 (update-in [channel :messages] conj {:from from :text text})
+                 (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))
+
+(defn open-channel!
+  "Show a buffer. A channel we are not in is joined on the way — a row can
+  outlive the membership behind it (a disconnect drops every channel, the
+  buffer stays), and opening one is a request to be in it."
+  [name]
+  (reset! current name)
+  (reset! screen :chat)
+  (swap! channels #(assoc-in (ensure-channel % name) [name :unread] 0))
+  (when (and @conn
+             (str/starts-with? name "#")
+             (not (get-in @channels [name :joined?])))
+    (irc/join! @conn name)))
+
+(declare join!)
+
+(defn apply-msg!
+  "Fold one parsed IRC message into the state."
+  [msg]
+  (let [{:keys [command params prefix]} msg
+        from (irc/nick-of prefix)]
+    (case command
+      "001" (do (reset! status (str "Connected as " @form-nick))
+                (reset! connecting? false)
+                (reset! screen :chats)
+                (join! auto-join))
+      "PRIVMSG" (let [[target text] params
+                      ;; a DM addressed to us belongs in a buffer named for the
+                      ;; sender, not for our own nick
+                      buffer (if (str/starts-with? (or target "") "#") target from)]
+                  (push-message! buffer from text))
+      "JOIN" (let [ch (first params)]
+               (if (= from @form-nick)
+                 (do (swap! channels #(-> (ensure-channel % ch)
+                                          (assoc-in [ch :joined?] true)))
+                     (push-message! ch "*" (str "You joined " ch)))
+                 (push-message! ch "*" (str from " joined"))))
+      "PART" (let [ch (first params)]
+               (if (= from @form-nick)
+                 (swap! channels #(assoc-in % [ch :joined?] false))
+                 (push-message! ch "*" (str from " left"))))
+      "QUIT" nil
+      ("NOTICE" "372" "375" "376" "002" "003" "004")
+      (reset! status (or (last params) @status))
+      ("473" "474" "475" "477" "403" "471")
+      (reset! error (str "Cannot join: " (last params)))
+      "*DISCONNECTED*" (do (reset! conn nil)
+                           (reset! connecting? false)
+                           (swap! channels
+                                  #(reduce-kv (fn [m k v] (assoc m k (assoc v :joined? false)))
+                                              {} %))
+                           (reset! status "Disconnected"))
+      "*ERROR*" (do (reset! error (first params))
+                    (reset! connecting? false))
+      nil)))
+
+(def plain-port 6667)
+
+(defn- describe
+  "What went wrong, in words. A jolt condition prints as #object[:object], so
+  the message and the ex-data are what has to be dug out by hand."
+  [e]
+  (let [msg (or (ex-message e) (str e))
+        data (ex-data e)]
+    (str (type e) ": " msg (when data (str " " (pr-str data))))))
+
+(defn- dial! [host port nick tls?]
+  ;; stderr is the only console on Android — this line lands in logcat.
+  (binding [*out* *err*]
+    (println "frq: dialing" host port (if tls? "tls" "plain")))
+  (reset! conn (irc/connect! host port nick apply-msg! tls?)))
+
+(defn connect!
+  "Dial, and fall back to the plain listener when TLS cannot be had. Android is
+  the case that needs this: jolt's TLS is OpenSSL through the dynamic loader,
+  and there is no public libssl there to load."
+  []
+  (reset! error nil)
+  (reset! connecting? true)
+  (reset! status (str "Connecting to " @form-host ":" @form-port "…"))
+  (let [host @form-host
+        port (parse-long (str/trim @form-port))
+        nick (str/trim @form-nick)]
+    (try
+      (dial! host port nick @form-tls?)
+      (catch Exception e
+        (binding [*out* *err*] (println "frq: dial failed:" (describe e)))
+        (if @form-tls?
+          (do (reset! status (str "TLS unavailable — trying " host ":" plain-port "…"))
+              (try
+                (dial! host plain-port nick false)
+                (reset! form-tls? false)
+                (reset! form-port (str plain-port))
+                (catch Exception e2
+                  (binding [*out* *err*] (println "frq: plain dial failed:" (describe e2)))
+                  (reset! connecting? false)
+                  (reset! conn nil)
+                  (reset! status "Not connected")
+                  (reset! error (str "Could not connect: " (describe e2))))))
+          (do (reset! connecting? false)
+              (reset! conn nil)
+              (reset! status "Not connected")
+              (reset! error (str "Could not connect: " (describe e)))))))))
+
+(defn disconnect! []
+  (when-let [c @conn] (irc/close! c))
+  (reset! conn nil)
+  ;; The buffers survive, the memberships do not — leaving `joined?` set would
+  ;; have the next Open show a channel nobody is in.
+  (swap! channels #(reduce-kv (fn [m k v] (assoc m k (assoc v :joined? false))) {} %))
+  (reset! status "Not connected")
+  (reset! screen :connect))
+
+(defn join! [name]
+  (let [ch (normalize-channel name)]
+    (when (seq ch)
+      (reset! error nil)
+      (open-channel! ch))))
+
+(defn send-draft! []
+  (let [text (str/trim @draft)
+        target @current]
+    (when (and (seq text) target)
+      (when-let [c @conn] (irc/privmsg! c target text))
+      (push-message! target @form-nick text)
+      (reset! draft ""))))
+
+(defn channel-list
+  "Buffers in name order, filtered by the search box."
+  []
+  (let [q (str/lower-case (str/trim @search))]
+    (->> (vals @channels)
+         (filter #(or (str/blank? q)
+                      (str/includes? (str/lower-case (:name %)) q)))
+         (sort-by :name)
+         vec)))
+
+(defn last-preview [buffer]
+  (if-let [m (last (:messages buffer))]
+    (str (:from m) ": " (:text m))
+    "No messages yet"))

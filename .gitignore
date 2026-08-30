@@ -1,0 +1,7 @@
+# Build outputs: the boot image, the staged libraries, the APK.
+/android/build/
+
+# Tool caches.
+/.jolt/
+/.lsp/
+/.clj-kondo/

@@ -1,0 +1,20 @@
+{:paths ["src"]
+
+ ;; glimmer owns the reactive half (ratom, components, reconciler);
+ ;; glimmer-vidya paints it as Vidya/egui through libvidya's retained-tree ABI.
+ :deps {jolt-lang/glimmer   {:git/url "https://github.com/jolt-lang/glimmer"
+                             :git/tag "v0.1.0"
+                             :git/sha "5581c331c51aff989259b9e8e92ec920fe5e6741"}
+        nandi/glimmer-vidya {:local/root "../vidya/glimmer"}}
+
+ ;; libvidya, the Rust/egui build (the C/raylib one does not export the tree
+ ;; ABI the backend binds):
+ ;;   cd ../vidya && just ffi
+ ;;   LD_LIBRARY_PATH=../vidya/build jolt -M:frq
+ :jolt/native [{:name "vidya"
+                :darwin ["libvidya.dylib"]
+                :linux ["libvidya.so"]}]
+
+ :aliases {:frq {:main-opts ["-m" "frq.app"]}}
+
+ :tasks {frq "jolt -M:frq"}}

@@ -1,0 +1,151 @@
+(ns frq.irc
+  "A small IRC client for freeq servers, over plain TCP.
+
+  Two transports, behind one `read-chunk!`/`write!` pair. TLS is the default —
+  jolt.mvn-http carries OpenSSL bindings for its own HTTPS fetching, and they
+  are just as good for an IRC socket, so `:6697` works. Plain TCP is the raw
+  BSD calls: socket, connect, send, recv.
+
+  The raw calls rather than the java.net.Socket surface jolt.socket registers,
+  because that surface does not work on Android — nor does mvn-http's
+  getaddrinfo path, which is why TLS is desktop-only there. `socket()` and
+  `connect()` themselves are fine on both, so this is what the phone gets.
+
+  One future reads, the UI thread writes; nothing here knows about the UI.
+  `connect!` takes an `on-msg` fn and returns a connection map that
+  `send-line!` and `close!` accept."
+  (:require [clojure.string :as str]
+            [jolt.ffi :as ffi]
+            [jolt.mvn-http :as tls]
+            [jolt.socket :as socket]))
+
+(def ^:private af-inet 2)
+(def ^:private sock-stream 1)
+(def ^:private buffer-size 8192)
+
+;; ---------------------------------------------------------------- parsing
+
+(defn parse-line
+  "An IRC line into {:prefix :command :params}. The trailing parameter (after
+  \" :\") keeps its spaces; everything before it splits on whitespace."
+  [line]
+  (let [line (str/trimr line)
+        [prefix rest-line] (if (str/starts-with? line ":")
+                             (let [i (str/index-of line " ")]
+                               [(subs line 1 i) (subs line (inc i))])
+                             [nil line])
+        i (str/index-of rest-line " :")
+        head (if i (subs rest-line 0 i) rest-line)
+        trailing (when i (subs rest-line (+ i 2)))
+        parts (remove str/blank? (str/split head #" "))]
+    {:prefix prefix
+     :command (str/upper-case (or (first parts) ""))
+     :params (cond-> (vec (rest parts)) trailing (conj trailing))}))
+
+(defn nick-of
+  "The nick half of a `nick!user@host` prefix."
+  [prefix]
+  (when prefix
+    (let [i (str/index-of prefix "!")]
+      (if i (subs prefix 0 i) prefix))))
+
+;; ---------------------------------------------------------------- transport
+
+(defn- send-all!
+  "send(2) until the whole string is gone — a short write is not an error."
+  [fd text]
+  (let [len (count (.getBytes text))]
+    (ffi/with-c-string [p text]
+      (loop [sent 0]
+        (when (< sent len)
+          (let [n (socket/c-send fd p (- len sent) 0)]
+            (when (neg? n) (throw (ex-info "send failed" {:fd fd})))
+            (recur (+ sent n))))))))
+
+(defn- write!
+  "Bytes out, whichever transport this is."
+  [conn text]
+  (if (= :tls (:kind conn))
+    (tls/tls-write (:tls conn) (.getBytes text))
+    (send-all! (:fd conn) text)))
+
+(defn- read-chunk!
+  "Block for the next chunk as a string, or nil at end of stream."
+  [conn]
+  (if (= :tls (:kind conn))
+    (let [b (try (tls/tls-read (:tls conn)) (catch Exception _ nil))]
+      (when (and b (pos? (count b))) (String. b)))
+    (let [buf (:buf conn)
+          n (try (socket/c-recv (:fd conn) buf buffer-size 0) (catch Exception _ -1))]
+      (when (and n (pos? n)) (String. (ffi/read-bytes buf n))))))
+
+(defn send-line!
+  "Send a raw IRC line. Safe from any thread; writes are serialised by the lock."
+  [conn line]
+  (locking (:lock conn)
+    (write! conn (str line "\r\n"))))
+
+(defn- reader-loop!
+  "Read bytes until the socket closes, splitting on CRLF and dispatching each
+  complete line. PING is answered here so a dropped UI never times the link
+  out; everything else goes to `on-msg`."
+  [conn on-msg]
+  (let []
+    (loop [acc ""]
+      (let [chunk (read-chunk! conn)]
+        (if (nil? chunk)
+          (on-msg {:command "*DISCONNECTED*" :params []})
+          (let [acc (str acc chunk)
+                lines (str/split acc #"\r?\n" -1)
+                complete (butlast lines)]
+            (doseq [line complete :when (seq (str/trim line))]
+              (let [msg (parse-line line)]
+                (when (= "PING" (:command msg))
+                  (send-line! conn (str "PONG :" (first (:params msg)))))
+                (on-msg (assoc msg :raw line))))
+            (recur (last lines))))))))
+
+(defn- open
+  "Dial `host`:`port`, over TLS unless `tls?` is false."
+  [host port tls? nick]
+  (if tls?
+    (do (tls/ensure-native!)
+        {:kind :tls :tls (tls/tls-connect host (int port))
+         :lock (Object.) :nick nick})
+    (let [ip (#'socket/ip->str (socket/resolve-host host))
+          fd (socket/c-socket af-inet sock-stream 0)]
+      (when (neg? fd) (throw (ex-info "socket() failed" {:host host})))
+      (let [rc (socket/c-connect fd (#'socket/make-sockaddr-in ip (int port)) 16)]
+        (when (neg? rc)
+          (socket/c-close fd)
+          (throw (ex-info "connect() failed" {:host host :ip ip :port port}))))
+      {:kind :plain :fd fd :buf (ffi/alloc buffer-size)
+       :lock (Object.) :nick nick})))
+
+(defn connect!
+  "Open a connection, register as a guest `nick`, and start the reader.
+  `tls?` defaults to true — freeq's TLS listener is :6697, plain is :6667."
+  ([host port nick on-msg] (connect! host port nick on-msg true))
+  ([host port nick on-msg tls?]
+   (let [conn (open host port tls? nick)]
+     (future
+       (try (reader-loop! conn on-msg)
+            (catch Exception e
+              (on-msg {:command "*ERROR*" :params [(str e)]}))))
+     (send-line! conn (str "NICK " nick))
+     (send-line! conn (str "USER " nick " 0 * :" nick))
+     conn)))
+
+(defn join! [conn channel] (send-line! conn (str "JOIN " channel)))
+(defn part! [conn channel] (send-line! conn (str "PART " channel)))
+
+(defn privmsg! [conn target text]
+  (send-line! conn (str "PRIVMSG " target " :" text)))
+
+(defn close! [conn]
+  (try (send-line! conn "QUIT :frq") (catch Exception _ nil))
+  (try (if (= :tls (:kind conn))
+         (tls/tls-close (:tls conn))
+         (do (socket/c-close (:fd conn))
+             (ffi/free (:buf conn))))
+       (catch Exception _ nil)))

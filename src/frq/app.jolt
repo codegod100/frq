@@ -1,0 +1,192 @@
+(ns frq.app
+  "frq — a freeq client written as glimmer components, painted by Vidya/egui.
+
+  The screens follow sleek's: connect, chats, chat, discover, settings, under a
+  tab bar. Where sleek draws them in Rust against egui directly, here each is a
+  hiccup component over the same widgets."
+  (:require [glimmer.ratom :as r :refer [atom]]
+            [glimmer.core :as ui]
+            [glimmer-vidya.core :as vidya]
+            [frq.state :as s]))
+
+;; ---------------------------------------------------------------- pieces
+
+(defn error-note []
+  (when-let [e @s/error]
+    [:card {}
+     [:label {:label (str "⚠ " e)}]
+     [:button {:label "Dismiss" :on-click #(reset! s/error nil)}]]))
+
+(defn tab-bar []
+  [:hbox {:spacing 8}
+   (for [[k label] [[:chats "Chats"] [:discover "Discover"] [:settings "Settings"]]]
+     [:button {:key k
+               :label label
+               :kind (if (= k @s/screen) :primary :default)
+               :on-click #(reset! s/screen k)}])])
+
+;; ---------------------------------------------------------------- connect
+
+(defn connect-screen []
+  [:page {:max-width 520}
+   [:title {:label "frq"}]
+   [:dim-label {:label "freeq client — guest connect over plain TCP."}]
+   [error-note]
+   [:card {}
+    [:title-2 {:label "Connect as guest"}]
+    [:label {:label "Nick"}]
+    [:entry {:text @s/form-nick
+             :width-request 320
+             :placeholder "your nick"
+             :on-change #(reset! s/form-nick %)}]
+    [:label {:label "Server"}]
+    [:hbox {:spacing 8}
+     [:entry {:text @s/form-host
+              :width-request 220
+              :placeholder "host"
+              :on-change #(reset! s/form-host %)}]
+     [:entry {:text @s/form-port
+              :width-request 90
+              :placeholder "6697"
+              :on-change #(reset! s/form-port %)}]]
+    [:checkbutton {:label "TLS"
+                   :active @s/form-tls?
+                   :on-toggled #(do (swap! s/form-tls? not)
+                                    (reset! s/form-port
+                                            (if @s/form-tls? "6697" "6667")))}]
+    [:separator {}]
+    (if @s/connecting?
+      [:hbox {:spacing 8}
+       [:spinner {}]
+       [:dim-label {:label @s/status}]]
+      [:hbox {:spacing 8}
+       [:button {:label "Connect" :kind :primary :on-click s/connect!}]
+       [:dim-label {:label @s/status}]])]
+   [:dim-label {:label "TLS rides jolt's OpenSSL bindings; untick it for a plain :6667 listener."}]])
+
+;; ---------------------------------------------------------------- chats
+
+(defn conversation-row [buffer]
+  (let [name (:name buffer)
+        unread (:unread buffer)]
+    [:card {:key name}
+     [:hbox {:spacing 12}
+      [:title-2 {:label name}]
+      (when (pos? unread) [:label {:label (str "● " unread)}])]
+     [:dim-label {:label (s/last-preview buffer)}]
+     [:hbox {:spacing 8}
+      [:button {:label "Open" :kind :primary :on-click #(s/open-channel! name)}]
+      [:status {:label (if (:joined? buffer) "joined" "not joined")
+                :live (boolean (:joined? buffer))}]]]))
+
+(defn chats-screen []
+  (let [buffers (s/channel-list)]
+    [:page {:max-width 620}
+     [:title {:label "Chats"}]
+     [error-note]
+     [:card {}
+      [:title-2 {:label "Join channel"}]
+      [:hbox {:spacing 8}
+       [:entry {:text @s/join-input
+                :width-request 380
+                :placeholder "#channel"
+                :on-change #(reset! s/join-input %)
+                :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
+       [:button {:label "Join"
+                 :kind :primary
+                 :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]]
+     [:entry {:text @s/search
+              :placeholder "Search channels"
+              :on-change #(reset! s/search %)}]
+     (if (seq buffers)
+       (for [b buffers] [conversation-row b])
+       [:card {} [:dim-label {:label "No conversations yet — join a channel."}]])
+     [:separator {}]
+     [tab-bar]]))
+
+;; ---------------------------------------------------------------- chat
+
+(defn message-row [i m]
+  ;; Sender above the text, not beside it. A wrapping label in a horizontal row
+  ;; lays out against the row's width rather than the column's, so one long URL
+  ;; drags every line that follows it off the left edge.
+  [:vbox {:key i :spacing 2}
+   [:dim-label {:label (:from m)}]
+   [:label {:label (:text m)}]])
+
+(defn chat-screen []
+  (let [name @s/current
+        buffer (get @s/channels name)]
+    ;; Not a :page — a page scrolls everything, which would carry the compose
+    ;; bar off the bottom with the backlog. The message list is the only thing
+    ;; that scrolls, bounded so what follows it keeps its room.
+    [:vbox {:spacing 8 :margin 12}
+     [:hbox {:spacing 8}
+      [:button {:label "← Chats" :on-click #(reset! s/screen :chats)}]
+      [:title {:label (or name "Chat")}]]
+     [error-note]
+     ;; :reserve leaves room for the separator and compose bar below, so the
+     ;; list fills whatever the window has and no more.
+     [:scroll {:orientation :vertical :reserve 72 :stick-to-bottom true}
+      (if (seq (:messages buffer))
+        (map-indexed message-row (:messages buffer))
+        [:dim-label {:label "Nothing here yet."}])]
+     [:separator {}]
+     [:hbox {:spacing 8}
+      ;; narrow enough that Send keeps its place on a phone-width row
+      [:entry {:text @s/draft
+               :width-request 300
+               :placeholder "Message"
+               :on-change #(reset! s/draft %)
+               :on-activate s/send-draft!}]
+      [:button {:label "Send" :kind :primary :on-click s/send-draft!}]]]))
+
+;; ---------------------------------------------------------------- discover
+
+(defn discover-screen []
+  [:page {:max-width 620}
+   [:title {:label "Discover"}]
+   [:dim-label {:label "Popular channels on freeq."}]
+   [error-note]
+   (for [[name blurb] s/popular-channels]
+     (let [joined? (get-in @s/channels [name :joined?])]
+       [:card {:key name}
+        [:title-2 {:label name}]
+        [:dim-label {:label blurb}]
+        [:button {:label (if joined? "Open" "Join")
+                  :kind :primary
+                  :on-click #(if joined? (s/open-channel! name) (s/join! name))}]]))
+   [:separator {}]
+   [tab-bar]])
+
+;; ---------------------------------------------------------------- settings
+
+(defn settings-screen []
+  [:page {:max-width 520}
+   [:title {:label "Settings"}]
+   [:card {}
+    [:title-2 {:label "Connection"}]
+    [:status {:label @s/status :live (s/connected?)}]
+    [:label {:label (str "Server: " @s/form-host ":" @s/form-port)}]
+    [:label {:label (str "Nick: " @s/form-nick)}]
+    [:separator {}]
+    [:button {:label "Disconnect" :kind :destructive :on-click s/disconnect!}]]
+   [:card {}
+    [:title-2 {:label "frq"}]
+    [:dim-label {:label "freeq client in jolt — glimmer components on the Vidya/egui backend."}]
+    [:button {:label "Quit" :on-click vidya/quit!}]]
+   [:separator {}]
+   [tab-bar]])
+
+;; ---------------------------------------------------------------- shell
+
+(defn app []
+  (case @s/screen
+    :connect [connect-screen]
+    :chat [chat-screen]
+    :discover [discover-screen]
+    :settings [settings-screen]
+    [chats-screen]))
+
+(defn -main [& _]
+  (ui/run app :title "frq" :width 520 :height 860))
