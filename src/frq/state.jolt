@@ -7,7 +7,8 @@
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
             [frq.atproto :as atproto]
-            [frq.irc :as irc]))
+            [frq.irc :as irc]
+            [frq.oauth :as oauth]))
 
 (def default-host "irc.freeq.at")
 (def default-port "6697")
@@ -36,10 +37,15 @@
 ;; Bluesky sign-in. The app password reaches the user's own PDS and nothing
 ;; else: freeq is handed the session token it mints, and verifies that token by
 ;; asking the same PDS. It is never written to disk.
-(defonce auth-mode (atom :guest))         ; :guest | :bluesky
+(defonce auth-mode (atom :guest))         ; :guest | :bluesky | :app-password
 (defonce form-handle (atom ""))
 (defonce form-app-password (atom ""))
-(defonce session (atom nil))              ; {:did :handle :access-jwt :pds}
+(defonce session (atom nil))              ; a pds-session or a web-token one
+
+;; The durable half of an OAuth sign-in. The web-token beside it is single-use,
+;; so a reconnect mints a fresh one from this rather than replaying the old.
+(defonce broker-token (atom nil))
+(defonce login-url (atom nil))            ; shown while the browser is open
 
 ;; joined as soon as the server sends 001
 (def auto-join "#test")
@@ -125,6 +131,10 @@
       (reset! error (str "Cannot join: " (last params)))
       "903" (reset! status (str "Signed in as " (:handle @session)))
       ("904" "905" "906") (do (reset! session nil)
+                              ;; The broker token may still be good — but a
+                              ;; refusal is as likely to mean it is not, and a
+                              ;; stale one would fail the same way every time.
+                              (reset! broker-token nil)
                               (reset! error (str "Bluesky sign-in refused: "
                                                  (or (last params) "no reason given"))))
       "*DISCONNECTED*" (do (reset! conn nil)
@@ -153,31 +163,57 @@
     (println "frq: dialing" host port (if tls? "tls" "plain")))
   (reset! conn (irc/connect! host port nick apply-msg! tls? sess)))
 
-(defn connect!
-  "Dial, and fall back to the plain listener when TLS cannot be had. Android is
-  the case that needs this: jolt's TLS is OpenSSL through the dynamic loader,
-  and there is no public libssl there to load."
+(defn- connect-blocking!
+  "Sign in if asked to, then dial. Blocking throughout — a browser handoff can
+  take a minute, and the TLS handshake is not instant either."
   []
   (reset! error nil)
   (reset! connecting? true)
   (reset! status (str "Connecting to " @form-host ":" @form-port "…"))
   (let [host @form-host
         port (parse-long (str/trim @form-port))
-        bluesky? (= :bluesky @auth-mode)
-        sess (when bluesky?
-               (reset! status (str "Signing in as " (str/trim @form-handle) "…"))
-               (let [s (atproto/create-session (str/trim @form-handle)
-                                               @form-app-password)]
+        mode @auth-mode
+        sess (case mode
+               ;; OAuth: the browser does the talking, we wait on loopback. A
+               ;; broker token in hand skips the browser entirely.
+               :bluesky
+               (let [handle (str/trim @form-handle)
+                     tokens (if-let [bt @broker-token]
+                              (do (reset! status "Refreshing your session…")
+                                  (oauth/refresh-session oauth/default-broker bt))
+                              (do (reset! status "Opening your browser to sign in…")
+                                  (oauth/await-callback!
+                                   oauth/default-broker handle
+                                   (fn [url]
+                                     (reset! login-url url)
+                                     (oauth/open-browser! url)
+                                     (reset! status "Waiting for the browser…")))))
+                     s (assoc tokens :kind :web-token)]
+                 (reset! login-url nil)
+                 (reset! broker-token (:broker-token tokens))
                  (reset! session s)
-                 ;; The password did its work at the PDS; do not keep it.
-                 (reset! form-app-password "")
-                 s))
+                 (when (seq (:handle tokens)) (reset! form-handle (:handle tokens)))
+                 s)
+
+               :app-password
+               (do (reset! status (str "Signing in as " (str/trim @form-handle) "…"))
+                   (let [s (assoc (atproto/create-session (str/trim @form-handle)
+                                                          @form-app-password)
+                                  :kind :pds-session)]
+                     (reset! session s)
+                     ;; The password did its work at the PDS; do not keep it.
+                     (reset! form-app-password "")
+                     s))
+
+               nil)
         ;; An authenticated connection still needs a nick — the DID is the
         ;; identity, the nick is only what the channel calls you.
-        nick (if bluesky?
-               (-> (:handle sess) (str/split #"\.") first)
+        nick (if sess
+               (or (:nick sess)
+                   (-> (or (:handle sess) "") (str/split #"\\.") first)
+                   (str/trim @form-nick))
                (str/trim @form-nick))]
-    (when bluesky? (reset! form-nick nick))
+    (when sess (reset! form-nick nick))
     (try
       (dial! host port nick @form-tls? sess)
       (catch Exception e
@@ -198,6 +234,21 @@
               (reset! conn nil)
               (reset! status "Not connected")
               (reset! error (str "Could not connect: " (describe e)))))))))
+
+(defn connect!
+  "Start connecting. The work happens on another thread: the OAuth wait sits on
+  a loopback accept until the browser comes back, and the UI has frames to
+  paint in the meantime."
+  []
+  (reset! error nil)
+  (reset! connecting? true)
+  (future
+    (try (connect-blocking!)
+         (catch Exception e
+           (reset! connecting? false)
+           (reset! conn nil)
+           (reset! status "Not connected")
+           (reset! error (str "Could not connect: " (describe e)))))))
 
 (defn disconnect! []
   (when-let [c @conn] (irc/close! c))

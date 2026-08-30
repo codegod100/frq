@@ -29,7 +29,7 @@
 
 (defn- mode-tabs []
   [:hbox {:spacing 8}
-   (for [[k label] [[:guest "Guest"] [:bluesky "Bluesky"]]]
+   (for [[k label] [[:guest "Guest"] [:bluesky "Bluesky"] [:app-password "App password"]]]
      [:button {:key k
                :label label
                :kind (if (= k @s/auth-mode) :primary :default)
@@ -69,10 +69,27 @@
    [error-note]
    [:card {}
     [mode-tabs]
-    (if (= :bluesky @s/auth-mode)
+    (case @s/auth-mode
+      :bluesky
       [:vbox {:spacing 6}
        [:title-2 {:label "Sign in with Bluesky"}]
-       [:dim-label {:label "Your app password goes to your own PDS. freeq is handed the session it mints, and checks it with that same PDS."}]
+       [:dim-label {:label "Opens your browser for AT Protocol OAuth. freeq's broker hands back a token; no password passes through frq."}]
+       [:label {:label "Handle"}]
+       [:entry {:text @s/form-handle
+                :width-request 320
+                :placeholder "alice.bsky.social"
+                :on-change #(reset! s/form-handle %)}]
+       (when @s/broker-token
+         [:dim-label {:label "Session remembered — Connect will not need the browser."}])
+       (when-let [url @s/login-url]
+         [:vbox {:spacing 4}
+          [:dim-label {:label "If the browser did not open, visit:"}]
+          [:label {:label url}]])]
+
+      :app-password
+      [:vbox {:spacing 6}
+       [:title-2 {:label "Sign in with an app password"}]
+       [:dim-label {:label "No browser. Your app password goes to your own PDS; freeq is handed the session it mints."}]
        [:label {:label "Handle"}]
        [:entry {:text @s/form-handle
                 :width-request 320
@@ -84,6 +101,7 @@
                 :placeholder "xxxx-xxxx-xxxx-xxxx"
                 :on-change #(reset! s/form-app-password %)}]
        [:dim-label {:label "Make one at bsky.app → Settings → App Passwords."}]]
+
       [:vbox {:spacing 6}
        [:title-2 {:label "Connect as guest"}]
        [:label {:label "Nick"}]
@@ -204,7 +222,11 @@
     (if-let [sess @s/session]
       [:vbox {:spacing 2}
        [:label {:label (str "Signed in as " (:handle sess))}]
-       [:dim-label {:label (:did sess)}]]
+       [:dim-label {:label (or (:did sess) "")}]
+       (when @s/broker-token
+         [:button {:label "Forget Bluesky session"
+                   :kind :destructive
+                   :on-click #(do (reset! s/broker-token nil) (reset! s/session nil))}])]
       [:dim-label {:label "Guest — not signed in."}])
     [:separator {}]
     [:button {:label "Disconnect" :kind :destructive :on-click s/disconnect!}]]

@@ -12,7 +12,8 @@ tags rather than immediate-mode drawing code, and state lives in ratoms instead
 of an `AppState` struct.
 
 ```
-src/frq/atproto.jolt handle → DID → PDS → session, and the SASL payload
+src/frq/atproto.jolt handle → DID → PDS → session, and the SASL payloads
+src/frq/oauth.jolt   the broker flow: login URL, loopback capture, /session
 src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
 src/frq/state.jolt   the ratoms every screen reads, and `apply-msg!`
 src/frq/app.jolt     the screens
@@ -38,22 +39,28 @@ cargo run --release --bin freeq-server        # in the freeq checkout
 
 ## Signing in
 
-Guest is the default. The **Bluesky** tab on the connect screen takes a handle
-and an [app password](https://bsky.app/settings/app-passwords) and signs in
-through AT Protocol:
+Three modes on the connect screen.
 
-1. `com.atproto.identity.resolveHandle` turns the handle into a DID
-2. the DID document (PLC directory, or the domain for `did:web`) gives its PDS
-3. `com.atproto.server.createSession` mints a session token there
-4. freeq's SASL `ATPROTO-CHALLENGE` carries that token as `method:
-   "pds-session"`, with the server's own nonce echoed back so it cannot be
-   replayed elsewhere
+**Bluesky** (OAuth, the default way in) follows sleek's flow: frq binds a
+loopback port, puts it in `return_to`, and opens
+`auth.freeq.at/auth/login?handle=…`. The broker runs the OAuth dance with the
+PDS and redirects back to that port with the handoff in the URL *fragment*, so
+it never reaches a server as a query string. The page frq serves there has one
+job: POST the fragment back to itself. What comes back is a single-use SASL
+`web-token` and a durable `broker_token`; later connections mint a fresh token
+from the durable one at `/session` and skip the browser.
 
-The app password goes to the user's own PDS and nowhere else — freeq is handed
-only the token, and verifies it by asking that same PDS. It is not written to
-disk, and is dropped from memory once the session exists.
+**App password** signs in without a browser, straight to the user's own PDS:
+`resolveHandle` → DID → PDS from the DID document → `createSession`. The
+password goes to that PDS and nowhere else, is never written to disk, and is
+dropped once the session exists.
 
-A refused sign-in is reported and the connection continues as a guest.
+Either way freeq sees only a token. The SASL mechanism is
+`ATPROTO-CHALLENGE` in both cases — `method: "web-token"`, which the server
+resolves through its own token store, or `method: "pds-session"` with the
+server's nonce echoed back so the token cannot be replayed elsewhere.
+
+A refused sign-in is reported and the connection carries on as a guest.
 
 ## Android
 
@@ -88,7 +95,10 @@ surface — that surface does not work on Android either, while the syscalls do.
 ## Limits
 
 * **TLS and plain TCP only** — no WebSocket, no iroh. On Android, plain only.
-* **App-password sign-in only.** No OAuth broker, no `did:key` signing, no
-  credential gates, no E2EE. Sign-in needs TLS, so it is desktop-only.
+* **No `did:key` signing, no credential gates, no E2EE.** Sign-in of either
+  kind needs TLS, so it is desktop-only — the Android build connects as a
+  guest.
+* **The broker token lives in memory.** Nothing is persisted, so a restart
+  means another trip through the browser.
 * **No scrollback trimming, avatars, reactions, threads, or calls.**
 * Message lists are keyed vboxes; glimmer-vidya has no `:listbox` yet.

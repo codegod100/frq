@@ -161,12 +161,19 @@
     (String. (byte-array (map unchecked-byte bytes)))))
 
 (defn sasl-response
-  "The base64url SASL payload for a PDS session: the token, the DID it belongs
-  to, its PDS, and the server's own nonce echoed back so the token cannot be
-  replayed at another server."
+  "The base64url SASL payload for a session, either kind freeq takes.
+
+  A `:pds-session` carries the PDS token, the DID it belongs to, its PDS, and
+  the server's own nonce echoed back so the token cannot be replayed at another
+  server. A `:web-token` from the auth broker carries only the token — the
+  server looks the DID up in its own token store, which is why the field is
+  sent empty rather than guessed at."
   [session nonce]
-  (b64-encode (json-object {"did" (:did session)
-                            "signature" (:access-jwt session)
-                            "method" "pds-session"
-                            "pds_url" (:pds session)
-                            "challenge_nonce" nonce})))
+  (b64-encode
+   (if (= :web-token (:kind session))
+     (json-object {"did" "" "method" "web-token" "signature" (:token session)})
+     (json-object {"did" (:did session)
+                   "signature" (:access-jwt session)
+                   "method" "pds-session"
+                   "pds_url" (:pds session)
+                   "challenge_nonce" nonce}))))
