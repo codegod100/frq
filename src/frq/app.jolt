@@ -536,13 +536,20 @@
   "Everyone with a camera on, or nothing at all.
 
   A call with no video is the normal case and should look like one — a row of
-  empty frames would suggest something had failed to load."
+  empty frames would suggest something had failed to load. The row itself is
+  always here even when empty, so a tile appearing adds a child rather than
+  changing the shape of the tree around it.
+
+  `av/tiles` reads a cell the pump writes, which is what subscribes this
+  component: without that this would render once, with nobody on screen, and
+  never hear that someone had turned a camera on."
   []
-  (let [tiles (av/tiles)]
-    [:vbox {:key :call-wall :spacing 6}
-     (when (seq tiles)
-       [:hbox {:spacing 8}
-        (mapv call-tile tiles)])]))
+  [:vbox {:key :call-wall :spacing 6}
+   [:hbox {:key :tiles :spacing 8}
+    ;; A seq, not a vector: children splice, and a vector would be read as one
+    ;; more hiccup element — which an empty one is not.
+    (for [key (av/tiles)]
+      [call-tile key])]])
 
 (defn- call-controls
   "What the person in a call can do about it.
@@ -787,5 +794,6 @@
   ;; read when it is not. It has to be a timer: `frame-rgba!` and everything
   ;; else that touches a node belongs to the loop thread, and this is glimmer's
   ;; way of getting onto it.
+  (av/init-logging!)
   (vidya/after! 0 av/install-pump!)
   (ui/run app :title "frq" :width 520 :height 860))

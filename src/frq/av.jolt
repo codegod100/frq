@@ -183,6 +183,15 @@
 ;; the call.
 (defonce ^:private painted-feeds (atom #{}))
 
+;; Who has a picture, in the order they should be drawn.
+;;
+;; A cell rather than a question asked at render time, and that is the whole
+;; point: glimmer re-renders a component when a ratom it read has changed, so a
+;; view that asked the media plane directly would render once with nobody on
+;; screen and never be told that someone had appeared. The frames would arrive,
+;; be handed to Vidya, and paint into no node at all.
+(defonce feeds (atom []))
+
 ;; The self-view is keyed this way by the media plane; the UI wants to know
 ;; which tile is its own, to label it and to mirror nothing else.
 (def local-feed "__local__")
@@ -229,7 +238,8 @@
   "Stop painting every feed we have been pushing."
   []
   (doseq [k @painted-feeds] (vidya/frame-drop! k))
-  (reset! painted-feeds #{}))
+  (reset! painted-feeds #{})
+  (reset! feeds []))
 
 (defn stop-media!
   "Leave the media plane and forget the call. Signaling is the caller's to send
@@ -238,6 +248,7 @@
   []
   (raw-stop)
   (drop-feeds!)
+  (reset! feeds [])
   (reset! local-call nil)
   (reset! media-error nil))
 
@@ -383,14 +394,32 @@
           (swap! painted-feeds conj key)))
       (recur))))
 
-(defn- forget-gone-feeds!
-  "Drop the tiles of everyone who has stopped publishing."
+(defn- order-feeds
+  "Everyone with a picture, the self-view last.
+
+  Last because it is the one whose subject the person can already see, so it
+  belongs where it will not push a face they are talking to off the row."
+  [keys]
+  (let [mine (filter #(= local-feed %) keys)
+        others (sort (remove #(= local-feed %) keys))]
+    (vec (concat others mine))))
+
+(defn- pump-feeds!
+  "Reconcile who has a picture: drop the tiles of anyone who has stopped, and
+  publish the list for the view to render from.
+
+  The cell is only written when the set has actually changed. Writing it every
+  frame would re-render the call wall sixty times a second to say the same
+  thing, and every `:image` node under it would be rebuilt around a texture
+  that was fine where it was."
   []
-  (let [live (set (remove str/blank? (str/split-lines (or (video-keys) ""))))
-        gone (remove live @painted-feeds)]
-    (doseq [k gone]
+  (let [live (set (remove str/blank? (str/split-lines (or (video-keys) ""))))]
+    (doseq [k (remove live @painted-feeds)]
       (vidya/frame-drop! k)
-      (swap! painted-feeds disj k))))
+      (swap! painted-feeds disj k))
+    (let [ordered (order-feeds live)]
+      (when-not (= ordered @feeds)
+        (reset! feeds ordered)))))
 
 (defn pump!
   "One frame's worth of the media plane. Cheap when no call is up.
@@ -401,7 +430,17 @@
   (when (live?)
     (pump-status!)
     (pump-frames!)
-    (forget-gone-feeds!)))
+    (pump-feeds!)))
+
+(defn init-logging!
+  "Let the media plane talk to stderr, honouring `RUST_LOG`.
+
+  Worth doing unconditionally: it says nothing at all without a `RUST_LOG`,
+  and when a call misbehaves it is the only thing that knows why — MoQ
+  subscription, codec negotiation and device open all happen on the far side of
+  the boundary, where no jolt-level trace can see them."
+  []
+  (raw-init-logging))
 
 (defn install-pump!
   "Start pumping the media plane every frame. Returns a timer id.
@@ -414,10 +453,7 @@
 (defn tiles
   "Everyone with a picture in the current call, the self-view last.
 
-  Last because it is the one the person can already see the subject of, so it
-  belongs where it will not push a face they are talking to off the row."
+  Reads the cell the pump writes, so a component calling this re-renders when
+  someone turns their camera on."
   []
-  (let [ks (remove str/blank? (str/split-lines (or (video-keys) "")))
-        mine (filter #(= local-feed %) ks)
-        others (sort (remove #(= local-feed %) ks))]
-    (vec (concat others mine))))
+  @feeds)
