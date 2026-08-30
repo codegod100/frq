@@ -405,7 +405,9 @@
       ;; laid out from the right so the action sits at the edge and the text
       ;; takes the width that is left. The text keeps a column of its own:
       ;; a wrapping label directly in a row wraps against the row.
-      [:hbox {:key :line :align :end :spacing 6}
+      ;; A little air under the sender's row: the name and face are a heading
+      ;; for what follows, and a heading that touches its text is not one.
+      [:hbox {:key :line :align :end :spacing 6 :margin-top 10}
        ;; Answering and reacting sit together because they are the same kind
        ;; of thing: what you do to a message rather than what it says. Both
        ;; are in the row itself rather than in a box of their own — a box with
@@ -419,17 +421,17 @@
        (if (:id m)
          [:button {:key :reply :label "↩" :on-click #(s/reply-to! m)}]
          [:spacer {:key :reply :size 0}])
+       ;; The text column carries the pills as well as the words: put them
+       ;; outside this row and they sit below it, and the row is as tall as
+       ;; the buttons at its right edge — which is half a line of air between
+       ;; a message and the reactions on it, coming from nothing anyone asked
+       ;; for.
        [:vbox {:key :text :spacing 2}
         (map-indexed (fn [j run] (run-node j run (:system? m)))
-                     (text-runs (:text m)))]]
-      ;; Reactions under the message they are about, and only where there is a
-      ;; message to name: a line this client wrote itself, or one from before
-      ;; the server started stamping ids, cannot be pointed at.
-      ;; Room above them: a pill sitting tight under the last line reads as
-      ;; part of the sentence rather than as something added to it.
-      [:vbox {:key :reactions-row :margin-top 6 :margin-bottom 2}
-       (when (and (:id m) (not (:system? m)) (seq (:reactions m)))
-         [reaction-row @s/current m])]
+                     (text-runs (:text m)))
+        [:vbox {:key :reactions-row}
+         (when (and (:id m) (not (:system? m)) (seq (:reactions m)))
+           [reaction-row @s/current m])]]]
       ;; And the picker, when this is the message it was opened on: under the
       ;; line it is about, where the reader is already looking.
       [:vbox {:key :picker :margin-bottom 4}
