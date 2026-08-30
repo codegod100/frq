@@ -7,6 +7,7 @@
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
             [frq.atproto :as atproto]
+            [frq.clock :as clock]
             [frq.irc :as irc]
             [frq.avatars :as avatars]
             [frq.media :as media]
@@ -72,6 +73,15 @@
 
 (defn connected? [] (some? @conn))
 
+(declare channel-order)
+
+(defn- remember-channels!
+  "Write the order out. Off the caller's thread: opening a channel should not
+  wait on a file, and the order it records is read from the same atom either
+  way."
+  []
+  (future (store/save-channels! (channel-order))))
+
 (defn normalize-channel [s]
   (let [s (str/trim (or s ""))]
     (cond (str/blank? s) ""
@@ -93,13 +103,16 @@
   unless that buffer is the one on screen. Any image it links to is fetched in
   the background, as is the sender's avatar.
 
-  `did` is the sender's identity from the message's `account` tag, when the
-  server sent one — it outlasts whatever nick they are using today."
-  ([channel from text] (push-message! channel from text nil))
-  ([channel from text did]
-   (doseq [url (media/image-urls text)]
-     (media/fetch! url #(swap! media-tick inc)))
-   (let [who (avatars/actor did from)]
+  The extras are what the message carried beyond its text: `:at` when it was
+  said, from the server's own `time` tag where there is one, and `:did` who
+  said it, from the `account` tag — an identity that outlasts whatever nick
+  they are using today."
+  ([channel from text] (push-message! channel from text {}))
+  ([channel from text {:keys [at did]}]
+   (let [at (or at (clock/now-ms))
+         who (avatars/actor did from)]
+     (doseq [url (media/image-urls text)]
+       (media/fetch! url #(swap! media-tick inc)))
      ;; The same tick: an avatar arriving is a picture arriving, and the chat
      ;; view already repaints on it.
      (when who (avatars/fetch! who #(swap! media-tick inc)))
@@ -111,7 +124,8 @@
                     (update-in [channel :messages] conj
                                {:from from :text text :system? (= "*" from)
                                 :actor who
-                                :images (media/image-urls text)})
+                                :images (media/image-urls text)
+                                :at at})
                     (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))))
 
 (defn open-channel!
@@ -124,6 +138,7 @@
   (swap! channels #(-> (ensure-channel % name)
                        (assoc-in [name :unread] 0)
                        (assoc-in [name :accessed] (swap! access-tick inc))))
+  (remember-channels!)
   ;; `joining?` as well as `joined?`: the JOIN echo takes a round trip, and a
   ;; second JOIN sent in the meantime is what makes the server replay nothing.
   (let [buffer (get @channels name)]
@@ -149,10 +164,14 @@
                 (reset! screen :chats)
                 (join! auto-join))
       "PRIVMSG" (let [[target text] params
+                      ;; The server's clock when it offers one: a replayed
+                      ;; backlog is hours or weeks old, and stamping it with
+                      ;; the moment it arrived would say it all happened now.
+                      at (or (clock/parse-time-tag (:tags msg)) (clock/now-ms))
                       ;; a DM addressed to us belongs in a buffer named for the
                       ;; sender, not for our own nick
                       buffer (if (str/starts-with? (or target "") "#") target from)]
-                  (push-message! buffer from text (:account msg)))
+                  (push-message! buffer from text {:at at :did (:account msg)}))
       "JOIN" (let [ch (first params)]
                (if (= from @form-nick)
                  (let [fresh? (empty? (get-in @channels [ch :messages]))]
@@ -410,6 +429,37 @@
                       (str/includes? (str/lower-case (:name %)) q)))
          (sort-by (juxt #(- (:accessed % 0)) :name))
          vec)))
+
+(defn channel-order
+  "Just the channel names, most recently opened first — what gets written to
+  disk. Buffers never opened are left out: a DM that arrived once is not a
+  place this client has been."
+  []
+  (->> (vals @channels)
+       (filter #(and (str/starts-with? (:name %) "#") (pos? (:accessed % 0))))
+       (sort-by #(- (:accessed % 0)))
+       (mapv :name)))
+
+(defn restore-channels!
+  "Bring back the channels of earlier runs, in the order they were last used.
+
+  Empty buffers, not memberships: opening one is what joins it, and a list of
+  rooms is the part worth keeping — the messages in them come from the server.
+  The tick is seeded so this run's first open still sorts above all of them."
+  []
+  (when-let [saved (seq (store/load-channels))]
+    (let [ordered (reverse saved)]                 ; oldest first, so ticks ascend
+      (swap! channels
+             (fn [m]
+               (reduce (fn [acc name]
+                         (if (contains? acc name)
+                           acc
+                           (assoc acc name {:name name :messages [] :unread 0
+                                            :joined? false :joining? false
+                                            :accessed (swap! access-tick inc)})))
+                       m
+                       ordered))))
+    (count saved)))
 
 (defn last-preview [buffer]
   (if-let [m (last (:messages buffer))]

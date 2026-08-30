@@ -42,6 +42,29 @@
       true
       (catch Exception _ false))))
 
+(defn channels-file [] (str (config-dir) "/channels.edn"))
+
+(defn load-channels
+  "The channels this client has opened, in the order it last used them. Unlike
+  the session beside it this is not a credential — just names — so it is an
+  ordinary file."
+  []
+  (let [path (channels-file)]
+    (when (host/file-exists? path)
+      (try
+        (let [v (edn/read-string (slurp path))]
+          (when (vector? v) (filterv string? v)))
+        (catch Exception _ nil)))))
+
+(defn save-channels!
+  "Write the channel names, most recently used first."
+  [names]
+  (try
+    (host/mkdirs! (config-dir))
+    (spit (channels-file) (pr-str (vec names)))
+    true
+    (catch Exception _ false)))
+
 (defn clear-session! []
   (try
     (when (host/file-exists? (session-file))

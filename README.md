@@ -17,6 +17,7 @@ src/frq/oauth.jolt   the broker flow: login URL, loopback capture, /session
 src/frq/store.jolt   the saved sign-in, mode 600 in the config directory
 src/frq/avatars.jolt profile pictures, by DID or handle
 src/frq/media.jolt   image links: spot them, fetch them once, cache on disk
+src/frq/clock.jolt   the reader's own zone, twelve-hour times, day headings
 src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
 src/frq/state.jolt   the ratoms every screen reads, and `apply-msg!`
 src/frq/app.jolt     the screens
@@ -59,7 +60,8 @@ job: POST the fragment back to itself. What comes back is a single-use SASL
 from the durable one at `/session` and skip the browser.
 
 The durable token is saved to `$XDG_CONFIG_HOME/frq/session.edn` (mode 600) so
-a restart resumes without one, along with the handle and nick it belongs to.
+a restart resumes without one, along with the handle and nick it belongs to —
+and it connects on its own at launch when one is there.
 The web-token beside it is single-use and deliberately not saved. A token the
 broker no longer honours is dropped — from disk and memory — and the browser
 flow runs once more, rather than failing the same way on every Connect.
@@ -104,10 +106,14 @@ surface — that surface does not work on Android either, while the syscalls do.
 * Auto-joins `#test` on `irc.freeq.at`
 * Join channels, channel buffers with unread counts, send and receive `PRIVMSG`
 * Backlog on join, and `CHATHISTORY` for the channels freeq restores instead
+* Twelve-hour timestamps from the server's own clock, with a heading wherever
+  the day changes
 * Inline previews for PNG links, fetched once and cached under
   `$XDG_CACHE_HOME/frq/media`; click one to see it full size
 * Join/part notices, DMs bucketed under the sender's nick
 * Discover list, search over buffers, disconnect
+* The rooms you have opened, remembered across runs and listed in the order
+  you last used them (`$XDG_CONFIG_HOME/frq/channels.edn`)
 * Conversations listed most recently opened first
 * Bluesky avatars beside the sender, resolved from the DID freeq tags each
   message with

@@ -9,6 +9,7 @@
             [glimmer.core :as ui]
             [glimmer-vidya.core :as vidya]
             [frq.avatars :as avatars]
+            [frq.clock :as clock]
             [frq.media :as media]
             [frq.platform :as platform]
             [frq.state :as s]))
@@ -231,11 +232,13 @@
                           (= (:from prev) (:from m)))]
     [:vbox {:key i :spacing 2 :margin 0}
      ;; A run from one person reads as one block; repeating the nick on every
-     ;; line is what made a busy channel look like a list of headers.
+     ;; line is what made a busy channel look like a list of headers. The time
+     ;; rides on that same line, for the same reason: once per run, not once
+     ;; per line.
      [:vbox {:key :who}
       (when-not (or same-sender? (:system? m))
-        ;; The picture sits beside the name rather than beside the message: a
-        ;; run of lines from one person has one header, and this belongs to it.
+        ;; Everything that is about the person rather than the line: their
+        ;; picture, their name, and when they started saying this.
         [:hbox {:spacing 6}
          ;; Always an avatar, picture or not: the initial stands in until the
          ;; fetch lands, and for the guests who have no profile at all, which
@@ -245,7 +248,9 @@
            [:avatar {:label (:from m)
                      :src (or (avatars/path-when-ready (:actor m)) "")
                      :size 22}])
-         [:dim-label {:label (:from m)}]])]
+         [:dim-label {:label (:from m)}]
+         (when-let [at (:at m)]
+           [:dim-label {:label (clock/clock-time at)}])])]
      [:vbox {:key :text :spacing 2}
       (map-indexed (fn [j run] (run-node j run (:system? m)))
                    (text-runs (:text m)))]
@@ -262,9 +267,28 @@
                      :max-height 260
                      :on-click #(reset! s/lightbox {:path path :url url})}]))))]]))
 
-(defn- message-rows [messages]
-  (map-indexed (fn [i m] [message-row i (when (pos? i) (nth messages (dec i))) m])
-               messages))
+(defn- day-separator [day-key label]
+  [:vbox {:key day-key :spacing 4 :margin 0}
+   [:separator {}]
+   [:dim-label {:label label}]])
+
+(defn- message-rows
+  "The messages, with a heading wherever the day changes.
+
+  A backlog can reach back weeks, and `11:04 AM` says nothing about which day
+  it was. The heading is what makes the time above it mean something."
+  [messages]
+  (mapcat (fn [i m]
+            (let [prev (when (pos? i) (nth messages (dec i)))
+                  day (some-> (:at m) clock/day)
+                  new-day? (and day (not= day (some-> (:at prev) clock/day)))]
+              (cond-> []
+                new-day? (conj (day-separator (str "day-" i) (clock/day-label (:at m))))
+                ;; A new day breaks the run: the first line under a heading
+                ;; names its sender and its time, whoever spoke last night.
+                true (conj [message-row i (when-not new-day? prev) m]))))
+          (range (count messages))
+          messages))
 
 (defn lightbox-screen
   "One picture, as big as the window allows.
@@ -377,7 +401,15 @@
       [chats-screen])))
 
 (defn -main [& _]
-  ;; Before the window: a saved sign-in decides which mode the connect screen
-  ;; opens in, and what it says.
-  (s/restore-session!)
+  ;; Before the window: the rooms this client has been in, and a saved sign-in
+  ;; deciding which mode the connect screen opens in and what it says.
+  (s/restore-channels!)
+  (when (s/restore-session!)
+    ;; And then it connects on its own. A remembered account has already said
+    ;; what it wants; making it say so again at every launch is a click that
+    ;; carries no information. It is a timer rather than a call here so the
+    ;; window is up first — the connect screen with its status is what the
+    ;; user should be looking at while this happens, and if it fails, the
+    ;; error lands somewhere visible.
+    (vidya/after! 150 s/connect!))
   (ui/run app :title "frq" :width 520 :height 860))
