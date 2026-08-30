@@ -15,6 +15,7 @@ of an `AppState` struct.
 src/frq/atproto.jolt handle → DID → PDS → session, and the SASL payloads
 src/frq/oauth.jolt   the broker flow: login URL, loopback capture, /session
 src/frq/store.jolt   the saved sign-in, mode 600 in the config directory
+src/frq/media.jolt   image links: spot them, fetch them once, cache on disk
 src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
 src/frq/state.jolt   the ratoms every screen reads, and `apply-msg!`
 src/frq/app.jolt     the screens
@@ -102,6 +103,8 @@ surface — that surface does not work on Android either, while the syscalls do.
 * Auto-joins `#test` on `irc.freeq.at`
 * Join channels, channel buffers with unread counts, send and receive `PRIVMSG`
 * Backlog on join, and `CHATHISTORY` for the channels freeq restores instead
+* Inline previews for PNG links, fetched once and cached under
+  `$XDG_CACHE_HOME/frq/media`
 * Join/part notices, DMs bucketed under the sender's nick
 * Discover list, search over buffers, disconnect
 * Conversations listed most recently opened first
@@ -114,6 +117,10 @@ surface — that surface does not work on Android either, while the syscalls do.
   guest.
 * **Only the broker token is persisted**, and only for OAuth. An app-password
   sign-in is not remembered.
+* **Previews are PNG only** — the tree backend's decoder reads no other
+  format, and a fetch needs TLS, so the phone shows links. The link is left in
+  place either way.
+* **Nothing evicts the media cache.**
 * **No scrollback trimming, avatars, reactions, threads, or calls.**
 * A sent line waits up to 200ms for the reader thread to flush it.
 * Message lists are keyed vboxes; glimmer-vidya has no `:listbox` yet.

@@ -8,6 +8,7 @@
             [glimmer.ratom :as r :refer [atom]]
             [frq.atproto :as atproto]
             [frq.irc :as irc]
+            [frq.media :as media]
             [frq.oauth :as oauth]
             [frq.store :as store]))
 
@@ -78,17 +79,25 @@
     (assoc m name {:name name :messages [] :unread 0
                    :joined? false :joining? false :accessed 0})))
 
+(defonce ^{:doc "Bumped whenever a fetched image becomes available, so the
+  chat view re-renders without every message row watching the media cache."}
+  media-tick (atom 0))
+
 (defn push-message!
   "Append a line to a buffer, creating it if needed, and bump the unread count
-  unless that buffer is the one on screen."
+  unless that buffer is the one on screen. Any image it links to is fetched in
+  the background."
   [channel from text]
+  (doseq [url (media/image-urls text)]
+    (media/fetch! url #(swap! media-tick inc)))
   (swap! channels
          (fn [m]
            (let [m (ensure-channel m channel)
                  viewing? (and (= :chat @screen) (= channel @current))]
              (-> m
                  (update-in [channel :messages] conj
-                            {:from from :text text :system? (= "*" from)})
+                            {:from from :text text :system? (= "*" from)
+                             :images (media/image-urls text)})
                  (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))
 
 (defn open-channel!

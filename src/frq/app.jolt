@@ -7,6 +7,7 @@
   (:require [glimmer.ratom :as r :refer [atom]]
             [glimmer.core :as ui]
             [glimmer-vidya.core :as vidya]
+            [frq.media :as media]
             [frq.state :as s]))
 
 ;; ---------------------------------------------------------------- pieces
@@ -190,7 +191,16 @@
         [:dim-label {:label (:from m)}])]
      (if (:system? m)
        [:dim-label {:label (:text m)}]
-       [:label {:label (:text m)}])]))
+       [:label {:label (:text m)}])
+     ;; Pictures under the line that linked them. The link stays: it is what a
+     ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
+     [:vbox {:key :images :spacing 4}
+      (when (seq (:images m))
+        ;; Reading the tick is what subscribes this row to a fetch finishing.
+        (let [_ @s/media-tick]
+          (for [url (:images m)]
+            (when-let [path (media/path-when-ready url)]
+              [:image {:key url :src path :max-height 260}]))))]]))
 
 (defn- message-rows [messages]
   (map-indexed (fn [i m] [message-row i (when (pos? i) (nth messages (dec i))) m])
