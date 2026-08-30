@@ -367,6 +367,10 @@
         ;; than in the reader's count of rows.
         highlit? (boolean (and (:id m) (= (:id m) @s/highlight)))]
     [:vbox {:key i :spacing 2 :margin 0
+            ;; Clear of the right edge: the actions ride that edge, and the
+            ;; list's scrollbar rides it too — without this the ↩ is what the
+            ;; scrollbar is drawn over.
+            :margin-right 10
             ;; Space above a new speaker, none inside their run: the gap is
             ;; what separates one person's block from the next, and evenly
             ;; spaced lines are what made the column read as one dense list.
