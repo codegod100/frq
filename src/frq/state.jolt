@@ -66,6 +66,14 @@
 ;; so this is a screen of its own rather than a layer over the chat.
 (defonce lightbox (atom nil))            ; {:path :url}
 (defonce join-input (atom ""))
+
+;; Whether the chat view is showing the newest line, and a counter the view
+;; watches to be told to go back to it. A counter rather than a flag: a flag
+;; would need clearing, and there is no frame in which to clear it.
+(defonce at-present? (atom true))
+(defonce jump-tick (atom 0))
+
+(defn jump-to-present! [] (swap! jump-tick inc))
 ;; A counter rather than a clock: the list only needs their order, and a
 ;; monotonic tick cannot be surprised by the system time moving.
 (defonce access-tick (atom 0))
@@ -411,6 +419,8 @@
   (let [text (str/trim @draft)
         target @current]
     (when (and (seq text) target)
+      ;; Saying something is a way of asking to see it.
+      (jump-to-present!)
       (when-let [c @conn] (irc/privmsg! c target text))
       (push-message! target @form-nick text)
       (reset! draft ""))))

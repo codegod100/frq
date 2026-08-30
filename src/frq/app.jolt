@@ -321,10 +321,17 @@
      [error-note]
      ;; :reserve leaves room for the separator and compose bar below, so the
      ;; list fills whatever the window has and no more.
-     [:scroll {:orientation :vertical :reserve 72 :stick-to-bottom true}
+     [:scroll {:orientation :vertical :reserve 72 :stick-to-bottom true
+               :scroll-to-bottom @s/jump-tick
+               :on-change #(reset! s/at-present? (= "end" %))}
       (if (seq (:messages buffer))
         (message-rows (:messages buffer))
         [:dim-label {:label "Nothing here yet."}])]
+     ;; Only while it is needed, and directly above the compose bar: the way
+     ;; back to the present belongs next to the thing that puts you there.
+     [:vbox {:key :jump}
+      (when-not @s/at-present?
+        [:button {:label "↓ Jump to present" :on-click s/jump-to-present!}])]
      [:separator {}]
      [:hbox {:spacing 8}
       ;; narrow enough that Send keeps its place on a phone-width row
