@@ -14,9 +14,18 @@
  ;; ABI the backend binds):
  ;;   cd ../vidya && just ffi
  ;;   LD_LIBRARY_PATH=../vidya/build jolt -M:frq
+ ;; libjoltmoq is the AV media plane — MoQ over QUIC, Opus, H.264 and capture —
+ ;; from gitlab.com/nandithebull/jolt-native. Calls are the one thing this
+ ;; client cannot do in jolt: signaling is IRC and lives in src/frq/av.jolt,
+ ;; but the media half is three thousand lines of codec and transport that
+ ;; would only be written badly a second time here.
+ ;;   cd ../jolt-native && just build
  :jolt/native [{:name "vidya"
                 :darwin ["libvidya.dylib"]
-                :linux ["libvidya.so"]}]
+                :linux ["libvidya.so"]}
+               {:name "joltmoq"
+                :darwin ["libjoltmoq.dylib"]
+                :linux ["libjoltmoq.so"]}]
 
  :aliases {:frq {:main-opts ["-m" "frq.app"]}}
 

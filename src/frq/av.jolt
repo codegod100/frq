@@ -1,0 +1,423 @@
+(ns frq.av
+  "Calls: the signaling, in jolt, and a handle on the media plane, which is not.
+
+  A freeq call has two halves. The one that is written here is *signaling* —
+  `+freeq.at/av-start`, `av-join` and `av-leave` go out as TAGMSGs and the
+  server broadcasts `+freeq.at/av-state` back, which is IRC and nothing more,
+  so it is written in the language the rest of the client is written in.
+
+  The other half is audio and video over MoQ, and it is three thousand lines of
+  Opus, H.264, QUIC and capture that would be written badly a second time in
+  any other language. It lives in `libjoltmoq`, extracted from sleek, and this
+  namespace is the whole of what frq says to it.
+
+  Two rules come from that side and shape everything here:
+
+  * **Nothing calls back.** Status and video are *polled* — `pump!` drains both
+    and is called from a timer, which glimmer runs on the loop thread.
+  * **A video frame is borrowed**, valid only until the next poll. `pump!`
+    hands each one to Vidya as it arrives and never keeps one, which is also
+    why a frame never becomes a jolt value: it goes from the decoder's buffer
+    to the texture as a pointer, and is never copied on this side at all."
+  (:require [clojure.string :as str]
+            [glimmer.ratom :as r :refer [atom]]
+            [glimmer-vidya.core :as vidya]
+            [frq.irc :as irc]
+            [jolt.ffi :as ffi]))
+
+;; --- the media plane ---------------------------------------------------------
+;; `libjoltmoq` is declared in deps.edn's `:jolt/native` beside libvidya, so the
+;; loader has already found it by the time these resolve.
+
+(ffi/defcfn raw-init-logging "joltmoq_init_logging" [] :void)
+(ffi/defcfn raw-start "joltmoq_start"
+  [:string :string :string :string :int :int :int :string :string :string] :int)
+(ffi/defcfn raw-stop "joltmoq_stop" [] :void)
+(ffi/defcfn raw-is-live "joltmoq_is_live" [] :int)
+
+(ffi/defcfn raw-set-muted "joltmoq_set_muted" [:int] :void)
+(ffi/defcfn raw-set-speaker-muted "joltmoq_set_speaker_muted" [:int] :void)
+(ffi/defcfn raw-set-camera "joltmoq_set_camera" [:int] :void)
+(ffi/defcfn raw-set-camera-device "joltmoq_set_camera_device" [:string] :void)
+(ffi/defcfn raw-set-mic-device "joltmoq_set_mic_device" [:string] :void)
+(ffi/defcfn raw-set-speaker-device "joltmoq_set_speaker_device" [:string] :void)
+(ffi/defcfn mic-level "joltmoq_mic_level" [] :double)
+
+(ffi/defcfn raw-poll-status "joltmoq_poll_status" [] :int)
+(ffi/defcfn status-text "joltmoq_status_text" [] :string)
+(ffi/defcfn raw-status-has-camera "joltmoq_status_has_camera" [] :int)
+(ffi/defcfn raw-status-has-mic "joltmoq_status_has_mic" [] :int)
+
+(ffi/defcfn raw-frame-poll "joltmoq_frame_poll" [] :int)
+(ffi/defcfn frame-key "joltmoq_frame_key" [] :string)
+(ffi/defcfn frame-width "joltmoq_frame_width" [] :int)
+(ffi/defcfn frame-height "joltmoq_frame_height" [] :int)
+;; The one pointer that crosses. Read as `:pointer` rather than bytes on
+;; purpose: it goes straight back out to `vidya/frame-rgba!`, so the pixels
+;; never become a jolt value and are never copied on this side.
+(ffi/defcfn frame-rgba "joltmoq_frame_rgba" [] :pointer)
+(ffi/defcfn video-keys "joltmoq_video_keys" [] :string)
+
+(ffi/defcfn raw-cameras "joltmoq_cameras" [] :string)
+(ffi/defcfn raw-microphones "joltmoq_microphones" [] :string)
+(ffi/defcfn raw-speakers "joltmoq_speakers" [] :string)
+
+(ffi/defcfn raw-sfu-url "joltmoq_sfu_url" [:string :string :string] :string)
+(ffi/defcfn raw-can-dial "joltmoq_can_dial" [:string :string] :int)
+(ffi/defcfn new-instance "joltmoq_new_instance" [] :string)
+
+;; C has no booleans and no absence; both are converted here rather than at
+;; every call site, so the rest of this file is written in jolt's own terms.
+(def ^:private status-none 0)
+(def ^:private status-live 1)
+(def ^:private status-ended 2)
+(def ^:private status-failed 3)
+
+(defn- flag [b] (if b 1 0))
+(defn- pref [s] (or s ""))
+
+(defn live? [] (not (zero? (raw-is-live))))
+(defn can-dial?
+  "Whether dialling this server is worth attempting. A remote SFU with no token
+  accepts the connection and closes it, and the MoQ client then retries in a
+  tight loop that looks exactly like a hang."
+  [server jwt]
+  (not (zero? (raw-can-dial (pref server) (pref jwt)))))
+
+(defn sfu-url
+  "The SFU to dial for this server, or nil when the server is not one a URL can
+  be made of."
+  [server jwt instance]
+  (let [u (raw-sfu-url (pref server) (pref jwt) (pref instance))]
+    (when (seq u) u)))
+
+(defn- parse-devices
+  "`id\\tname\\tdefault` a line into `{:id :name :default?}`.
+
+  Tab and newline delimit because a device name may hold anything else — a
+  webcam called \"EMEET SmartCam C960, Mono\" has spaces and a comma in it, and
+  splitting on those gives nonsense."
+  [text]
+  (->> (str/split-lines (or text ""))
+       (remove str/blank?)
+       (mapv (fn [line]
+               (let [[id name default] (str/split line #"\t")]
+                 {:id id
+                  :name (or name id)
+                  :default? (= "1" default)})))))
+
+(defn cameras [] (parse-devices (raw-cameras)))
+(defn microphones [] (parse-devices (raw-microphones)))
+(defn speakers [] (parse-devices (raw-speakers)))
+
+;; --- the signaling tags ------------------------------------------------------
+;; Every one of these is a TAGMSG to the channel. The server answers with an
+;; `+freeq.at/av-state` broadcast, which is what actually moves this client's
+;; state — nothing below assumes a request succeeded.
+
+(defn start-tags
+  "Open a call on this channel."
+  [instance title]
+  (cond-> {"+freeq.at/av-start" ""
+           "+freeq.at/av-instance" instance}
+    (seq title) (assoc "+freeq.at/av-title" title)))
+
+(defn join-tags
+  "Join the call already open on this channel."
+  [session-id instance]
+  {"+freeq.at/av-join" ""
+   "+freeq.at/av-id" session-id
+   "+freeq.at/av-instance" instance})
+
+(defn leave-tags
+  [session-id instance]
+  {"+freeq.at/av-leave" ""
+   "+freeq.at/av-id" session-id
+   "+freeq.at/av-instance" instance})
+
+(defn parse-state
+  "An `+freeq.at/av-state` broadcast, or nil for any other TAGMSG.
+
+  Safe to apply to every TAGMSG that arrives: a reaction answers nil."
+  [tags]
+  (let [action (irc/tag-value tags "+freeq.at/av-state")]
+    (when (contains? #{"started" "joined" "left" "ended"} action)
+      {:action (keyword action)
+       :session-id (or (irc/tag-value tags "+freeq.at/av-id") "")
+       :actor (irc/tag-value tags "+freeq.at/av-actor")
+       :participants (when-let [p (irc/tag-value tags "+freeq.at/av-participants")]
+                       (try (Integer/parseInt p) (catch Exception _ nil)))
+       :title (let [t (irc/tag-value tags "+freeq.at/av-title")]
+                (when (seq t) t))})))
+
+(defn state-message
+  "The system line a state change is worth showing as."
+  [{:keys [action actor participants title]}]
+  (let [who (or actor "someone")
+        n (if participants (str " · " participants " in call") "")]
+    (case action
+      :started (str "Call started by " who
+                    (if (seq title) (str " “" title "”") "")
+                    n)
+      :joined (str who " joined the call" n)
+      :left (str who " left the call" n)
+      :ended (str "Call ended" n)
+      "")))
+
+;; --- what the UI reads -------------------------------------------------------
+
+;; channel -> {:session-id :title :participants :last-actor}. What the server
+;; says is happening in a room, whether or not we are in it: this is what puts
+;; a "join the call" banner above a channel nobody here has joined.
+(defonce channel-calls (atom {}))
+
+;; nil, or the call this device is in. `:media` is how far the other half has
+;; got: :dialling until the plane says otherwise, then :live or :failed.
+(defonce local-call (atom nil))
+
+;; The last thing the media plane failed with, for the line under the controls.
+(defonce media-error (atom nil))
+
+;; Feeds pushed to Vidya, so the ones that stop can be dropped again. Without
+;; this the last frame of someone who left hangs on the wall for the rest of
+;; the call.
+(defonce ^:private painted-feeds (atom #{}))
+
+;; The self-view is keyed this way by the media plane; the UI wants to know
+;; which tile is its own, to label it and to mirror nothing else.
+(def local-feed "__local__")
+
+(declare stop-media!)
+
+(defn call-in [channel] (get @channel-calls channel))
+
+(defn in-call?
+  ([] (some? @local-call))
+  ([channel] (= channel (:channel @local-call))))
+
+(defn apply-state!
+  "Fold an `+freeq.at/av-state` broadcast into what we know about `channel`.
+
+  The server is the authority on who is in a call, so this only writes what it
+  was told. Ending clears the room; anything else updates the tally in place,
+  because a `left` that omits the count should not reset it to nothing."
+  [channel st]
+  (let [{:keys [action session-id actor participants title]} st]
+    (if (= :ended action)
+      (swap! channel-calls dissoc channel)
+      (swap! channel-calls update channel
+             (fn [c]
+               (cond-> (or c {:participants 0})
+                 true (assoc :session-id session-id)
+                 participants (assoc :participants participants)
+                 ;; A `started` with no count is one person: whoever started it.
+                 (and (nil? participants)
+                      (= :started action)
+                      (zero? (:participants (or c {:participants 0}))))
+                 (assoc :participants 1)
+                 actor (assoc :last-actor actor)
+                 title (assoc :title title)))))
+    ;; A call we are in that has ended is one we are no longer in, whoever
+    ;; ended it. Leaving the local call set would leave the controls up over
+    ;; a session the SFU has already forgotten.
+    (when (and (= :ended action) (in-call? channel))
+      (stop-media!))))
+
+;; --- the media plane, as this client uses it ---------------------------------
+
+(defn- drop-feeds!
+  "Stop painting every feed we have been pushing."
+  []
+  (doseq [k @painted-feeds] (vidya/frame-drop! k))
+  (reset! painted-feeds #{}))
+
+(defn stop-media!
+  "Leave the media plane and forget the call. Signaling is the caller's to send
+  — `leave!` does both, and this is what is left when the server ended it for
+  us."
+  []
+  (raw-stop)
+  (drop-feeds!)
+  (reset! local-call nil)
+  (reset! media-error nil))
+
+(defn- start-media!
+  "Dial the SFU for the call we have already joined over IRC.
+
+  Called once the server has minted a token for us, not when we asked to join:
+  a remote SFU refuses a connection without one and the MoQ client then retries
+  in a loop that looks exactly like a hang."
+  [server]
+  (when-let [{:keys [session-id instance token muted? speaker-muted? camera?
+                     camera-id mic-id speaker-id nick]} @local-call]
+    (if-let [url (sfu-url server token instance)]
+      (do
+        (swap! local-call assoc :media :dialling)
+        (reset! media-error nil)
+        (when (zero? (raw-start url session-id (pref nick) instance
+                                (flag muted?) (flag speaker-muted?) (flag camera?)
+                                (pref camera-id) (pref mic-id) (pref speaker-id)))
+          (swap! local-call assoc :media :failed)
+          (reset! media-error "could not start the media plane")))
+      (do (swap! local-call assoc :media :failed)
+          (reset! media-error (str "no SFU for " server))))))
+
+(defn apply-token!
+  "The server minted us an SFU token — dial the media plane with it.
+
+  This arrives as a TAGMSG directed at our own nick rather than at the channel,
+  so the buffer it came in on says nothing about which call it is for; the
+  session id in the tag does. One that names a different session than ours is
+  not ours."
+  [server session-id token]
+  (when-let [lc @local-call]
+    (when (or (str/blank? session-id)
+              (str/blank? (:session-id lc))
+              (= session-id (:session-id lc)))
+      (swap! local-call
+             #(-> %
+                  (assoc :token token :awaiting-start? false)
+                  (cond-> (seq session-id) (assoc :session-id session-id))))
+      (start-media! server))))
+
+(defn begin!
+  "Record that this device is joining `channel`, before the server has agreed.
+
+  Optimistic on purpose: the controls appear on the press rather than a round
+  trip later. `:awaiting-start?` is what a start that has not been answered yet
+  looks like, and is how a collision is recognised as ours."
+  [{:keys [channel session-id nick muted? speaker-muted? camera?
+           camera-id mic-id speaker-id]}]
+  (let [instance (new-instance)]
+    (reset! media-error nil)
+    (reset! local-call
+            {:channel channel
+             :session-id (or session-id "")
+             :instance instance
+             :nick nick
+             :token nil
+             :awaiting-start? (str/blank? (or session-id ""))
+             :muted? (boolean muted?)
+             :speaker-muted? (boolean speaker-muted?)
+             :camera? (boolean camera?)
+             :camera-id camera-id
+             :mic-id mic-id
+             :speaker-id speaker-id
+             :media :waiting})
+    instance))
+
+;; --- controls ----------------------------------------------------------------
+;; Each writes the cell the UI reads *and* tells the media plane, so a control
+;; answers on the press rather than a frame later. Muting the microphone and
+;; muting the speaker are deliberately separate: deafening yourself still lets
+;; peers hear you.
+
+(defn set-muted! [muted?]
+  (swap! local-call assoc :muted? muted?)
+  (raw-set-muted (flag muted?)))
+
+(defn set-speaker-muted! [muted?]
+  (swap! local-call assoc :speaker-muted? muted?)
+  (raw-set-speaker-muted (flag muted?)))
+
+(defn set-camera! [on?]
+  (swap! local-call assoc :camera? on?)
+  (raw-set-camera (flag on?))
+  ;; The tile goes when the camera does: the plane stops publishing, so no
+  ;; frame arrives to replace the last one.
+  (when-not on?
+    (vidya/frame-drop! local-feed)
+    (swap! painted-feeds disj local-feed)))
+
+(defn set-camera-device! [id]
+  (swap! local-call assoc :camera-id id)
+  (raw-set-camera-device (pref id)))
+
+(defn set-mic-device! [id]
+  (swap! local-call assoc :mic-id id)
+  (raw-set-mic-device (pref id)))
+
+(defn set-speaker-device! [id]
+  (swap! local-call assoc :speaker-id id)
+  (raw-set-speaker-device (pref id)))
+
+;; --- the pump ----------------------------------------------------------------
+
+(defn- pump-status!
+  "Drain what the media plane has learned since the last frame."
+  []
+  (loop []
+    (let [code (raw-poll-status)]
+      (when-not (= code status-none)
+        (cond
+          (= code status-live)
+          (swap! local-call #(when %
+                               (assoc % :media :live
+                                        :has-camera? (not (zero? (raw-status-has-camera)))
+                                        :has-mic? (not (zero? (raw-status-has-mic))))))
+
+          (= code status-ended)
+          (stop-media!)
+
+          (= code status-failed)
+          (do (reset! media-error (status-text))
+              (swap! local-call #(when % (assoc % :media :failed)))))
+        (recur)))))
+
+(defn- pump-frames!
+  "Hand every new frame straight to Vidya.
+
+  The pointer is borrowed until the next poll, so it is used and dropped inside
+  this loop and never held. Nothing is copied on this side: the pixels go from
+  the decoder's own buffer to a texture without becoming a jolt value at all,
+  which is the only way a call at thirty frames a second is affordable here."
+  []
+  (loop []
+    (when-not (zero? (raw-frame-poll))
+      (let [key (frame-key)
+            w (frame-width)
+            h (frame-height)
+            px (frame-rgba)]
+        (when (and (seq key) (pos? w) (pos? h) (not (ffi/null? px)))
+          (vidya/frame-rgba! key w h px)
+          (swap! painted-feeds conj key)))
+      (recur))))
+
+(defn- forget-gone-feeds!
+  "Drop the tiles of everyone who has stopped publishing."
+  []
+  (let [live (set (remove str/blank? (str/split-lines (or (video-keys) ""))))
+        gone (remove live @painted-feeds)]
+    (doseq [k gone]
+      (vidya/frame-drop! k)
+      (swap! painted-feeds disj k))))
+
+(defn pump!
+  "One frame's worth of the media plane. Cheap when no call is up.
+
+  Runs on the loop thread — `vidya/frame-rgba!` may not be called from anywhere
+  else, and neither may anything that touches a node."
+  []
+  (when (live?)
+    (pump-status!)
+    (pump-frames!)
+    (forget-gone-feeds!)))
+
+(defn install-pump!
+  "Start pumping the media plane every frame. Returns a timer id.
+
+  Sixteen milliseconds rather than a longer gap because this is where video
+  arrives: polling slower than the window paints would show every other frame."
+  []
+  (vidya/every! 16 pump!))
+
+(defn tiles
+  "Everyone with a picture in the current call, the self-view last.
+
+  Last because it is the one the person can already see the subject of, so it
+  belongs where it will not push a face they are talking to off the row."
+  []
+  (let [ks (remove str/blank? (str/split-lines (or (video-keys) "")))
+        mine (filter #(= local-feed %) ks)
+        others (sort (remove #(= local-feed %) ks))]
+    (vec (concat others mine))))

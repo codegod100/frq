@@ -8,6 +8,7 @@
             [glimmer.ratom :as r :refer [atom]]
             [glimmer.core :as ui]
             [glimmer-vidya.core :as vidya]
+            [frq.av :as av]
             [frq.avatars :as avatars]
             [frq.clock :as clock]
             [frq.media :as media]
@@ -519,6 +520,99 @@
       [:button {:label "← Back" :on-click #(reset! s/lightbox nil)}]]
      [:image {:src path :fit true :on-click #(reset! s/lightbox nil)}]]))
 
+(defn- call-tile
+  "One participant's picture.
+
+  `:feed` rather than `:src`: these pixels never touch the disk and never
+  become a value here — the media plane hands the decoder's own buffer to
+  Vidya as a pointer, and the tag paints whatever arrived last under that name."
+  [key]
+  (let [mine? (= av/local-feed key)]
+    [:vbox {:key key :spacing 2}
+     [:image {:feed key :max-width 240 :max-height 180}]
+     [:dim-label {:label (if mine? "You" key)}]]))
+
+(defn- call-wall
+  "Everyone with a camera on, or nothing at all.
+
+  A call with no video is the normal case and should look like one — a row of
+  empty frames would suggest something had failed to load."
+  []
+  (let [tiles (av/tiles)]
+    [:vbox {:key :call-wall :spacing 6}
+     (when (seq tiles)
+       [:hbox {:spacing 8}
+        (mapv call-tile tiles)])]))
+
+(defn- call-controls
+  "What the person in a call can do about it.
+
+  Mute and deafen are separate buttons because they are separate things: a
+  deafened microphone still carries your voice, and one control for both would
+  make the quieter of the two a surprise."
+  []
+  (let [{:keys [muted? speaker-muted? camera? has-camera? has-mic? media]} @av/local-call]
+    [:vbox {:key :call-controls :spacing 6}
+     [:hbox {:spacing 8}
+      [:label {:label (case media
+                        :waiting "Asking to join…"
+                        :dialling "Connecting…"
+                        :live "In call"
+                        :failed "Call failed"
+                        "In call")}]
+      ;; A microphone that is not there is worth saying so: the call works,
+      ;; and the person is listening rather than silent by choice.
+      (when (and (= :live media) (not has-mic?))
+        [:dim-label {:label "· listening only"}])]
+     [:hbox {:spacing 8}
+      [:button {:label (if muted? "Unmute" "Mute")
+                :on-click #(av/set-muted! (not muted?))}]
+      [:button {:label (if speaker-muted? "Undeafen" "Deafen")
+                :on-click #(av/set-speaker-muted! (not speaker-muted?))}]
+      ;; Only offered when there is a camera to turn on. Nothing is more
+      ;; annoying than a control that does nothing and does not say why.
+      (when has-camera?
+        [:button {:label (if camera? "Stop video" "Start video")
+                  :on-click #(av/set-camera! (not camera?))}])
+      [:button {:label "Leave" :on-click #(s/leave-call!)}]]
+     (when-let [e @av/media-error]
+       [:dim-label {:label (str "⚠ " e)}])]))
+
+(defn call-bar
+  "The call in this channel, whatever state it is in. Always a node.
+
+  Three cases, and the empty one matters as much as the others: a channel with
+  no call must render *something* here, because the reconciler matches children
+  by position and a banner that came and went would patch the message list into
+  a button."
+  [channel]
+  [:vbox {:key :call-bar :spacing 6}
+   (cond
+     (av/in-call? channel)
+     [:card {}
+      [:vbox {:spacing 6}
+       [call-controls]
+       [call-wall]]]
+
+     ;; A call is open in this room and we are not in it.
+     (av/call-in channel)
+     (let [{:keys [session-id participants title]} (av/call-in channel)]
+       [:card {}
+        [:hbox {:spacing 8}
+         [:label {:label (str "📞 " (or title "Call in progress")
+                              (if (and participants (pos? participants))
+                                (str " · " participants)
+                                ""))}]
+         [:button {:label "Join"
+                   :on-click #(s/join-call! channel session-id)}]]])
+
+     ;; We are in a call, but in a different room. Say which, since the
+     ;; controls are not on this screen to be found by looking.
+     (av/in-call?)
+     [:dim-label {:label (str "In a call in " (:channel @av/local-call))}]
+
+     :else nil)])
+
 (defn chat-screen []
   (let [name @s/current
         buffer (get @s/channels name)]
@@ -530,8 +624,17 @@
     [:vbox {:spacing 8 :margin 12 :margin-bottom 4}
      [:hbox {:spacing 8}
       [:button {:label "← Chats" :on-click #(reset! s/screen :chats)}]
-      [:title {:label (or name "Chat")}]]
+      [:title {:label (or name "Chat")}]
+      ;; Only in a channel, and only when there is no call to join already —
+      ;; the bar below offers Join in that case, and two ways to end up in the
+      ;; same call is one more than anybody needs.
+      (when (and name
+                 (str/starts-with? name "#")
+                 (not (av/call-in name))
+                 (not (av/in-call?)))
+        [:button {:label "Call" :on-click #(s/start-call! name)}])]
      [error-note]
+     [call-bar name]
      ;; :reserve leaves room for everything below: the jump button's row, the
      ;; separator and the compose bar. It does not vary with whether the button
      ;; is showing, and neither does that row — a reserve that changed would
@@ -679,4 +782,10 @@
     ;; user should be looking at while this happens, and if it fails, the
     ;; error lands somewhere visible.
     (vidya/after! 150 s/connect!))
+  ;; Calls arrive rather than being asked for, so the media plane is drained
+  ;; every frame whether or not one is up — the drain costs a single integer
+  ;; read when it is not. It has to be a timer: `frame-rgba!` and everything
+  ;; else that touches a node belongs to the loop thread, and this is glimmer's
+  ;; way of getting onto it.
+  (vidya/after! 0 av/install-pump!)
   (ui/run app :title "frq" :width 520 :height 860))
