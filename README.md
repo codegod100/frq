@@ -20,6 +20,11 @@ src/frq/state.jolt   the ratoms every screen reads, and `apply-msg!`
 src/frq/app.jolt     the screens
 ```
 
+## Tracing
+
+`FRQ_TRACE=1` prints every IRC line sent and received to stderr, which on
+Android is logcat.
+
 ## Running
 
 `libvidya` from Vidya's Rust/egui backend, then the app:
@@ -108,4 +113,5 @@ surface — that surface does not work on Android either, while the syscalls do.
 * **Only the broker token is persisted**, and only for OAuth. An app-password
   sign-in is not remembered.
 * **No scrollback trimming, avatars, reactions, threads, or calls.**
+* A sent line waits up to 200ms for the reader thread to flush it.
 * Message lists are keyed vboxes; glimmer-vidya has no `:listbox` yet.
