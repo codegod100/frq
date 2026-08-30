@@ -12,7 +12,8 @@ tags rather than immediate-mode drawing code, and state lives in ratoms instead
 of an `AppState` struct.
 
 ```
-src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, JOIN/PRIVMSG/PING
+src/frq/atproto.jolt handle → DID → PDS → session, and the SASL payload
+src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
 src/frq/state.jolt   the ratoms every screen reads, and `apply-msg!`
 src/frq/app.jolt     the screens
 ```
@@ -34,6 +35,25 @@ plain listener:
 ```bash
 cargo run --release --bin freeq-server        # in the freeq checkout
 ```
+
+## Signing in
+
+Guest is the default. The **Bluesky** tab on the connect screen takes a handle
+and an [app password](https://bsky.app/settings/app-passwords) and signs in
+through AT Protocol:
+
+1. `com.atproto.identity.resolveHandle` turns the handle into a DID
+2. the DID document (PLC directory, or the domain for `did:web`) gives its PDS
+3. `com.atproto.server.createSession` mints a session token there
+4. freeq's SASL `ATPROTO-CHALLENGE` carries that token as `method:
+   "pds-session"`, with the server's own nonce echoed back so it cannot be
+   replayed elsewhere
+
+The app password goes to the user's own PDS and nowhere else — freeq is handed
+only the token, and verifies it by asking that same PDS. It is not written to
+disk, and is dropped from memory once the session exists.
+
+A refused sign-in is reported and the connection continues as a guest.
 
 ## Android
 
@@ -68,7 +88,7 @@ surface — that surface does not work on Android either, while the syscalls do.
 ## Limits
 
 * **TLS and plain TCP only** — no WebSocket, no iroh. On Android, plain only.
-* **Guest identity only.** No AT Protocol SASL, no OAuth, no credential gates,
-  no E2EE — the parts of freeq that need crypto are exactly the parts left out.
+* **App-password sign-in only.** No OAuth broker, no `did:key` signing, no
+  credential gates, no E2EE. Sign-in needs TLS, so it is desktop-only.
 * **No scrollback trimming, avatars, reactions, threads, or calls.**
 * Message lists are keyed vboxes; glimmer-vidya has no `:listbox` yet.

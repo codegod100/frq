@@ -27,42 +27,74 @@
 
 ;; ---------------------------------------------------------------- connect
 
+(defn- mode-tabs []
+  [:hbox {:spacing 8}
+   (for [[k label] [[:guest "Guest"] [:bluesky "Bluesky"]]]
+     [:button {:key k
+               :label label
+               :kind (if (= k @s/auth-mode) :primary :default)
+               :on-click #(reset! s/auth-mode k)}])])
+
+(defn- server-fields []
+  [:vbox {:spacing 6}
+   [:label {:label "Server"}]
+   [:hbox {:spacing 8}
+    [:entry {:text @s/form-host
+             :width-request 220
+             :placeholder "host"
+             :on-change #(reset! s/form-host %)}]
+    [:entry {:text @s/form-port
+             :width-request 90
+             :placeholder "6697"
+             :on-change #(reset! s/form-port %)}]]
+   [:checkbutton {:label "TLS"
+                  :active @s/form-tls?
+                  :on-toggled #(do (swap! s/form-tls? not)
+                                   (reset! s/form-port
+                                           (if @s/form-tls? "6697" "6667")))}]])
+
+(defn- connect-action []
+  (if @s/connecting?
+    [:hbox {:spacing 8}
+     [:spinner {}]
+     [:dim-label {:label @s/status}]]
+    [:hbox {:spacing 8}
+     [:button {:label "Connect" :kind :primary :on-click s/connect!}]
+     [:dim-label {:label @s/status}]]))
+
 (defn connect-screen []
   [:page {:max-width 520}
    [:title {:label "frq"}]
-   [:dim-label {:label "freeq client — guest connect over plain TCP."}]
+   [:dim-label {:label "freeq client — guest, or your Bluesky identity."}]
    [error-note]
    [:card {}
-    [:title-2 {:label "Connect as guest"}]
-    [:label {:label "Nick"}]
-    [:entry {:text @s/form-nick
-             :width-request 320
-             :placeholder "your nick"
-             :on-change #(reset! s/form-nick %)}]
-    [:label {:label "Server"}]
-    [:hbox {:spacing 8}
-     [:entry {:text @s/form-host
-              :width-request 220
-              :placeholder "host"
-              :on-change #(reset! s/form-host %)}]
-     [:entry {:text @s/form-port
-              :width-request 90
-              :placeholder "6697"
-              :on-change #(reset! s/form-port %)}]]
-    [:checkbutton {:label "TLS"
-                   :active @s/form-tls?
-                   :on-toggled #(do (swap! s/form-tls? not)
-                                    (reset! s/form-port
-                                            (if @s/form-tls? "6697" "6667")))}]
+    [mode-tabs]
+    (if (= :bluesky @s/auth-mode)
+      [:vbox {:spacing 6}
+       [:title-2 {:label "Sign in with Bluesky"}]
+       [:dim-label {:label "Your app password goes to your own PDS. freeq is handed the session it mints, and checks it with that same PDS."}]
+       [:label {:label "Handle"}]
+       [:entry {:text @s/form-handle
+                :width-request 320
+                :placeholder "alice.bsky.social"
+                :on-change #(reset! s/form-handle %)}]
+       [:label {:label "App password"}]
+       [:entry {:text @s/form-app-password
+                :width-request 320
+                :placeholder "xxxx-xxxx-xxxx-xxxx"
+                :on-change #(reset! s/form-app-password %)}]
+       [:dim-label {:label "Make one at bsky.app → Settings → App Passwords."}]]
+      [:vbox {:spacing 6}
+       [:title-2 {:label "Connect as guest"}]
+       [:label {:label "Nick"}]
+       [:entry {:text @s/form-nick
+                :width-request 320
+                :placeholder "your nick"
+                :on-change #(reset! s/form-nick %)}]])
+    [server-fields]
     [:separator {}]
-    (if @s/connecting?
-      [:hbox {:spacing 8}
-       [:spinner {}]
-       [:dim-label {:label @s/status}]]
-      [:hbox {:spacing 8}
-       [:button {:label "Connect" :kind :primary :on-click s/connect!}]
-       [:dim-label {:label @s/status}]])]
-   [:dim-label {:label "TLS rides jolt's OpenSSL bindings; untick it for a plain :6667 listener."}]])
+    [connect-action]]
+   [:dim-label {:label "TLS rides jolt's OpenSSL bindings; untick it for a plain :6667 listener. Sign-in needs TLS, so it is desktop-only."}]])
 
 ;; ---------------------------------------------------------------- chats
 
@@ -169,6 +201,11 @@
     [:status {:label @s/status :live (s/connected?)}]
     [:label {:label (str "Server: " @s/form-host ":" @s/form-port)}]
     [:label {:label (str "Nick: " @s/form-nick)}]
+    (if-let [sess @s/session]
+      [:vbox {:spacing 2}
+       [:label {:label (str "Signed in as " (:handle sess))}]
+       [:dim-label {:label (:did sess)}]]
+      [:dim-label {:label "Guest — not signed in."}])
     [:separator {}]
     [:button {:label "Disconnect" :kind :destructive :on-click s/disconnect!}]]
    [:card {}

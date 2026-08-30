@@ -6,6 +6,7 @@
   is the only place a wire message turns into UI state."
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
+            [frq.atproto :as atproto]
             [frq.irc :as irc]))
 
 (def default-host "irc.freeq.at")
@@ -31,6 +32,14 @@
 ;; TLS is the default; untick it for a server's plain :6667 listener
 (defonce form-tls? (atom true))
 (defonce form-nick (atom "frq-guest"))
+
+;; Bluesky sign-in. The app password reaches the user's own PDS and nothing
+;; else: freeq is handed the session token it mints, and verifies that token by
+;; asking the same PDS. It is never written to disk.
+(defonce auth-mode (atom :guest))         ; :guest | :bluesky
+(defonce form-handle (atom ""))
+(defonce form-app-password (atom ""))
+(defonce session (atom nil))              ; {:did :handle :access-jwt :pds}
 
 ;; joined as soon as the server sends 001
 (def auto-join "#test")
@@ -88,7 +97,9 @@
   (let [{:keys [command params prefix]} msg
         from (irc/nick-of prefix)]
     (case command
-      "001" (do (reset! status (str "Connected as " @form-nick))
+      "001" (do (reset! status (if @session
+                                  (str "Connected as " (:handle @session))
+                                  (str "Connected as " @form-nick)))
                 (reset! connecting? false)
                 (reset! screen :chats)
                 (join! auto-join))
@@ -112,6 +123,10 @@
       (reset! status (or (last params) @status))
       ("473" "474" "475" "477" "403" "471")
       (reset! error (str "Cannot join: " (last params)))
+      "903" (reset! status (str "Signed in as " (:handle @session)))
+      ("904" "905" "906") (do (reset! session nil)
+                              (reset! error (str "Bluesky sign-in refused: "
+                                                 (or (last params) "no reason given"))))
       "*DISCONNECTED*" (do (reset! conn nil)
                            (reset! connecting? false)
                            (swap! channels
@@ -132,11 +147,11 @@
         data (ex-data e)]
     (str (type e) ": " msg (when data (str " " (pr-str data))))))
 
-(defn- dial! [host port nick tls?]
+(defn- dial! [host port nick tls? sess]
   ;; stderr is the only console on Android — this line lands in logcat.
   (binding [*out* *err*]
     (println "frq: dialing" host port (if tls? "tls" "plain")))
-  (reset! conn (irc/connect! host port nick apply-msg! tls?)))
+  (reset! conn (irc/connect! host port nick apply-msg! tls? sess)))
 
 (defn connect!
   "Dial, and fall back to the plain listener when TLS cannot be had. Android is
@@ -148,15 +163,29 @@
   (reset! status (str "Connecting to " @form-host ":" @form-port "…"))
   (let [host @form-host
         port (parse-long (str/trim @form-port))
-        nick (str/trim @form-nick)]
+        bluesky? (= :bluesky @auth-mode)
+        sess (when bluesky?
+               (reset! status (str "Signing in as " (str/trim @form-handle) "…"))
+               (let [s (atproto/create-session (str/trim @form-handle)
+                                               @form-app-password)]
+                 (reset! session s)
+                 ;; The password did its work at the PDS; do not keep it.
+                 (reset! form-app-password "")
+                 s))
+        ;; An authenticated connection still needs a nick — the DID is the
+        ;; identity, the nick is only what the channel calls you.
+        nick (if bluesky?
+               (-> (:handle sess) (str/split #"\.") first)
+               (str/trim @form-nick))]
+    (when bluesky? (reset! form-nick nick))
     (try
-      (dial! host port nick @form-tls?)
+      (dial! host port nick @form-tls? sess)
       (catch Exception e
         (binding [*out* *err*] (println "frq: dial failed:" (describe e)))
         (if @form-tls?
           (do (reset! status (str "TLS unavailable — trying " host ":" plain-port "…"))
               (try
-                (dial! host plain-port nick false)
+                (dial! host plain-port nick false sess)
                 (reset! form-tls? false)
                 (reset! form-port (str plain-port))
                 (catch Exception e2
@@ -173,6 +202,7 @@
 (defn disconnect! []
   (when-let [c @conn] (irc/close! c))
   (reset! conn nil)
+  (reset! session nil)
   ;; The buffers survive, the memberships do not — leaving `joined?` set would
   ;; have the next Open show a channel nobody is in.
   (swap! channels #(reduce-kv (fn [m k v] (assoc m k (assoc v :joined? false))) {} %))
@@ -180,9 +210,11 @@
   (reset! screen :connect))
 
 (defn join! [name]
+  ;; Deliberately not clearing `error` here: joining is what follows a
+  ;; successful registration, and a SASL refusal that arrived moments earlier
+  ;; is the one thing the user most needs to still be on screen.
   (let [ch (normalize-channel name)]
     (when (seq ch)
-      (reset! error nil)
       (open-channel! ch))))
 
 (defn send-draft! []

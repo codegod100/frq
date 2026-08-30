@@ -15,6 +15,7 @@
   `connect!` takes an `on-msg` fn and returns a connection map that
   `send-line!` and `close!` accept."
   (:require [clojure.string :as str]
+            [frq.atproto :as atproto]
             [jolt.ffi :as ffi]
             [jolt.mvn-http :as tls]
             [jolt.socket :as socket]))
@@ -122,16 +123,69 @@
       {:kind :plain :fd fd :buf (ffi/alloc buffer-size)
        :lock (Object.) :nick nick})))
 
+(def ^:private sasl-chunk 400)
+
+(defn- authenticate!
+  "AUTHENTICATE takes at most 400 characters a line; a payload that lands on
+  the boundary is followed by a bare `+` so the server knows it ended."
+  [conn payload]
+  (loop [rest payload]
+    (if (> (count rest) sasl-chunk)
+      (do (send-line! conn (str "AUTHENTICATE " (subs rest 0 sasl-chunk)))
+          (recur (subs rest sasl-chunk)))
+      (do (send-line! conn (str "AUTHENTICATE " rest))
+          (when (= sasl-chunk (count rest))
+            (send-line! conn "AUTHENTICATE +"))))))
+
+(defn- sasl-step!
+  "Drive the SASL exchange from the lines the server sends during registration.
+  Returns the message unchanged, so the caller can go on handling it."
+  [conn session msg]
+  (let [{:keys [command params]} msg]
+    (case command
+      "CAP" (let [[_ sub caps] params]
+              (case sub
+                "LS" (if (str/includes? (or caps "") "sasl")
+                       (send-line! conn "CAP REQ :sasl")
+                       (send-line! conn "CAP END"))
+                "ACK" (if (str/includes? (or caps "") "sasl")
+                        (send-line! conn "AUTHENTICATE ATPROTO-CHALLENGE")
+                        (send-line! conn "CAP END"))
+                "NAK" (send-line! conn "CAP END")
+                nil))
+      ;; The challenge arrives as base64url JSON; the nonce inside it is what
+      ;; binds our PDS token to this connection.
+      "AUTHENTICATE" (let [challenge (first params)]
+                       (when (and challenge (not= "+" challenge))
+                         (let [nonce (atproto/json-str
+                                      (atproto/b64-decode challenge) "nonce")]
+                           (authenticate! conn (atproto/sasl-response session nonce)))))
+      ;; 903 logged in, 904/905/906 did not.
+      ("903" "904" "905" "906") (send-line! conn "CAP END")
+      nil))
+  msg)
+
 (defn connect!
-  "Open a connection, register as a guest `nick`, and start the reader.
-  `tls?` defaults to true — freeq's TLS listener is :6697, plain is :6667."
-  ([host port nick on-msg] (connect! host port nick on-msg true))
-  ([host port nick on-msg tls?]
-   (let [conn (open host port tls? nick)]
+  "Open a connection, register `nick`, and start the reader.
+
+  With a `session` from `frq.atproto/create-session` the registration runs the
+  SASL exchange first and the connection is bound to that DID; without one it
+  is an ordinary guest. `tls?` defaults to true — freeq's TLS listener is
+  :6697, plain is :6667."
+  ([host port nick on-msg] (connect! host port nick on-msg true nil))
+  ([host port nick on-msg tls?] (connect! host port nick on-msg tls? nil))
+  ([host port nick on-msg tls? session]
+   (let [conn (open host port tls? nick)
+         on-msg (if session
+                  (fn [msg] (on-msg (sasl-step! conn session msg)))
+                  on-msg)]
      (future
        (try (reader-loop! conn on-msg)
             (catch Exception e
               (on-msg {:command "*ERROR*" :params [(str e)]}))))
+     ;; CAP first when authenticating: registration waits for CAP END, which
+     ;; the SASL exchange sends once it has an answer either way.
+     (when session (send-line! conn "CAP LS 302"))
      (send-line! conn (str "NICK " nick))
      (send-line! conn (str "USER " nick " 0 * :" nick))
      conn)))
