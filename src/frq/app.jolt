@@ -258,37 +258,26 @@
   "The way to put an emoji on a message, beside the way to answer it.
 
   Both are things done *to* a message rather than parts of it, so they share
-  the sender's line and the right edge. It opens the quick row for this message
-  alone — the emoji are only worth their space while someone is choosing one."
-  [m]
-  (let [open? (= (:id m) @s/reacting)]
-    [:button {:label (if open? "×" "☺")
-              :on-click #(reset! s/reacting (when-not open? (:id m)))}]))
+  the sender's line and the right edge. It opens the picker on this message."
+  [channel m]
+  [:button {:label "☺" :on-click #(s/open-picker! channel m)}])
 
 (defn- reaction-row
-  "What people have put on a message, under it, and the emoji to choose from
-  while the react button is open.
+  "What people have put on a message, under it.
 
   A pill carries its count and toggles: clicking one you are already on takes
-  yours off, which is the same gesture that put it there."
+  yours off, which is the same gesture that put it there. `:reaction` rather
+  than a button with the emoji as its label — the chip draws the glyph from the
+  Twemoji pack, in colour, where a label gets whatever the text font has."
   [channel m]
-  (let [reactions (:reactions m)
-        open? (= (:id m) @s/reacting)]
-    [:vbox {:key :reactions :spacing 2}
-     [:hbox {:key :pills :spacing 4}
-      (for [emoji (sort (keys reactions))]
-        (let [nicks (get reactions emoji)]
-          [:button {:key emoji
-                    :label (str emoji " " (count nicks))
-                    :kind (if (s/my-reaction? m emoji) :primary :normal)
-                    :on-click #(s/toggle-reaction! channel m emoji)}]))]
-     [:hbox {:key :picker :spacing 4}
-      (when open?
-        (for [emoji s/quick-reactions]
-          [:button {:key emoji
-                    :label emoji
-                    :on-click #(do (s/toggle-reaction! channel m emoji)
-                                   (reset! s/reacting nil))}]))]]))
+  (let [reactions (:reactions m)]
+    [:hbox {:key :pills :spacing 4}
+     (for [emoji (sort (keys reactions))]
+       [:reaction {:key emoji
+                   :emoji emoji
+                   :count (count (get reactions emoji))
+                   :mine (s/my-reaction? m emoji)
+                   :on-click #(s/toggle-reaction! channel m emoji)}])]))
 
 (defn message-row
   "One message. `prev` is the message above it, which decides whether this one
@@ -365,8 +354,10 @@
       ;; Reactions under the message they are about, and only where there is a
       ;; message to name: a line this client wrote itself, or one from before
       ;; the server started stamping ids, cannot be pointed at.
-      [:vbox {:key :reactions-row}
-       (when (and (:id m) (not (:system? m)))
+      ;; Room above them: a pill sitting tight under the last line reads as
+      ;; part of the sentence rather than as something added to it.
+      [:vbox {:key :reactions-row :margin-top 6 :margin-bottom 2}
+       (when (and (:id m) (not (:system? m)) (seq (:reactions m)))
          [reaction-row @s/current m])]
       ;; Pictures under the line that linked them. The link stays: it is what a
       ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
@@ -421,6 +412,60 @@
      [:scroll {:orientation :vertical}
       ;; Clicking the picture closes it too — the same gesture that opened it.
       [:image {:src path :max-height 20000 :on-click #(reset! s/lightbox nil)}]]]))
+
+(def ^:private picker-columns
+  "Emoji to a row. Narrow enough that the grid still fits a phone-width
+  window, which is the width this app is laid out for."
+  8)
+
+(defn emoji-picker-screen
+  "The whole set to choose from, searchable, for one message.
+
+  A screen rather than something floating over the conversation: the tree
+  backend paints in one layer and has no z-order to put a panel on top with —
+  the same reason the lightbox is a screen. It opens on the emoji people
+  actually react with; the groups and the search box are for the rest."
+  []
+  (let [shown (s/picker-emoji)
+        over (max 0 (- (count shown) s/picker-limit))
+        shown (vec (take s/picker-limit shown))
+        rows (partition-all picker-columns shown)
+        searching? (seq (str/trim @s/emoji-search))]
+    [:vbox {:spacing 8 :margin 12}
+     [:hbox {:spacing 8}
+      [:button {:label "← Back" :on-click s/close-picker!}]
+      [:title {:label "React"}]]
+     [:entry {:text @s/emoji-search
+              :width-request 300
+              :placeholder "Search emoji"
+              :on-change #(reset! s/emoji-search %)}]
+     ;; The groups are what the search box is not: a way in for someone who
+     ;; does not have a word for what they want. Dimmed out while a search is
+     ;; running, since what is on screen then is the search's answer.
+     [:vbox {:key :groups :spacing 4}
+      (when-not searching?
+        (for [[i row] (map-indexed vector (partition-all 3 (cons nil s/emoji-groups)))]
+          [:hbox {:key i :spacing 4}
+           (for [g row]
+             [:button {:key (or g "popular")
+                       :label (or g "Popular")
+                       :kind (if (= g @s/emoji-group) :primary :normal)
+                       :on-click #(reset! s/emoji-group g)}])]))]
+     [:separator {}]
+     [:scroll {:orientation :vertical :reserve 40}
+      (if (seq rows)
+        (for [[i row] (map-indexed vector rows)]
+          [:hbox {:key i :spacing 4}
+           (for [[glyph] row]
+             [:reaction {:key glyph
+                         :emoji glyph
+                         :count 0
+                         :on-click #(s/react-from-picker! glyph)}])])
+        [:dim-label {:label "No emoji by that name."}])]
+     ;; What was left out, said rather than silently dropped.
+     [:vbox {:key :more}
+      (when (pos? over)
+        [:dim-label {:label (str "and " over " more — keep typing to narrow it")}])]]))
 
 (defn chat-screen []
   (let [name @s/current
@@ -532,8 +577,10 @@
 ;; ---------------------------------------------------------------- shell
 
 (defn app []
-  (if @s/lightbox
-    [lightbox-screen]
+  (cond
+    @s/lightbox [lightbox-screen]
+    @s/reacting [emoji-picker-screen]
+    :else
     (case @s/screen
       :connect [connect-screen]
       :chat [chat-screen]

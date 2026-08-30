@@ -8,6 +8,7 @@
             [glimmer.ratom :as r :refer [atom]]
             [frq.atproto :as atproto]
             [frq.clock :as clock]
+            [frq.emoji :as emoji]
             [frq.irc :as irc]
             [frq.avatars :as avatars]
             [frq.media :as media]
@@ -512,11 +513,51 @@
       (reset! replying-to nil)
       (reset! draft ""))))
 
-(def quick-reactions
-  "The emoji a click away. A short row rather than a picker: the point of a
-  reaction is that it costs less than typing, and a grid of a thousand glyphs
-  costs more than typing."
-  ["👍" "❤" "😂" "🎉" "👀" "🔥"])
+;; The message the emoji picker is choosing for, as `{:channel :id}`, or nil
+;; when it is closed. The picker is a screen of its own — the tree backend
+;; paints in one layer, so there is no floating it over the conversation.
+(defonce reacting (atom nil))
+
+;; What the picker is showing: the search box, and which group is on screen
+;; when nothing has been typed. `nil` is the popular row it opens on.
+(defonce emoji-search (atom ""))
+(defonce emoji-group (atom nil))
+
+(defn open-picker!
+  "Choose an emoji for this message. Opening it fresh — no leftover search from
+  the last time, which would be a screen of somebody else's question."
+  [channel m]
+  (when (:id m)
+    (reset! emoji-search "")
+    (reset! emoji-group nil)
+    (reset! reacting {:channel channel :id (:id m)})))
+
+(defn close-picker! [] (reset! reacting nil))
+
+(def emoji-groups
+  "Unicode's own grouping, which is what the picker's tabs are."
+  emoji/groups)
+
+(def picker-limit
+  "How many glyphs one screen of the picker will show. A search that matches
+  more says so rather than laying out hundreds of pictures nobody scrolled to."
+  240)
+
+(defn picker-emoji
+  "What the picker is showing right now: the popular row, one group, or
+  whatever the search matches — by name, so \"cat\" finds the cat and the cat
+  face, and by the emoji itself, so pasting one finds it."
+  []
+  (let [q (str/lower-case (str/trim @emoji-search))
+        group @emoji-group]
+    (cond
+      (seq q) (->> emoji/catalog
+                   (filter (fn [[glyph name _]]
+                             (or (str/includes? (str/lower-case name) q)
+                                 (str/includes? glyph q))))
+                   vec)
+      group (vec (filter (fn [[_ _ g]] (= g group)) emoji/catalog))
+      :else (mapv (fn [glyph] [glyph glyph nil]) emoji/popular))))
 
 (defn my-reaction?
   "Whether this nick is already on that emoji — which is what makes a second
@@ -591,10 +632,16 @@
   (when id
     (first (filter #(= id (:id %)) (get-in @channels [channel :messages])))))
 
-;; The message whose reaction row is open, by id. One at a time: the row of
-;; emoji is only worth its space while it is being used, and leaving it under
-;; every message would push the conversation apart.
-(defonce reacting (atom nil))
+(defn react-from-picker!
+  "Put the chosen emoji on the message the picker was opened for, and close it.
+  One choice and back to the conversation: a picker left open would be asking a
+  question that has been answered."
+  [emoji]
+  (when-let [{:keys [channel id]} @reacting]
+    (when-let [m (message-by-id channel id)]
+      (toggle-reaction! channel m emoji))
+    (close-picker!)))
+
 
 ;; The message a "go to" is currently aiming at. Set for the frame that scrolls
 ;; to it and taken off again — a scroll target that stays set would pin the
