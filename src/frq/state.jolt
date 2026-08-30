@@ -51,6 +51,9 @@
 ;; joined as soon as the server sends 001
 (def auto-join "#test")
 
+;; How much backlog to ask for when the server did not volunteer any.
+(def history-limit 100)
+
 ;; name -> {:name :messages [{:from :text}] :unread n :joined? bool}
 (defonce channels (atom {}))
 (defonce current (atom nil))
@@ -138,6 +141,16 @@
                    ;; already there is just a second line of noise.
                    (when fresh? (push-message! ch "*" (str "Joined " ch))))
                  (push-message! ch "*" (str from " joined"))))
+      ;; End of NAMES. A plain JOIN is replayed history before this arrives, so
+      ;; a channel that reaches here with nothing in it was restored rather
+      ;; than joined — freeq re-joins an authenticated user's channels at
+      ;; registration and leaves the backlog for the client to ask for.
+      "366" (let [ch (second params)
+                  said (remove :system? (get-in @channels [ch :messages]))]
+              (when (and ch @conn (empty? said))
+                (irc/send-line! @conn
+                                (str "CHATHISTORY LATEST " ch " * " history-limit))))
+
       "PART" (let [ch (first params)]
                (if (= from @form-nick)
                  (swap! channels #(-> % (assoc-in [ch :joined?] false)

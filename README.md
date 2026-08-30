@@ -101,6 +101,7 @@ surface — that surface does not work on Android either, while the syscalls do.
 * Guest connect (`NICK`/`USER`), `001` welcome, `PING`/`PONG` keepalive
 * Auto-joins `#test` on `irc.freeq.at`
 * Join channels, channel buffers with unread counts, send and receive `PRIVMSG`
+* Backlog on join, and `CHATHISTORY` for the channels freeq restores instead
 * Join/part notices, DMs bucketed under the sender's nick
 * Discover list, search over buffers, disconnect
 * Conversations listed most recently opened first
