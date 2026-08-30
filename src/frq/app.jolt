@@ -367,5 +367,12 @@
 (defn -main [& _]
   ;; Before the window: a saved sign-in decides which mode the connect screen
   ;; opens in, and what it says.
-  (s/restore-session!)
+  (when (s/restore-session!)
+    ;; And then it connects on its own. A remembered account has already said
+    ;; what it wants; making it say so again at every launch is a click that
+    ;; carries no information. It is a timer rather than a call here so the
+    ;; window is up first — the connect screen with its status is what the
+    ;; user should be looking at while this happens, and if it fails, the
+    ;; error lands somewhere visible.
+    (vidya/after! 150 s/connect!))
   (ui/run app :title "frq" :width 520 :height 860))

@@ -58,7 +58,8 @@ job: POST the fragment back to itself. What comes back is a single-use SASL
 from the durable one at `/session` and skip the browser.
 
 The durable token is saved to `$XDG_CONFIG_HOME/frq/session.edn` (mode 600) so
-a restart resumes without one, along with the handle and nick it belongs to.
+a restart resumes without one, along with the handle and nick it belongs to —
+and it connects on its own at launch when one is there.
 The web-token beside it is single-use and deliberately not saved. A token the
 broker no longer honours is dropped — from disk and memory — and the browser
 flow runs once more, rather than failing the same way on every Connect.
