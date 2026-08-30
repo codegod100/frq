@@ -237,11 +237,14 @@
         ;; The picture sits beside the name rather than beside the message: a
         ;; run of lines from one person has one header, and this belongs to it.
         [:hbox {:spacing 6}
-         [:vbox {:key :avatar}
-          ;; Reading the tick subscribes this row to the fetch finishing.
-          (let [_ @s/media-tick]
-            (when-let [path (avatars/path-when-ready (:actor m))]
-              [:image {:src path :max-height 20}]))]
+         ;; Always an avatar, picture or not: the initial stands in until the
+         ;; fetch lands, and for the guests who have no profile at all, which
+         ;; is what keeps the column of faces straight down the left.
+         ;; Reading the tick subscribes this row to a fetch finishing.
+         (let [_ @s/media-tick]
+           [:avatar {:label (:from m)
+                     :src (or (avatars/path-when-ready (:actor m)) "")
+                     :size 22}])
          [:dim-label {:label (:from m)}]])]
      [:vbox {:key :text :spacing 2}
       (map-indexed (fn [j run] (run-node j run (:system? m)))
