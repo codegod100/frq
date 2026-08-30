@@ -80,7 +80,8 @@
            (let [m (ensure-channel m channel)
                  viewing? (and (= :chat @screen) (= channel @current))]
              (-> m
-                 (update-in [channel :messages] conj {:from from :text text})
+                 (update-in [channel :messages] conj
+                            {:from from :text text :system? (= "*" from)})
                  (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))
 
 (defn open-channel!
@@ -122,10 +123,14 @@
                   (push-message! buffer from text))
       "JOIN" (let [ch (first params)]
                (if (= from @form-nick)
-                 (do (swap! channels #(-> (ensure-channel % ch)
-                                          (assoc-in [ch :joined?] true)
-                                          (assoc-in [ch :joining?] false)))
-                     (push-message! ch "*" (str "You joined " ch)))
+                 (let [fresh? (empty? (get-in @channels [ch :messages]))]
+                   (swap! channels #(-> (ensure-channel % ch)
+                                        (assoc-in [ch :joined?] true)
+                                        (assoc-in [ch :joining?] false)))
+                   ;; Only on the way in to an empty buffer. A reconnect joins
+                   ;; every channel again, and saying so on top of the backlog
+                   ;; already there is just a second line of noise.
+                   (when fresh? (push-message! ch "*" (str "Joined " ch))))
                  (push-message! ch "*" (str from " joined"))))
       "PART" (let [ch (first params)]
                (if (= from @form-nick)
@@ -146,7 +151,11 @@
                                (assoc-in [ch :joined?] false)
                                (assoc-in [ch :joining?] false)))
           (push-message! ch "*" (str "Could not join " ch " — " why)))
-        (reset! error (str "Cannot join: " why)))
+        ;; Deliberately not the global banner: it outlives the screen it was
+        ;; about, and the reason is in the channel's own buffer where it
+        ;; belongs. The banner is for what stops the whole app — a failed
+        ;; connection or a refused sign-in.
+        (when-not ch (reset! error (str "Cannot join: " why))))
       "903" (reset! status (str "Signed in as " (:handle @session)))
       ("904" "905" "906") (do (reset! session nil)
                               ;; The broker token may still be good — but a

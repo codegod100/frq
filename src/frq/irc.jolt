@@ -17,6 +17,7 @@
   (:require [clojure.string :as str]
             [frq.atproto :as atproto]
             [jolt.ffi :as ffi]
+            [jolt.host :as host]
             [jolt.mvn-http :as tls]
             [jolt.socket :as socket]))
 
@@ -27,6 +28,20 @@
 ;; MSG_NOSIGNAL. Writing to a socket the far end has closed raises SIGPIPE
 ;; otherwise, and nothing here handles signals — the process simply goes.
 (def ^:private no-signal @#'socket/msg-nosignal)
+
+;; jolt's TLS sockets carry a 30-second receive timeout, so a quiet connection
+;; reads nothing without being closed. These decide how long that is allowed to
+;; go on: past `idle-ping-secs` we ask the server whether it is still there,
+;; and past `idle-dead-secs` with no answer we conclude it is not.
+(def ^:private idle-ping-secs 45)
+(def ^:private idle-dead-secs 90)
+
+;; How long a TLS read waits before giving the thread back. It is also how long
+;; an outgoing line can sit in the outbox, so it wants to be short: the reader
+;; owns the connection, and this is how often it looks at what there is to send.
+(def ^:private tls-poll-ms 200)
+
+(defn- secs-since [t] (quot (- (host/mono-nanos) t) 1000000000))
 
 ;; ---------------------------------------------------------------- parsing
 
@@ -77,7 +92,8 @@
             (recur (+ sent n))))))))
 
 (defn- write!
-  "Bytes out, whichever transport this is."
+  "Bytes out, whichever transport this is. TLS callers go through the outbox
+  instead — see `send-line!`."
   [conn text]
   (if (= :tls (:kind conn))
     (tls/tls-write (:tls conn) (.getBytes text))
@@ -94,38 +110,92 @@
       (when (and n (pos? n)) (String. (ffi/read-bytes buf n))))))
 
 (defn send-line!
-  "Send a raw IRC line. Safe from any thread; writes are serialised by the lock."
+  "Send a raw IRC line. Safe from any thread.
+
+  On TLS the line is queued rather than written: OpenSSL is driven here through
+  a pair of memory BIOs, and a write issued while the reader thread is parked
+  inside SSL_read is simply lost — the call reports success and the server
+  never sees the line. So the reader thread owns the connection in both
+  directions and drains this queue between reads. A raw socket has no such
+  problem, and writes straight through."
   [conn line]
-  (locking (:lock conn)
-    (write! conn (str line "\r\n"))))
+  (let [text (str line "\r\n")]
+    (if (= :tls (:kind conn))
+      (locking (:lock conn) (swap! (:outbox conn) conj text))
+      (locking (:lock conn) (write! conn text)))))
+
+(defn- flush-outbox!
+  "Write whatever has been queued. Only ever called on the reader thread."
+  [conn]
+  (let [pending (locking (:lock conn)
+                  (let [q @(:outbox conn)]
+                    (reset! (:outbox conn) [])
+                    q))]
+    (doseq [text pending]
+      (when (System/getenv "FRQ_TRACE")
+        (binding [*out* *err*] (println "frq/irc: >>" (str/trimr text))))
+      (try (write! conn text)
+           (catch Exception e
+             (binding [*out* *err*] (println "frq/irc: write failed:" (or (ex-message e) (str e))))
+             ;; Put it back: a write that failed for a transient reason is
+             ;; worth another turn of the loop.
+             (locking (:lock conn) (swap! (:outbox conn) conj text)))))))
 
 (defn- reader-loop!
-  "Read bytes until the socket closes, splitting on CRLF and dispatching each
-  complete line. PING is answered here so a dropped UI never times the link
-  out; everything else goes to `on-msg`."
+  "Read until the connection ends, splitting on CRLF and dispatching each
+  complete line. PING is answered here so a busy UI never times the link out;
+  everything else goes to `on-msg`.
+
+  Nothing to read is not the end of the connection. On TLS it usually means the
+  30-second receive timeout elapsed on a quiet channel — reading that as EOF is
+  what used to leave the app connected in appearance only: sends went nowhere
+  while the buffer still filled in with what the user typed. So a quiet stretch
+  gets a PING, and only silence after that counts as gone."
   [conn on-msg]
-  (let []
-    (loop [acc ""]
-      (let [chunk (read-chunk! conn)]
-        (if (nil? chunk)
-          (on-msg {:command "*DISCONNECTED*" :params []})
-          (let [acc (str acc chunk)
-                lines (str/split acc #"\r?\n" -1)
-                complete (butlast lines)]
-            (doseq [line complete :when (seq (str/trim line))]
-              (let [msg (parse-line line)]
-                (when (= "PING" (:command msg))
-                  (send-line! conn (str "PONG :" (first (:params msg)))))
-                (on-msg (assoc msg :raw line))))
-            (recur (last lines))))))))
+  (loop [acc "" last-data (host/mono-nanos) pinged? false]
+    (flush-outbox! conn)
+    (let [chunk (read-chunk! conn)]
+      (cond
+        ;; A plain socket has no timeout, so nothing to read really is the end.
+        (and (nil? chunk) (not= :tls (:kind conn)))
+        (on-msg {:command "*DISCONNECTED*" :params []})
+
+        (nil? chunk)
+        (let [idle (secs-since last-data)]
+          (cond
+            (and pinged? (> idle idle-dead-secs))
+            (on-msg {:command "*DISCONNECTED*" :params []})
+
+            (and (not pinged?) (> idle idle-ping-secs))
+            (do (try (send-line! conn "PING :frq") (catch Exception _ nil))
+                (recur acc last-data true))
+
+            :else (recur acc last-data pinged?)))
+
+        :else
+        (let [acc (str acc chunk)
+              lines (str/split acc #"\r?\n" -1)
+              complete (butlast lines)]
+          (doseq [line complete :when (seq (str/trim line))]
+            (when (System/getenv "FRQ_TRACE")
+              (binding [*out* *err*] (println "frq/irc: <<" (subs line 0 (min 100 (count line))))))
+            (let [msg (parse-line line)]
+              (when (= "PING" (:command msg))
+                (send-line! conn (str "PONG :" (first (:params msg)))))
+              (on-msg (assoc msg :raw line))))
+          (recur (last lines) (host/mono-nanos) false))))))
 
 (defn- open
   "Dial `host`:`port`, over TLS unless `tls?` is false."
   [host port tls? nick]
   (if tls?
     (do (tls/ensure-native!)
-        {:kind :tls :tls (tls/tls-connect host (int port))
-         :lock (Object.) :nick nick})
+        (let [t (tls/tls-connect host (int port))]
+          ;; Without a short timeout the reader parks for 30 seconds at a time,
+          ;; which is 30 seconds of nothing being sent.
+          (try (#'tls/set-timeouts! (:sock t) tls-poll-ms) (catch Exception _ nil))
+          {:kind :tls :tls t :outbox (atom [])
+           :lock (Object.) :nick nick}))
     (let [ip (#'socket/ip->str (socket/resolve-host host))
           fd (socket/c-socket af-inet sock-stream 0)]
       (when (neg? fd) (throw (ex-info "socket() failed" {:host host})))
@@ -210,7 +280,9 @@
   (send-line! conn (str "PRIVMSG " target " :" text)))
 
 (defn close! [conn]
-  (try (send-line! conn "QUIT :frq") (catch Exception _ nil))
+  ;; Written straight out rather than queued: the reader may already be gone,
+  ;; and there is nothing left to lose if this one is.
+  (try (locking (:lock conn) (write! conn "QUIT :frq\r\n")) (catch Exception _ nil))
   (try (if (= :tls (:kind conn))
          (tls/tls-close (:tls conn))
          (do (socket/c-close (:fd conn))

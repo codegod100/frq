@@ -132,15 +132,16 @@
   (let [name (:name buffer)
         unread (:unread buffer)]
     [:card {:key name}
+     ;; Name, membership and unread count on one line — they describe the same
+     ;; thing, and the row below is for the button alone.
      [:hbox {:spacing 12}
       [:title-2 {:label name}]
+      [:status {:label (if (:joined? buffer) "joined" "not joined")
+                :live (boolean (:joined? buffer))}]
       [:vbox {:key :unread}
        (when (pos? unread) [:label {:label (str "● " unread)}])]]
      [:dim-label {:label (s/last-preview buffer)}]
-     [:hbox {:spacing 8}
-      [:button {:label "Open" :kind :primary :on-click #(s/open-channel! name)}]
-      [:status {:label (if (:joined? buffer) "joined" "not joined")
-                :live (boolean (:joined? buffer))}]]]))
+     [:button {:label "Open" :kind :primary :on-click #(s/open-channel! name)}]]))
 
 (defn chats-screen []
   (let [buffers (s/channel-list)]
@@ -169,13 +170,31 @@
 
 ;; ---------------------------------------------------------------- chat
 
-(defn message-row [i m]
-  ;; Sender above the text, not beside it. A wrapping label in a horizontal row
-  ;; lays out against the row's width rather than the column's, so one long URL
-  ;; drags every line that follows it off the left edge.
-  [:vbox {:key i :spacing 2}
-   [:dim-label {:label (:from m)}]
-   [:label {:label (:text m)}]])
+(defn message-row
+  "One message. `prev` is the message above it, which decides whether this one
+  repeats the sender.
+
+  Sender above the text, not beside it: a wrapping label in a horizontal row
+  lays out against the row's width rather than the column's, so one long URL
+  drags every line that follows it off the left edge."
+  [i prev m]
+  (let [same-sender? (and prev
+                          (not (:system? m))
+                          (not (:system? prev))
+                          (= (:from prev) (:from m)))]
+    [:vbox {:key i :spacing 2 :margin 0}
+     ;; A run from one person reads as one block; repeating the nick on every
+     ;; line is what made a busy channel look like a list of headers.
+     [:vbox {:key :who}
+      (when-not (or same-sender? (:system? m))
+        [:dim-label {:label (:from m)}])]
+     (if (:system? m)
+       [:dim-label {:label (:text m)}]
+       [:label {:label (:text m)}])]))
+
+(defn- message-rows [messages]
+  (map-indexed (fn [i m] [message-row i (when (pos? i) (nth messages (dec i))) m])
+               messages))
 
 (defn chat-screen []
   (let [name @s/current
@@ -192,7 +211,7 @@
      ;; list fills whatever the window has and no more.
      [:scroll {:orientation :vertical :reserve 72 :stick-to-bottom true}
       (if (seq (:messages buffer))
-        (map-indexed message-row (:messages buffer))
+        (message-rows (:messages buffer))
         [:dim-label {:label "Nothing here yet."}])]
      [:separator {}]
      [:hbox {:spacing 8}
@@ -243,7 +262,13 @@
                     :on-click s/forget-session!}])]]
       [:dim-label {:label "Guest — not signed in."}])
     [:separator {}]
-    [:button {:label "Disconnect" :kind :destructive :on-click s/disconnect!}]]
+    ;; Nothing to disconnect from when there is no connection — the way back to
+    ;; the connect screen is what is wanted then.
+    [:vbox {:key :connection-action}
+     (if (s/connected?)
+       [:button {:label "Disconnect" :kind :destructive :on-click s/disconnect!}]
+       [:button {:label "Back to connect"
+                 :on-click #(reset! s/screen :connect)}])]]
    [:card {}
     [:title-2 {:label "frq"}]
     [:dim-label {:label "freeq client in jolt — glimmer components on the Vidya/egui backend."}]
