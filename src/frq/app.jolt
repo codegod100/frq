@@ -304,16 +304,21 @@
           [:label {:label (:from m)}]
           (when-let [at (:at m)]
             [:dim-label {:label (clock/clock-time at)}])
-          ;; Answering is offered where the sender is named — a run of lines
-          ;; from one person is answered as the thing it is — and against the
-          ;; right edge, out of the way of the name and the time, which are what
-          ;; the eye is going down the column for.
-          [:hbox {:key :reply-action :align :end}
-           (when (:id m)
-             [:button {:label "↩" :on-click #(s/reply-to! m)}])]])]
-      [:vbox {:key :text :spacing 2}
-       (map-indexed (fn [j run] (run-node j run (:system? m)))
-                    (text-runs (:text m)))]
+          ])]
+      ;; Every message can be answered, not only the one that opened a run —
+      ;; laid out from the right so the action sits at the edge and the text
+      ;; takes the width that is left. The text keeps a column of its own:
+      ;; a wrapping label directly in a row wraps against the row.
+      [:hbox {:key :line :align :end :spacing 6}
+       ;; The button sits in the row itself rather than in a box of its own:
+       ;; a box with no width takes the rest of the row and puts the text on a
+       ;; line below it, and one with a width takes the column's whole height.
+       (if (:id m)
+         [:button {:key :reply :label "↩" :on-click #(s/reply-to! m)}]
+         [:spacer {:key :reply :size 0}])
+       [:vbox {:key :text :spacing 2}
+        (map-indexed (fn [j run] (run-node j run (:system? m)))
+                     (text-runs (:text m)))]]
       ;; Pictures under the line that linked them. The link stays: it is what a
       ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
       [:vbox {:key :images :spacing 4}
