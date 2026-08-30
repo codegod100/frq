@@ -11,11 +11,19 @@
 
 ;; ---------------------------------------------------------------- pieces
 
-(defn error-note []
-  (when-let [e @s/error]
-    [:card {}
-     [:label {:label (str "⚠ " e)}]
-     [:button {:label "Dismiss" :on-click #(reset! s/error nil)}]]))
+(defn error-note
+  "Always a node, never nil.
+
+  A conditional child that disappears shifts every sibling after it, and the
+  reconciler matches children by position — so an error appearing mid-screen
+  would patch the header into a card. A stable wrapper with a stable key keeps
+  the shape of the tree fixed and only its contents changing."
+  []
+  [:vbox {:key :error-note :spacing 6}
+   (when-let [e @s/error]
+     [:card {}
+      [:label {:label (str "⚠ " e)}]
+      [:button {:label "Dismiss" :on-click #(reset! s/error nil)}]])])
 
 (defn tab-bar []
   [:hbox {:spacing 8}
@@ -79,12 +87,14 @@
                 :width-request 320
                 :placeholder "alice.bsky.social"
                 :on-change #(reset! s/form-handle %)}]
-       (when @s/broker-token
-         [:dim-label {:label "Session remembered — Connect will not need the browser."}])
-       (when-let [url @s/login-url]
-         [:vbox {:spacing 4}
-          [:dim-label {:label "If the browser did not open, visit:"}]
-          [:label {:label url}]])]
+       [:vbox {:key :remembered}
+        (when @s/broker-token
+          [:dim-label {:label "Session remembered — Connect will not need the browser."}])]
+       [:vbox {:key :login-url :spacing 4}
+        (when-let [url @s/login-url]
+          [:vbox {:spacing 4}
+           [:dim-label {:label "If the browser did not open, visit:"}]
+           [:label {:label url}]])]]
 
       :app-password
       [:vbox {:spacing 6}
@@ -122,7 +132,8 @@
     [:card {:key name}
      [:hbox {:spacing 12}
       [:title-2 {:label name}]
-      (when (pos? unread) [:label {:label (str "● " unread)}])]
+      [:vbox {:key :unread}
+       (when (pos? unread) [:label {:label (str "● " unread)}])]]
      [:dim-label {:label (s/last-preview buffer)}]
      [:hbox {:spacing 8}
       [:button {:label "Open" :kind :primary :on-click #(s/open-channel! name)}]
@@ -223,10 +234,11 @@
       [:vbox {:spacing 2}
        [:label {:label (str "Signed in as " (:handle sess))}]
        [:dim-label {:label (or (:did sess) "")}]
-       (when @s/broker-token
-         [:button {:label "Forget Bluesky session"
-                   :kind :destructive
-                   :on-click #(do (reset! s/broker-token nil) (reset! s/session nil))}])]
+       [:vbox {:key :forget}
+        (when @s/broker-token
+          [:button {:label "Forget Bluesky session"
+                    :kind :destructive
+                    :on-click #(do (reset! s/broker-token nil) (reset! s/session nil))}])]]
       [:dim-label {:label "Guest — not signed in."}])
     [:separator {}]
     [:button {:label "Disconnect" :kind :destructive :on-click s/disconnect!}]]

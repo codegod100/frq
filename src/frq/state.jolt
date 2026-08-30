@@ -134,8 +134,18 @@
       "QUIT" nil
       ("NOTICE" "372" "375" "376" "002" "003" "004")
       (reset! status (or (last params) @status))
+      ;; 473 invite-only, 474 banned, 475 keyed, 477 needs registration,
+      ;; 471 full, 403 no such channel. The channel is params[1]; clearing its
+      ;; flags is what lets a later attempt send a JOIN at all.
       ("473" "474" "475" "477" "403" "471")
-      (reset! error (str "Cannot join: " (last params)))
+      (let [ch (second params)
+            why (last params)]
+        (when ch
+          (swap! channels #(-> (ensure-channel % ch)
+                               (assoc-in [ch :joined?] false)
+                               (assoc-in [ch :joining?] false)))
+          (push-message! ch "*" (str "Could not join " ch " — " why)))
+        (reset! error (str "Cannot join: " why)))
       "903" (reset! status (str "Signed in as " (:handle @session)))
       ("904" "905" "906") (do (reset! session nil)
                               ;; The broker token may still be good — but a

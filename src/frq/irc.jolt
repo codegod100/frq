@@ -24,6 +24,10 @@
 (def ^:private sock-stream 1)
 (def ^:private buffer-size 8192)
 
+;; MSG_NOSIGNAL. Writing to a socket the far end has closed raises SIGPIPE
+;; otherwise, and nothing here handles signals — the process simply goes.
+(def ^:private no-signal @#'socket/msg-nosignal)
+
 ;; ---------------------------------------------------------------- parsing
 
 (defn parse-line
@@ -68,7 +72,7 @@
     (ffi/with-c-string [p text]
       (loop [sent 0]
         (when (< sent len)
-          (let [n (socket/c-send fd p (- len sent) 0)]
+          (let [n (socket/c-send fd p (- len sent) no-signal)]
             (when (neg? n) (throw (ex-info "send failed" {:fd fd})))
             (recur (+ sent n))))))))
 

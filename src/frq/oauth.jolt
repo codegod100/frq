@@ -18,6 +18,12 @@
 
 (def default-broker "https://auth.freeq.at")
 
+;; MSG_NOSIGNAL. A browser opens more connections to a page than it reads —
+;; favicon, preconnect, prefetch — and closes them without ceremony. Writing to
+;; one of those raises SIGPIPE, which with no handler installed ends the
+;; process: the app looked like it wedged the moment the redirect arrived.
+(def ^:private no-signal @#'socket/msg-nosignal)
+
 ;; ------------------------------------------------------------------ urls
 
 (defn url-encode
@@ -64,11 +70,13 @@
                   (count (.getBytes body)) "\r\n\r\n")
         text (str head body)]
     (ffi/with-c-string [p text]
-      (socket/c-send fd p (count (.getBytes text)) 0))))
+      ;; A closed peer is ordinary here, so a failed write is not an error.
+      (try (socket/c-send fd p (count (.getBytes text)) no-signal)
+           (catch Exception _ -1)))))
 
 (defn- read-request [fd]
   (let [buf (ffi/alloc 16384)
-        n (socket/c-recv fd buf 16384 0)]
+        n (try (socket/c-recv fd buf 16384 no-signal) (catch Exception _ -1))]
     (if (and n (pos? n)) (String. (ffi/read-bytes buf n)) "")))
 
 (defn- bind-loopback!
@@ -117,10 +125,13 @@
             (let [req (read-request fd)
                   line (first (str/split-lines req))]
               (if (str/starts-with? (or line "") "POST /capture")
-                (let [body (str/trim (or (second (str/split req #"\r\n\r\n" 2)) ""))]
-                  (respond! fd "ok" "text/plain")
+                (let [body (str/trim (or (second (str/split req #"\r\n\r\n" 2)) ""))
+                      tokens (try (tokens-of body) (catch Exception _ nil))]
+                  (respond! fd (if tokens "ok" "bad payload") "text/plain")
                   (socket/c-close fd)
-                  (tokens-of body))
+                  ;; A POST that carried nothing usable is not the end of the
+                  ;; wait — keep serving, the real handoff may still arrive.
+                  (or tokens (recur)))
                 (do (respond! fd capture-html "text/html; charset=utf-8")
                     (socket/c-close fd)
                     (recur)))))))
