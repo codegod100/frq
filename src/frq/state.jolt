@@ -7,6 +7,7 @@
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
             [frq.atproto :as atproto]
+            [frq.clock :as clock]
             [frq.irc :as irc]
             [frq.media :as media]
             [frq.oauth :as oauth]
@@ -100,18 +101,20 @@
   "Append a line to a buffer, creating it if needed, and bump the unread count
   unless that buffer is the one on screen. Any image it links to is fetched in
   the background."
-  [channel from text]
-  (doseq [url (media/image-urls text)]
-    (media/fetch! url #(swap! media-tick inc)))
-  (swap! channels
-         (fn [m]
-           (let [m (ensure-channel m channel)
-                 viewing? (and (= :chat @screen) (= channel @current))]
-             (-> m
-                 (update-in [channel :messages] conj
-                            {:from from :text text :system? (= "*" from)
-                             :images (media/image-urls text)})
-                 (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))
+  ([channel from text] (push-message! channel from text (clock/now-ms)))
+  ([channel from text at]
+   (doseq [url (media/image-urls text)]
+     (media/fetch! url #(swap! media-tick inc)))
+   (swap! channels
+          (fn [m]
+            (let [m (ensure-channel m channel)
+                  viewing? (and (= :chat @screen) (= channel @current))]
+              (-> m
+                  (update-in [channel :messages] conj
+                             {:from from :text text :system? (= "*" from)
+                              :images (media/image-urls text)
+                              :at at})
+                  (update-in [channel :unread] (if viewing? (constantly 0) inc))))))))
 
 (defn open-channel!
   "Show a buffer. A channel we are not in is joined on the way — a row can
@@ -149,10 +152,14 @@
                 (reset! screen :chats)
                 (join! auto-join))
       "PRIVMSG" (let [[target text] params
+                      ;; The server's clock when it offers one: a replayed
+                      ;; backlog is hours or weeks old, and stamping it with
+                      ;; the moment it arrived would say it all happened now.
+                      at (or (clock/parse-time-tag (:tags msg)) (clock/now-ms))
                       ;; a DM addressed to us belongs in a buffer named for the
                       ;; sender, not for our own nick
                       buffer (if (str/starts-with? (or target "") "#") target from)]
-                  (push-message! buffer from text))
+                  (push-message! buffer from text at))
       "JOIN" (let [ch (first params)]
                (if (= from @form-nick)
                  (let [fresh? (empty? (get-in @channels [ch :messages]))]

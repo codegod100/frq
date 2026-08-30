@@ -220,17 +220,29 @@
           (when (= sasl-chunk (count rest))
             (send-line! conn "AUTHENTICATE +"))))))
 
-(defn- sasl-step!
-  "Drive the SASL exchange from the lines the server sends during registration.
-  Returns the message unchanged, so the caller can go on handling it."
+(def ^:private wanted-caps
+  "What this client can use. `server-time` is why a guest negotiates at all:
+  without it the replayed backlog arrives untimed and every old line reads as
+  having just been said."
+  ["message-tags" "server-time"])
+
+(defn- cap-step!
+  "Drive capability negotiation, and the SASL exchange inside it when there is
+  a session to authenticate with. Returns the message unchanged, so the caller
+  can go on handling it."
   [conn session msg]
   (let [{:keys [command params]} msg]
     (case command
-      "CAP" (let [[_ sub caps] params]
+      "CAP" (let [[_ sub caps] params
+                  offered (set (str/split (or caps "") #"\s+"))
+                  wanted (cond-> (filterv offered wanted-caps)
+                           (and session (offered "sasl")) (conj "sasl"))]
               (case sub
-                "LS" (if (str/includes? (or caps "") "sasl")
-                       (send-line! conn "CAP REQ :sasl")
+                "LS" (if (seq wanted)
+                       (send-line! conn (str "CAP REQ :" (str/join " " wanted)))
                        (send-line! conn "CAP END"))
+                ;; SASL, when acked, ends negotiation itself — CAP END waits
+                ;; for the exchange to finish either way.
                 "ACK" (if (str/includes? (or caps "") "sasl")
                         (send-line! conn "AUTHENTICATE ATPROTO-CHALLENGE")
                         (send-line! conn "CAP END"))
@@ -259,16 +271,14 @@
   ([host port nick on-msg tls?] (connect! host port nick on-msg tls? nil))
   ([host port nick on-msg tls? session]
    (let [conn (open host port tls? nick)
-         on-msg (if session
-                  (fn [msg] (on-msg (sasl-step! conn session msg)))
-                  on-msg)]
+         on-msg (fn [msg] (on-msg (cap-step! conn session msg)))]
      (future
        (try (reader-loop! conn on-msg)
             (catch Exception e
               (on-msg {:command "*ERROR*" :params [(str e)]}))))
-     ;; CAP first when authenticating: registration waits for CAP END, which
-     ;; the SASL exchange sends once it has an answer either way.
-     (when session (send-line! conn "CAP LS 302"))
+     ;; CAP first: registration waits for CAP END, which negotiation sends once
+     ;; it has an answer — after the SASL exchange, when there is one.
+     (send-line! conn "CAP LS 302")
      (send-line! conn (str "NICK " nick))
      (send-line! conn (str "USER " nick " 0 * :" nick))
      conn)))

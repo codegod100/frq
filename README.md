@@ -16,6 +16,7 @@ src/frq/atproto.jolt handle → DID → PDS → session, and the SASL payloads
 src/frq/oauth.jolt   the broker flow: login URL, loopback capture, /session
 src/frq/store.jolt   the saved sign-in, mode 600 in the config directory
 src/frq/media.jolt   image links: spot them, fetch them once, cache on disk
+src/frq/clock.jolt   the reader's own zone, twelve-hour times, day headings
 src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
 src/frq/state.jolt   the ratoms every screen reads, and `apply-msg!`
 src/frq/app.jolt     the screens
@@ -104,6 +105,8 @@ surface — that surface does not work on Android either, while the syscalls do.
 * Auto-joins `#test` on `irc.freeq.at`
 * Join channels, channel buffers with unread counts, send and receive `PRIVMSG`
 * Backlog on join, and `CHATHISTORY` for the channels freeq restores instead
+* Twelve-hour timestamps from the server's own clock, with a heading wherever
+  the day changes
 * Inline previews for PNG links, fetched once and cached under
   `$XDG_CACHE_HOME/frq/media`; click one to see it full size
 * Join/part notices, DMs bucketed under the sender's nick
