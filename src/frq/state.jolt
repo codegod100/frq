@@ -506,6 +506,11 @@
 ;; view there and take scrolling away from the reader.
 (defonce jump-to (atom nil))
 
+;; The message a jump has just landed on. It outlives the scroll: arriving at a
+;; screenful of messages says nothing about which one was asked for, so the one
+;; that was answers for itself until the reader has had time to see it.
+(defonce highlight (atom nil))
+
 
 
 (defn last-preview [buffer]

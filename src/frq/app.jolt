@@ -237,9 +237,17 @@
    (if-let [target (s/message-by-id channel id)]
      [:button {:label (str "↩ " (:from target) ": " (summarise target 48))
                :on-click #(do (reset! s/jump-to id)
+                              (reset! s/highlight id)
                               ;; Off again once the frame that scrolled has
                               ;; been painted, so the reader keeps the view.
-                              (vidya/after! 120 (fn [] (reset! s/jump-to nil))))}]
+                              (vidya/after! 120 (fn [] (reset! s/jump-to nil)))
+                              ;; The highlight stays long enough to be read,
+                              ;; and only clears itself: a later jump elsewhere
+                              ;; owns the highlight from then on.
+                              (vidya/after! 2000
+                                            (fn []
+                                              (when (= id @s/highlight)
+                                                (reset! s/highlight nil)))))}]
      ;; The message it answers is older than this buffer goes.
      [:dim-label {:label "↩ replying to an earlier message"}])])
 
@@ -254,55 +262,60 @@
   (let [same-sender? (and prev
                           (not (:system? m))
                           (not (:system? prev))
-                          (= (:from prev) (:from m)))]
+                          (= (:from prev) (:from m)))
+        ;; What a jump landed on wears a surface of its own for a moment, so
+        ;; the answer to "which one was I sent to" is on the screen rather
+        ;; than in the reader's count of rows.
+        highlit? (boolean (and (:id m) (= (:id m) @s/highlight)))]
     [:vbox {:key i :spacing 2 :margin 0
             ;; The jump target is what a "go to message" click scrolls to.
             :scroll-here (boolean (and (:id m) (= (:id m) @s/jump-to)))}
-     [:vbox {:key :reply-chip}
-      (when-let [reply-to (:reply-to m)]
-        [reply-chip @s/current reply-to])]
-     ;; A run from one person reads as one block; repeating the nick on every
-     ;; line is what made a busy channel look like a list of headers. The time
-     ;; rides on that same line, for the same reason: once per run, not once
-     ;; per line.
-     [:vbox {:key :who}
-      (when-not (or same-sender? (:system? m))
-        ;; Everything that is about the person rather than the line: their
-        ;; picture, their name, and when they started saying this.
-        [:hbox {:spacing 6}
-         ;; Always an avatar, picture or not: the initial stands in until the
-         ;; fetch lands, and for the guests who have no profile at all, which
-         ;; is what keeps the column of faces straight down the left.
-         ;; Reading the tick subscribes this row to a fetch finishing.
+     [(if highlit? :card :vbox) {:key :body :spacing 2 :margin 0}
+      [:vbox {:key :reply-chip}
+       (when-let [reply-to (:reply-to m)]
+         [reply-chip @s/current reply-to])]
+      ;; A run from one person reads as one block; repeating the nick on every
+      ;; line is what made a busy channel look like a list of headers. The time
+      ;; rides on that same line, for the same reason: once per run, not once
+      ;; per line.
+      [:vbox {:key :who}
+       (when-not (or same-sender? (:system? m))
+         ;; Everything that is about the person rather than the line: their
+         ;; picture, their name, and when they started saying this.
+         [:hbox {:spacing 6}
+          ;; Always an avatar, picture or not: the initial stands in until the
+          ;; fetch lands, and for the guests who have no profile at all, which
+          ;; is what keeps the column of faces straight down the left.
+          ;; Reading the tick subscribes this row to a fetch finishing.
+          (let [_ @s/media-tick]
+            [:avatar {:label (:from m)
+                      :src (or (avatars/path-when-ready (:actor m)) "")
+                      :size 22}])
+          [:dim-label {:label (:from m)}]
+          (when-let [at (:at m)]
+            [:dim-label {:label (clock/clock-time at)}])
+          ;; Answering is offered where the sender is named — a run of lines
+          ;; from one person is answered as the thing it is — and against the
+          ;; right edge, out of the way of the name and the time, which are what
+          ;; the eye is going down the column for.
+          [:hbox {:key :reply-action :align :end}
+           (when (:id m)
+             [:button {:label "↩" :on-click #(s/reply-to! m)}])]])]
+      [:vbox {:key :text :spacing 2}
+       (map-indexed (fn [j run] (run-node j run (:system? m)))
+                    (text-runs (:text m)))]
+      ;; Pictures under the line that linked them. The link stays: it is what a
+      ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
+      [:vbox {:key :images :spacing 4}
+       (when (seq (:images m))
+         ;; Reading the tick is what subscribes this row to a fetch finishing.
          (let [_ @s/media-tick]
-           [:avatar {:label (:from m)
-                     :src (or (avatars/path-when-ready (:actor m)) "")
-                     :size 22}])
-         [:dim-label {:label (:from m)}]
-         (when-let [at (:at m)]
-           [:dim-label {:label (clock/clock-time at)}])
-         ;; Answering is offered where the sender is named — a run of lines
-         ;; from one person is answered as the thing it is — and against the
-         ;; right edge, out of the way of the name and the time, which are what
-         ;; the eye is going down the column for.
-         [:hbox {:key :reply-action :align :end}
-          (when (:id m)
-            [:button {:label "↩" :on-click #(s/reply-to! m)}])]])]
-     [:vbox {:key :text :spacing 2}
-      (map-indexed (fn [j run] (run-node j run (:system? m)))
-                   (text-runs (:text m)))]
-     ;; Pictures under the line that linked them. The link stays: it is what a
-     ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
-     [:vbox {:key :images :spacing 4}
-      (when (seq (:images m))
-        ;; Reading the tick is what subscribes this row to a fetch finishing.
-        (let [_ @s/media-tick]
-          (for [url (:images m)]
-            (when-let [path (media/path-when-ready url)]
-              [:image {:key url
-                     :src path
-                     :max-height 260
-                     :on-click #(reset! s/lightbox {:path path :url url})}]))))]]))
+           (for [url (:images m)]
+             (when-let [path (media/path-when-ready url)]
+               [:image {:key url
+                      :src path
+                      :max-height 260
+                      :on-click #(reset! s/lightbox {:path path :url url})}]))))]]]))
 
 (defn- day-separator [day-key label]
   [:vbox {:key day-key :spacing 4 :margin 0}
