@@ -313,8 +313,14 @@
 (defn join! [conn channel] (send-line! conn (str "JOIN " channel)))
 (defn part! [conn channel] (send-line! conn (str "PART " channel)))
 
-(defn privmsg! [conn target text]
-  (send-line! conn (str "PRIVMSG " target " :" text)))
+(defn privmsg!
+  "Say something. With `reply-to`, say it as an answer to that message: the
+  `+draft/reply` tag is what every other freeq client reads to thread it, and
+  what this one draws its chips from."
+  ([conn target text] (privmsg! conn target text nil))
+  ([conn target text reply-to]
+   (send-line! conn (str (when (seq reply-to) (str "@+draft/reply=" reply-to " "))
+                         "PRIVMSG " target " :" text))))
 
 (defn close! [conn]
   ;; Written straight out rather than queued: the reader may already be gone,

@@ -280,7 +280,13 @@
                      :size 22}])
          [:dim-label {:label (:from m)}]
          (when-let [at (:at m)]
-           [:dim-label {:label (clock/clock-time at)}])])]
+           [:dim-label {:label (clock/clock-time at)}])
+         ;; Answering is offered where the sender is named: a run of lines from
+         ;; one person is answered as the thing it is, rather than every line
+         ;; of it carrying a button of its own.
+         [:vbox {:key :reply-action}
+          (when (:id m)
+            [:button {:label "↩" :on-click #(s/reply-to! m)}])]])]
      [:vbox {:key :text :spacing 2}
       (map-indexed (fn [j run] (run-node j run (:system? m)))
                    (text-runs (:text m)))]
@@ -357,7 +363,11 @@
      ;; move the compose bar under the reader every time the button came and
      ;; went.
      [:scroll {:orientation :vertical
-               :reserve 116
+               ;; Plus the reply banner's row when there is one. That row does
+               ;; move the compose bar, and should: it appears because the
+               ;; reader asked to answer something, unlike the jump button,
+               ;; which appears on its own and must not shift what is under it.
+               :reserve (if @s/replying-to 150 116)
                :stick-to-bottom true
                :scroll-to-bottom @s/jump-tick
                :on-change #(reset! s/at-present? (= "end" %))}
@@ -373,6 +383,12 @@
         [:spacer {:size 34}]
         [:button {:label "↓ Jump to present" :on-click s/jump-to-present!}])]
      [:separator {}]
+     ;; What the draft is answering, directly above where it is being typed.
+     [:vbox {:key :replying}
+      (when-let [target @s/replying-to]
+        [:hbox {:spacing 8}
+         [:dim-label {:label (str "↩ " (:from target) ": " (summarise target 36))}]
+         [:button {:label "✕" :on-click s/cancel-reply!}]])]
      [:hbox {:spacing 8}
       ;; narrow enough that Send keeps its place on a phone-width row
       [:entry {:text @s/draft

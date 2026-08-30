@@ -61,6 +61,13 @@
 (defonce channels (atom {}))
 (defonce current (atom nil))
 (defonce draft (atom ""))
+;; The message the draft is answering, as {:id :from :text}, or nil. Held whole
+;; rather than as an id alone so the compose bar can say who is being answered
+;; without going looking for them.
+(defonce replying-to (atom nil))
+
+(defn reply-to! [m] (reset! replying-to (select-keys m [:id :from :text])))
+(defn cancel-reply! [] (reset! replying-to nil))
 
 ;; The picture being looked at full size, or nil. Vidya's tree has no overlay,
 ;; so this is a screen of its own rather than a layer over the chat.
@@ -430,12 +437,16 @@
 
 (defn send-draft! []
   (let [text (str/trim @draft)
-        target @current]
+        target @current
+        reply-to @replying-to]
     (when (and (seq text) target)
       ;; Saying something is a way of asking to see it.
       (jump-to-present!)
-      (when-let [c @conn] (irc/privmsg! c target text))
-      (push-message! target @form-nick text)
+      (when-let [c @conn] (irc/privmsg! c target text (:id reply-to)))
+      ;; The local echo carries the same link, so the chip is there before the
+      ;; server's copy of the line comes back — if it ever does.
+      (push-message! target @form-nick text {:reply-to (:id reply-to)})
+      (reset! replying-to nil)
       (reset! draft ""))))
 
 (defn channel-list
@@ -494,6 +505,7 @@
 ;; to it and taken off again — a scroll target that stays set would pin the
 ;; view there and take scrolling away from the reader.
 (defonce jump-to (atom nil))
+
 
 
 (defn last-preview [buffer]
