@@ -8,7 +8,8 @@
             [glimmer.ratom :as r :refer [atom]]
             [frq.atproto :as atproto]
             [frq.irc :as irc]
-            [frq.oauth :as oauth]))
+            [frq.oauth :as oauth]
+            [frq.store :as store]))
 
 (def default-host "irc.freeq.at")
 (def default-port "6697")
@@ -150,8 +151,10 @@
       ("904" "905" "906") (do (reset! session nil)
                               ;; The broker token may still be good — but a
                               ;; refusal is as likely to mean it is not, and a
-                              ;; stale one would fail the same way every time.
+                              ;; stale one would fail the same way every time,
+                              ;; including across restarts if it were kept.
                               (reset! broker-token nil)
+                              (store/clear-session!)
                               (reset! error (str "Bluesky sign-in refused: "
                                                  (or (last params) "no reason given"))))
       "*DISCONNECTED*" (do (reset! conn nil)
@@ -171,9 +174,12 @@
   "What went wrong, in words. A jolt condition prints as #object[:object], so
   the message and the ex-data are what has to be dug out by hand."
   [e]
-  (let [msg (or (ex-message e) (str e))
-        data (ex-data e)]
-    (str (type e) ": " msg (when data (str " " (pr-str data))))))
+  (let [msg (ex-message e)]
+    (if (seq msg)
+      msg
+      ;; A raw host condition prints as #object[:object] and says nothing, so
+      ;; its type is the only thing left worth showing.
+      (str (type e) ": " (str e)))))
 
 (defn- dial! [host port nick tls? sess]
   ;; stderr is the only console on Android — this line lands in logcat.
@@ -196,19 +202,34 @@
                ;; broker token in hand skips the browser entirely.
                :bluesky
                (let [handle (str/trim @form-handle)
+                     browser! (fn []
+                                (reset! status "Opening your browser to sign in…")
+                                (oauth/await-callback!
+                                 oauth/default-broker handle
+                                 (fn [url]
+                                   (reset! login-url url)
+                                   (oauth/open-browser! url)
+                                   (reset! status "Waiting for the browser…"))))
                      tokens (if-let [bt @broker-token]
-                              (do (reset! status "Refreshing your session…")
-                                  (oauth/refresh-session oauth/default-broker bt))
-                              (do (reset! status "Opening your browser to sign in…")
-                                  (oauth/await-callback!
-                                   oauth/default-broker handle
-                                   (fn [url]
-                                     (reset! login-url url)
-                                     (oauth/open-browser! url)
-                                     (reset! status "Waiting for the browser…")))))
+                              ;; A saved token that the broker no longer honours
+                              ;; is worth exactly one attempt: drop it and go
+                              ;; through the browser, rather than failing the
+                              ;; same way on every future Connect.
+                              (try (reset! status "Resuming your session…")
+                                   (oauth/refresh-session oauth/default-broker bt)
+                                   (catch Exception _
+                                     (reset! broker-token nil)
+                                     (store/clear-session!)
+                                     (reset! status "Saved session expired — signing in again…")
+                                     (browser!)))
+                              (browser!))
                      s (assoc tokens :kind :web-token)]
                  (reset! login-url nil)
                  (reset! broker-token (:broker-token tokens))
+                 ;; Saved on every sign-in, not only the first: /session can
+                 ;; hand back a rotated broker token, and the old one may stop
+                 ;; working the moment it does.
+                 (store/save-session! tokens)
                  (reset! session s)
                  (when (seq (:handle tokens)) (reset! form-handle (:handle tokens)))
                  s)
@@ -274,6 +295,27 @@
              (reset! conn nil)
              (reset! status "Not connected")
              (reset! error (str "Could not connect: " (describe e))))))))
+
+(defn restore-session!
+  "Pick up a saved sign-in at startup. Only the durable broker token comes
+  back; the connection still mints a fresh web-token from it."
+  []
+  (when-let [saved (store/load-session)]
+    (reset! broker-token (:broker-token saved))
+    (when (seq (:handle saved)) (reset! form-handle (:handle saved)))
+    (when (seq (:nick saved)) (reset! form-nick (:nick saved)))
+    (reset! auth-mode :bluesky)
+    (reset! status (str "Signed in as " (:handle saved) " — Connect to resume"))
+    saved))
+
+(defn forget-session!
+  "Drop the saved sign-in, on disk and in memory."
+  []
+  (store/clear-session!)
+  (reset! broker-token nil)
+  (reset! session nil)
+  (reset! auth-mode :guest)
+  (reset! status "Not connected"))
 
 (defn disconnect! []
   (when-let [c @conn] (irc/close! c))

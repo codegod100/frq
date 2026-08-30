@@ -87,9 +87,11 @@
                 :width-request 320
                 :placeholder "alice.bsky.social"
                 :on-change #(reset! s/form-handle %)}]
-       [:vbox {:key :remembered}
+       [:vbox {:key :remembered :spacing 4}
         (when @s/broker-token
-          [:dim-label {:label "Session remembered — Connect will not need the browser."}])]
+          [:vbox {:spacing 4}
+           [:dim-label {:label "Session remembered — Connect will not need the browser."}]
+           [:button {:label "Forget saved session" :on-click s/forget-session!}]])]
        [:vbox {:key :login-url :spacing 4}
         (when-let [url @s/login-url]
           [:vbox {:spacing 4}
@@ -238,7 +240,7 @@
         (when @s/broker-token
           [:button {:label "Forget Bluesky session"
                     :kind :destructive
-                    :on-click #(do (reset! s/broker-token nil) (reset! s/session nil))}])]]
+                    :on-click s/forget-session!}])]]
       [:dim-label {:label "Guest — not signed in."}])
     [:separator {}]
     [:button {:label "Disconnect" :kind :destructive :on-click s/disconnect!}]]
@@ -260,4 +262,7 @@
     [chats-screen]))
 
 (defn -main [& _]
+  ;; Before the window: a saved sign-in decides which mode the connect screen
+  ;; opens in, and what it says.
+  (s/restore-session!)
   (ui/run app :title "frq" :width 520 :height 860))

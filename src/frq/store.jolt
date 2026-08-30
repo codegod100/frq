@@ -1,0 +1,50 @@
+(ns frq.store
+  "The one thing worth keeping between runs: the durable broker token.
+
+  It is a credential — anyone holding it can mint session tokens for the
+  account — so it lives in the user's config directory with the permissions of
+  an ssh key, and never anywhere else. The web-token beside it is single-use
+  and deliberately not saved."
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
+            [jolt.host :as host]))
+
+(defn config-dir []
+  (let [xdg (host/getenv "XDG_CONFIG_HOME")
+        home (host/getenv "HOME")]
+    (str (if (seq xdg) xdg (str home "/.config")) "/frq")))
+
+(defn session-file [] (str (config-dir) "/session.edn"))
+
+(defn load-session
+  "The saved session, or nil. A file that will not parse is treated as absent —
+  a stale credential is not worth an error at startup."
+  []
+  (let [path (session-file)]
+    (when (host/file-exists? path)
+      (try
+        (let [m (edn/read-string (slurp path))]
+          (when (and (map? m) (seq (:broker-token m))) m))
+        (catch Exception _ nil)))))
+
+(defn save-session!
+  "Write {:broker-token :handle :did :nick}, readable by nobody else."
+  [session]
+  (let [dir (config-dir)
+        path (session-file)]
+    (try
+      (host/mkdirs! dir)
+      ;; Created before it is written, so the token is never on disk
+      ;; world-readable even for an instant.
+      (host/sh (str "install -m 600 /dev/null '" path "'"))
+      (spit path (pr-str (select-keys session [:broker-token :handle :did :nick])))
+      (host/sh (str "chmod 600 '" path "'"))
+      true
+      (catch Exception _ false))))
+
+(defn clear-session! []
+  (try
+    (when (host/file-exists? (session-file))
+      (host/delete-file! (session-file)))
+    true
+    (catch Exception _ false)))

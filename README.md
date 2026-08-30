@@ -14,6 +14,7 @@ of an `AppState` struct.
 ```
 src/frq/atproto.jolt handle → DID → PDS → session, and the SASL payloads
 src/frq/oauth.jolt   the broker flow: login URL, loopback capture, /session
+src/frq/store.jolt   the saved sign-in, mode 600 in the config directory
 src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
 src/frq/state.jolt   the ratoms every screen reads, and `apply-msg!`
 src/frq/app.jolt     the screens
@@ -49,6 +50,12 @@ it never reaches a server as a query string. The page frq serves there has one
 job: POST the fragment back to itself. What comes back is a single-use SASL
 `web-token` and a durable `broker_token`; later connections mint a fresh token
 from the durable one at `/session` and skip the browser.
+
+The durable token is saved to `$XDG_CONFIG_HOME/frq/session.edn` (mode 600) so
+a restart resumes without one, along with the handle and nick it belongs to.
+The web-token beside it is single-use and deliberately not saved. A token the
+broker no longer honours is dropped — from disk and memory — and the browser
+flow runs once more, rather than failing the same way on every Connect.
 
 **App password** signs in without a browser, straight to the user's own PDS:
 `resolveHandle` → DID → PDS from the DID document → `createSession`. The
@@ -98,7 +105,7 @@ surface — that surface does not work on Android either, while the syscalls do.
 * **No `did:key` signing, no credential gates, no E2EE.** Sign-in of either
   kind needs TLS, so it is desktop-only — the Android build connects as a
   guest.
-* **The broker token lives in memory.** Nothing is persisted, so a restart
-  means another trip through the browser.
+* **Only the broker token is persisted**, and only for OAuth. An app-password
+  sign-in is not remembered.
 * **No scrollback trimming, avatars, reactions, threads, or calls.**
 * Message lists are keyed vboxes; glimmer-vidya has no `:listbox` yet.
