@@ -254,6 +254,35 @@
      ;; The message it answers is older than this buffer goes.
      [:dim-label {:label "↩ replying to an earlier message"}])])
 
+(defn- reaction-row
+  "What people have put on a message, and the way to put something there too.
+
+  A pill carries its count and toggles: clicking one you are already on takes
+  yours off, which is the same gesture that put it there. The `+` opens the
+  quick row for this message alone — the emoji are only worth their space while
+  someone is choosing one."
+  [channel m]
+  (let [reactions (:reactions m)
+        open? (= (:id m) @s/reacting)]
+    [:vbox {:key :reactions :spacing 2}
+     [:hbox {:key :pills :spacing 4}
+      (for [emoji (sort (keys reactions))]
+        (let [nicks (get reactions emoji)]
+          [:button {:key emoji
+                    :label (str emoji " " (count nicks))
+                    :kind (if (s/my-reaction? m emoji) :primary :normal)
+                    :on-click #(s/toggle-reaction! channel m emoji)}]))
+      [:button {:key :add
+                :label (if open? "×" "+")
+                :on-click #(reset! s/reacting (when-not open? (:id m)))}]]
+     [:hbox {:key :picker :spacing 4}
+      (when open?
+        (for [emoji s/quick-reactions]
+          [:button {:key emoji
+                    :label emoji
+                    :on-click #(do (s/toggle-reaction! channel m emoji)
+                                   (reset! s/reacting nil))}]))]]))
+
 (defn message-row
   "One message. `prev` is the message above it, which decides whether this one
   repeats the sender.
@@ -319,6 +348,12 @@
        [:vbox {:key :text :spacing 2}
         (map-indexed (fn [j run] (run-node j run (:system? m)))
                      (text-runs (:text m)))]]
+      ;; Reactions under the message they are about, and only where there is a
+      ;; message to name: a line this client wrote itself, or one from before
+      ;; the server started stamping ids, cannot be pointed at.
+      [:vbox {:key :reactions-row}
+       (when (and (:id m) (not (:system? m)))
+         [reaction-row @s/current m])]
       ;; Pictures under the line that linked them. The link stays: it is what a
       ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
       [:vbox {:key :images :spacing 4}

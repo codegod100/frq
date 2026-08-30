@@ -97,6 +97,17 @@
           (recur (rest in) (conj out c)))
         (apply str out)))))
 
+(defn escape-tag-value
+  "The inverse, for a tag this client sends. An emoji needs none of it; a
+  message id could, and the cost of being right is a pass over a short string."
+  [v]
+  (-> (str v)
+      (str/replace "\\" "\\\\")
+      (str/replace ";" "\\:")
+      (str/replace " " "\\s")
+      (str/replace "\r" "\\r")
+      (str/replace "\n" "\\n")))
+
 (defn tag-value
   "One IRCv3 tag's value, unescaped, or nil."
   [tags key]
@@ -344,6 +355,25 @@
   ([conn target text reply-to]
    (send-line! conn (str (when (seq reply-to) (str "@+draft/reply=" reply-to " "))
                          "PRIVMSG " target " :" text))))
+
+(defn tagmsg!
+  "A message that is only tags: how freeq carries a reaction, a typing hint or
+  a delete. `tags` is a map of name to value, sent in no particular order — the
+  server reads them by name."
+  [conn target tags]
+  (let [pairs (for [[k v] tags] (str k "=" (escape-tag-value v)))]
+    (send-line! conn (str "@" (str/join ";" pairs) " TAGMSG " target))))
+
+(defn react!
+  "Put `emoji` on the message `msgid`, for everyone in `target` to see."
+  [conn target msgid emoji]
+  (tagmsg! conn target {"+react" emoji "+reply" msgid}))
+
+(defn unreact!
+  "Take it off again. The server keys the removal by DID where there is one, so
+  it survives a nick change and cannot be done on someone else's behalf."
+  [conn target msgid emoji]
+  (tagmsg! conn target {"+freeq.at/unreact" emoji "+reply" msgid}))
 
 (defn close! [conn]
   ;; Written straight out rather than queued: the reader may already be gone,

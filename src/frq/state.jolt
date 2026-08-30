@@ -122,9 +122,10 @@
   said, from the server's own `time` tag where there is one, and `:did` who
   said it, from the `account` tag — an identity that outlasts whatever nick
   they are using today. `:id` names this message so a reply can point at it,
-  and `:reply-to` is the one it answers."
+  and `:reply-to` is the one it answers. `:reactions` is what people have put
+  on it already, which on a replayed backlog the server hands over in full."
   ([channel from text] (push-message! channel from text {}))
-  ([channel from text {:keys [at did id reply-to]}]
+  ([channel from text {:keys [at did id reply-to reactions]}]
    (let [at (or at (clock/now-ms))
          who (avatars/actor did from)]
      (doseq [url (media/image-urls text)]
@@ -144,7 +145,9 @@
                                 :at at
                                 ;; `:id` is what a reply points at, and
                                 ;; `:reply-to` is what this one points at.
-                                :id id :reply-to reply-to})
+                                :id id :reply-to reply-to
+                                ;; emoji -> the nicks who put it there
+                                :reactions (or reactions {})})
                     (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))))
 
 (defn open-channel!
@@ -167,6 +170,49 @@
                (not (:joining? buffer)))
       (swap! channels #(assoc-in % [name :joining?] true))
       (irc/join! @conn name))))
+
+(defn- parse-reactions
+  "The server's tally of what is already on a message, as
+  `emoji:nick,nick;emoji:nick` — what CHATHISTORY sends so reactions survive a
+  reconnect rather than starting empty every time the app opens."
+  [encoded]
+  (when (seq (or encoded ""))
+    (reduce (fn [acc part]
+              (let [[emoji nicks] (str/split part #":" 2)]
+                (if (and (seq emoji) (seq (or nicks "")))
+                  (assoc acc emoji (vec (remove str/blank? (str/split nicks #","))))
+                  acc)))
+            {}
+            (str/split encoded #";"))))
+
+(defn- with-reaction
+  "One nick's reaction added to or taken off a tally. An emoji nobody is left
+  on goes away with them: an empty pill is a pill that says nothing."
+  [reactions emoji nick on?]
+  (let [nicks (vec (get reactions emoji []))
+        nicks (if on?
+                (if (some #{nick} nicks) nicks (conj nicks nick))
+                (vec (remove #{nick} nicks)))]
+    (if (seq nicks)
+      (assoc reactions emoji nicks)
+      (dissoc reactions emoji))))
+
+(defn update-reaction!
+  "Fold one reaction into the buffer it belongs to. The message it names may
+  not be there — a reaction on something older than the backlog we asked for —
+  and then there is nothing to show it on, so nothing happens."
+  [channel msgid emoji nick on?]
+  (when (and channel msgid (seq (or emoji "")))
+    (swap! channels
+           (fn [m]
+             (if-let [msgs (get-in m [channel :messages])]
+               (assoc-in m [channel :messages]
+                         (mapv (fn [msg]
+                                 (if (= msgid (:id msg))
+                                   (update msg :reactions with-reaction emoji nick on?)
+                                   msg))
+                               msgs))
+               m)))))
 
 (declare join!)
 
@@ -199,7 +245,24 @@
                                   ;; +reply; a client that sent the draft name
                                   ;; may still reach us before it does.
                                   :reply-to (or (irc/tag-value tags "+reply")
-                                                (irc/tag-value tags "+draft/reply"))}))
+                                                (irc/tag-value tags "+draft/reply"))
+                                  :reactions (parse-reactions
+                                              (irc/tag-value tags "+freeq.at/reactions"))}))
+      ;; A message that is only tags. A reaction is the one this client reads:
+      ;; `+react` puts an emoji on the message `+reply` names, and the server's
+      ;; own `+freeq.at/unreact` takes it off again.
+      "TAGMSG" (let [tags (:tags msg)
+                     target (first params)
+                     buffer (if (str/starts-with? (or target "") "#") target from)
+                     msgid (or (irc/tag-value tags "+reply")
+                               (irc/tag-value tags "+draft/reply"))
+                     add (or (irc/tag-value tags "+react")
+                             (irc/tag-value tags "+draft/react"))
+                     remove-it (irc/tag-value tags "+freeq.at/unreact")]
+                 (cond
+                   add (update-reaction! buffer msgid add from true)
+                   remove-it (update-reaction! buffer msgid remove-it from false)
+                   :else nil))
       "JOIN" (let [ch (first params)]
                (if (= from @form-nick)
                  (let [fresh? (empty? (get-in @channels [ch :messages]))]
@@ -449,6 +512,33 @@
       (reset! replying-to nil)
       (reset! draft ""))))
 
+(def quick-reactions
+  "The emoji a click away. A short row rather than a picker: the point of a
+  reaction is that it costs less than typing, and a grid of a thousand glyphs
+  costs more than typing."
+  ["👍" "❤" "😂" "🎉" "👀" "🔥"])
+
+(defn my-reaction?
+  "Whether this nick is already on that emoji — which is what makes a second
+  click take it off rather than send the same reaction twice."
+  [m emoji]
+  (boolean (some #{@form-nick} (get (:reactions m) emoji))))
+
+(defn toggle-reaction!
+  "Put my emoji on a message, or take it off if it is already mine.
+
+  Applied here as well as sent: the server relays a TAGMSG to everyone in the
+  channel *except* the client that sent it, so without this the pill would only
+  appear once someone else reacted too."
+  [channel m emoji]
+  (when-let [msgid (:id m)]
+    (let [on? (not (my-reaction? m emoji))]
+      (when-let [c @conn]
+        (if on?
+          (irc/react! c channel msgid emoji)
+          (irc/unreact! c channel msgid emoji)))
+      (update-reaction! channel msgid emoji @form-nick on?))))
+
 (defn channel-list
   "Buffers most recently opened first, filtered by the search box.
 
@@ -500,6 +590,11 @@
   [channel id]
   (when id
     (first (filter #(= id (:id %)) (get-in @channels [channel :messages])))))
+
+;; The message whose reaction row is open, by id. One at a time: the row of
+;; emoji is only worth its space while it is being used, and leaving it under
+;; every message would push the conversation apart.
+(defonce reacting (atom nil))
 
 ;; The message a "go to" is currently aiming at. Set for the frame that scrolls
 ;; to it and taken off again — a scroll target that stays set would pin the

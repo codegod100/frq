@@ -110,6 +110,9 @@ surface — that surface does not work on Android either, while the syscalls do.
   the day changes
 * A chip above a reply quoting what it answers, and a click that goes there;
   ↩ beside a sender to answer them, with `+draft/reply` on the way out
+* Emoji reactions: pills under a message, a quick row to add one, a second
+  click to take yours off — sent as `TAGMSG`, and restored from the server's
+  own tally when the backlog comes back
 * Inline previews for PNG links, fetched once and cached under
   `$XDG_CACHE_HOME/frq/media`; click one to see it full size
 * Join/part notices, DMs bucketed under the sender's nick
