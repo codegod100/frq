@@ -244,7 +244,12 @@
                                   (str "Connected as " @form-nick)))
                 (reset! connecting? false)
                 (reset! screen :chats)
-                (join! auto-join))
+                ;; Back where the reader left off. The list is still what a
+                ;; connect lands on underneath, so Back from the reopened
+                ;; channel goes to the chats rather than out of the app.
+                (if-let [last-ch (first (channel-order))]
+                  (open-channel! last-ch)
+                  (join! auto-join)))
       "PRIVMSG" (let [[target text] params
                       ;; The server's clock when it offers one: a replayed
                       ;; backlog is hours or weeks old, and stamping it with
