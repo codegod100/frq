@@ -56,6 +56,9 @@
 (defonce current (atom nil))
 (defonce draft (atom ""))
 (defonce join-input (atom ""))
+;; A counter rather than a clock: the list only needs their order, and a
+;; monotonic tick cannot be surprised by the system time moving.
+(defonce access-tick (atom 0))
 (defonce search (atom ""))
 
 (defn connected? [] (some? @conn))
@@ -69,7 +72,8 @@
 (defn- ensure-channel [m name]
   (if (contains? m name)
     m
-    (assoc m name {:name name :messages [] :unread 0 :joined? false :joining? false})))
+    (assoc m name {:name name :messages [] :unread 0
+                   :joined? false :joining? false :accessed 0})))
 
 (defn push-message!
   "Append a line to a buffer, creating it if needed, and bump the unread count
@@ -91,7 +95,9 @@
   [name]
   (reset! current name)
   (reset! screen :chat)
-  (swap! channels #(assoc-in (ensure-channel % name) [name :unread] 0))
+  (swap! channels #(-> (ensure-channel % name)
+                       (assoc-in [name :unread] 0)
+                       (assoc-in [name :accessed] (swap! access-tick inc))))
   ;; `joining?` as well as `joined?`: the JOIN echo takes a round trip, and a
   ;; second JOIN sent in the meantime is what makes the server replay nothing.
   (let [buffer (get @channels name)]
@@ -355,13 +361,18 @@
       (reset! draft ""))))
 
 (defn channel-list
-  "Buffers in name order, filtered by the search box."
+  "Buffers most recently opened first, filtered by the search box.
+
+  A conversation list is read from the top, and the one you were just in is the
+  one you are most likely to want again. Buffers never opened — a DM that
+  arrived, a channel someone mentioned — sort under those, by name, rather than
+  jumping the queue."
   []
   (let [q (str/lower-case (str/trim @search))]
     (->> (vals @channels)
          (filter #(or (str/blank? q)
                       (str/includes? (str/lower-case (:name %)) q)))
-         (sort-by :name)
+         (sort-by (juxt #(- (:accessed % 0)) :name))
          vec)))
 
 (defn last-preview [buffer]

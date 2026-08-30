@@ -103,6 +103,7 @@ surface — that surface does not work on Android either, while the syscalls do.
 * Join channels, channel buffers with unread counts, send and receive `PRIVMSG`
 * Join/part notices, DMs bucketed under the sender's nick
 * Discover list, search over buffers, disconnect
+* Conversations listed most recently opened first
 
 ## Limits
 
