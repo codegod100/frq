@@ -344,17 +344,20 @@
     ;; Not a :page — a page scrolls everything, which would carry the compose
     ;; bar off the bottom with the backlog. The message list is the only thing
     ;; that scrolls, bounded so what follows it keeps its room.
-    [:vbox {:spacing 8 :margin 12}
+    ;; Less room under the compose row than around it: the space a row at the
+    ;; bottom of a screen wants is above it, not beneath it.
+    [:vbox {:spacing 8 :margin 12 :margin-bottom 4}
      [:hbox {:spacing 8}
       [:button {:label "← Chats" :on-click #(reset! s/screen :chats)}]
       [:title {:label (or name "Chat")}]]
      [error-note]
-     ;; :reserve leaves room for what sits below — the separator and compose
-     ;; bar, and the jump button when it is there. A reserve that does not
-     ;; count the button is a list that grows over the compose bar and pushes
-     ;; it off the bottom of the window the moment the button appears.
+     ;; :reserve leaves room for everything below: the jump button's row, the
+     ;; separator and the compose bar. It does not vary with whether the button
+     ;; is showing, and neither does that row — a reserve that changed would
+     ;; move the compose bar under the reader every time the button came and
+     ;; went.
      [:scroll {:orientation :vertical
-               :reserve (if @s/at-present? 72 116)
+               :reserve 116
                :stick-to-bottom true
                :scroll-to-bottom @s/jump-tick
                :on-change #(reset! s/at-present? (= "end" %))}
@@ -363,8 +366,11 @@
         [:dim-label {:label "Nothing here yet."}])]
      ;; Only while it is needed, and directly above the compose bar: the way
      ;; back to the present belongs next to the thing that puts you there.
+     ;; The row keeps its height whether or not the button is in it, so the
+     ;; compose bar below stays where the reader last saw it.
      [:vbox {:key :jump}
-      (when-not @s/at-present?
+      (if @s/at-present?
+        [:spacer {:size 34}]
         [:button {:label "↓ Jump to present" :on-click s/jump-to-present!}])]
      [:separator {}]
      [:hbox {:spacing 8}
