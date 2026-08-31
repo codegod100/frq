@@ -848,6 +848,21 @@
 ;; width that stops short of it.
 (def ^:private users-width 180)
 
+;; What the rows under the conversation need left to them: the jump button's
+;; row, the separator, the compose bar and the air around it. The columns of
+;; the row reserve it, and so nothing inside them has to — a `:scroll` that
+;; subtracted it again inside a column already stopped short would take the
+;; same points off the list twice.
+;;
+;; Plus the reply banner's row when there is one, and the pasted picture when
+;; there is one. Those rows do move the compose bar, and should: each appears
+;; because the reader just asked for something — unlike the jump button, which
+;; appears on its own and must not shift what is under it.
+(defn- below-messages []
+  (+ 124
+     (if @s/replying-to 34 0)
+     (if @s/attachment 76 0)))
+
 (defn- messages-width
   "How wide the message list may be with the people panel beside it.
 
@@ -882,11 +897,11 @@
   show, and says so rather than showing an empty column."
   [name]
   (let [people (s/member-list name)]
-    [:vbox {:key :users :width-request users-width :fill-height true :spacing 8}
+    [:vbox {:key :users :width-request users-width :fill-height true
+            :reserve (below-messages) :spacing 8}
      [:title-2 {:label (str "People " (count people))}]
      [:scroll {:scroll-key (str "users-" name)
-               :orientation :vertical
-               :reserve 124}
+               :orientation :vertical}
       (if (seq people)
         (for [p people] [member-row p])
         [:dim-label {:label "Nobody listed yet."}])]]))
@@ -947,24 +962,20 @@
      ;; it every time the panel was toggled.
      [:hbox {:spacing 8 :wrap false}
       [:vbox {:key :messages :fill-height true
+              :reserve (below-messages)
               :width-request (if show-users? (messages-width) 0)}
        [:scroll {:scroll-key "chat-messages"
                  :orientation :vertical
-                 ;; Plus the reply banner's row when there is one, and the
-                 ;; pasted picture when there is one. Those rows do move the
-                 ;; compose bar, and should: each appears because the reader just
-                 ;; asked for something — unlike the jump button, which appears
-                 ;; on its own and must not shift what is under it.
-                 :reserve (+ 124
-                             (if @s/replying-to 34 0)
-                             (if @s/attachment 76 0))
                  :stick-to-bottom true
                  :scroll-to-bottom @s/jump-tick
                  :on-change #(reset! s/at-present? (= "end" %))}
         (if (seq (:messages buffer))
           (message-rows (:messages buffer))
           [:dim-label {:label "Nothing here yet."}])]]
-      [:vbox {:key :people-pane :fill-height true}
+      ;; The wrapper takes no height of its own: the panel inside it is the
+      ;; column, and a fill-height wrapper around it would claim the strip the
+      ;; compose bar sits in whether or not the panel was showing.
+      [:vbox {:key :people-pane}
        (when show-users? [users-panel name])]]
      ;; Only while it is needed, and directly above the compose bar: the way
      ;; back to the present belongs next to the thing that puts you there.
