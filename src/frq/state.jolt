@@ -12,6 +12,7 @@
             [frq.clock :as clock]
             [frq.emoji :as emoji]
             [frq.irc :as irc]
+            [frq.msgsig :as msgsig]
             [frq.avatars :as avatars]
             [frq.media :as media]
             [frq.oauth :as oauth]
@@ -340,8 +341,13 @@
                       at (or (clock/parse-time-tag (:tags msg)) (clock/now-ms))
                       tags (:tags msg)
                       ;; a DM addressed to us belongs in a buffer named for the
-                      ;; sender, not for our own nick
-                      buffer (if (str/starts-with? (or target "") "#") target from)]
+                      ;; sender, not for our own nick — except when the sender
+                      ;; is us: `echo-message` sends our own DM back, and the
+                      ;; buffer it belongs to is the one we sent it to.
+                      buffer (cond
+                               (str/starts-with? (or target "") "#") target
+                               (= from @form-nick) target
+                               :else from)]
                   (push-message! buffer from text
                                  {:at at
                                   :did (:account msg)
@@ -435,7 +441,11 @@
                               (store/clear-session!)
                               (reset! error (str "Bluesky sign-in refused: "
                                                  (or (last params) "no reason given"))))
-      "*DISCONNECTED*" (do (reset! conn nil)
+      ;; The signing key belonged to that connection: the server forgets it
+      ;; when the session ends, and signing with it afterwards would be
+      ;; signing with a key nobody can check.
+      "*DISCONNECTED*" (do (msgsig/forget!)
+                           (reset! conn nil)
                            (reset! connecting? false)
                            (swap! channels
                                   #(reduce-kv (fn [m k v]
@@ -878,9 +888,11 @@
         ;; Saying something is a way of asking to see it.
         (jump-to-present!)
         (when-let [c @conn] (irc/privmsg! c target line (:id reply-to)))
-        ;; The local echo carries the same link, so the chip is there before
-        ;; the server's copy of the line comes back — if it ever does.
-        (push-message! target @form-nick line {:reply-to (:id reply-to)})
+        ;; Only when the server will not send the line back itself. Its copy
+        ;; carries the msgid, and a message with no id is one nobody can react
+        ;; or reply to; echoing locally as well would put the line up twice.
+        (when-not (some-> @conn (irc/cap-acked? "echo-message"))
+          (push-message! target @form-nick line {:reply-to (:id reply-to)}))
         (reset! replying-to nil)
         (reset! draft "")
         (when att
@@ -930,6 +942,17 @@
       group (vec (filter (fn [[_ _ g]] (= g group)) emoji/catalog))
       :else (mapv (fn [glyph] [glyph glyph nil]) emoji/popular))))
 
+(defn- dm-peer-did
+  "The DID of whoever this DM buffer is with, from the last thing they said.
+  nil for a channel, and for a conversation where nobody with a DID has spoken
+  — a signature over a DM needs both sides named, and there is nothing to name."
+  [channel]
+  (when-not (str/starts-with? (or channel "") "#")
+    (->> (get-in @channels [channel :messages])
+         (remove #(= @form-nick (:from %)))
+         (keep :did)
+         last)))
+
 (defn my-reaction?
   "Whether this nick is already on that emoji — which is what makes a second
   click take it off rather than send the same reaction twice."
@@ -944,11 +967,16 @@
   appear once someone else reacted too."
   [channel m emoji]
   (when-let [msgid (:id m)]
-    (let [on? (not (my-reaction? m emoji))]
+    (let [on? (not (my-reaction? m emoji))
+          ;; Who the DM is with, for the signature: freeq names a DM by both
+          ;; DIDs rather than by a nick, and nothing else in a buffer says
+          ;; which account the other side is. nil in a channel, which is named
+          ;; by itself.
+          peer (dm-peer-did channel)]
       (when-let [c @conn]
         (if on?
-          (irc/react! c channel msgid emoji)
-          (irc/unreact! c channel msgid emoji)))
+          (irc/react! c channel msgid emoji peer)
+          (irc/unreact! c channel msgid emoji peer)))
       (update-reaction! channel msgid emoji @form-nick on?))))
 
 (defn start-call!
