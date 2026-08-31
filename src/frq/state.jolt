@@ -89,6 +89,32 @@
 (defonce lightbox (atom nil))            ; {:path :url}
 (defonce join-input (atom ""))
 
+;; The window's content width in points, polled from the backend a few times a
+;; second. The app is laid out for a phone-width window, and this is what lets
+;; a wide one be more than a phone with margins: past `wide-width` the channel
+;; list and the conversation are both on screen instead of taking turns.
+(defonce window-width (atom 0))
+
+;; Where the second pane starts paying for itself. Below this a 300pt list
+;; beside a conversation leaves the messages narrower than the phone layout
+;; they were written for.
+(def wide-width 900)
+
+(defn wide?
+  "True while the window has room for the list and a conversation at once."
+  []
+  (>= @window-width wide-width))
+
+(defn chat-visible?
+  "Whether the conversation in `current` is on screen.
+
+  On a narrow window that is the chat screen alone. On a wide one the chats
+  screen shows it too, in the pane beside the list — so this, and not the
+  screen, is what decides whether an arriving line counts as unread."
+  []
+  (or (= :chat @screen)
+      (and (wide?) (= :chats @screen))))
+
 ;; Whether the chat view is showing the newest line, and a counter the view
 ;; watches to be told to go back to it. A counter rather than a flag: a flag
 ;; would need clearing, and there is no frame in which to clear it.
@@ -151,7 +177,7 @@
      (swap! channels
             (fn [m]
               (let [m (ensure-channel m channel)
-                    viewing? (and (= :chat @screen) (= channel @current))]
+                    viewing? (and (chat-visible?) (= channel @current))]
                 (-> m
                     (update-in [channel :messages] conj
                                {:from from :text text :system? (= "*" from)
@@ -171,7 +197,10 @@
   buffer stays), and opening one is a request to be in it."
   [name]
   (reset! current name)
-  (reset! screen :chat)
+  ;; On a wide window the conversation lives in the chats screen's second
+  ;; pane, beside the list; :chat is the narrow window's way of showing it
+  ;; instead of the list, and there is nothing there to trade it for.
+  (reset! screen (if (wide?) :chats :chat))
   ;; A picker belongs to the message it was opened on; carrying it into another
   ;; buffer would offer to react to something that is no longer on screen.
   (reset! reacting nil)
@@ -618,6 +647,39 @@
     (reset! attachment nil)
     (discard-file! (:path a))))
 
+(defn- attach!
+  "Hold the picture already written to `path` — a copy of ours under
+  `outgoing/` — against the next line, and start its upload.
+
+  The upload runs off the UI thread and starts at once rather than at send, so
+  by the time a line is written the picture is usually already up. A failure
+  lands in `error` like any other, and takes the attachment with it — there is
+  nothing to send and nothing to show.
+
+  `filename` is what the server files it under; it says which gesture the
+  picture came in by, and nothing else depends on it."
+  [path filename]
+  (let [did (:did @session)
+        host-name @form-host
+        channel @current]
+    (reset! error nil)
+    (clear-attachment!)
+    (reset! attachment {:path path :status :uploading})
+    (future
+      (try
+        (let [url (upload/upload! host-name did channel path filename)]
+          ;; Only if this is still the picture on screen: a reader who attached
+          ;; another, or cleared it, has said what they want, and an upload
+          ;; landing afterwards does not get to undo that.
+          (swap! attachment #(if (= (:path %) path)
+                               (assoc % :url url :status :ready)
+                               %))
+          (when-not (= (:path @attachment) path) (discard-file! path)))
+        (catch Exception e
+          (swap! attachment #(if (= (:path %) path) nil %))
+          (discard-file! path)
+          (reset! error (or (ex-message e) (str e))))))))
+
 (defn paste-image!
   "Take the picture on the clipboard and hold it against the next line.
 
@@ -625,37 +687,107 @@
   means — but that is a fact about the wire, not something the reader should
   have to type around. The picture is attached: shown under the draft while
   they write whatever they are sending it with, and turned into a link only on
-  the way out.
-
-  The upload runs off the UI thread and starts at once rather than at send, so
-  by the time a line is written the picture is usually already up. A failure
-  lands in `error` like any other, and takes the attachment with it — there is
-  nothing to send and nothing to show."
+  the way out."
   []
   (let [path (paste-path)]
     (host/mkdirs! (str (media/cache-dir) "/outgoing"))
     (if-not (vidya/clipboard-image-png! path)
+      ;; Android has no clipboard of pictures to read at all, which is the
+      ;; other half of why the picker below exists.
       (reset! error "No picture on the clipboard.")
-      (let [did (:did @session)
-            host-name @form-host
-            channel @current]
-        (reset! error nil)
-        (clear-attachment!)
-        (reset! attachment {:path path :status :uploading})
-        (future
-          (try
-            (let [url (upload/upload! host-name did channel path "paste.png")]
-              ;; Only if this is still the paste on screen: a reader who
-              ;; pasted again, or cleared it, has said what they want, and an
-              ;; upload landing afterwards does not get to undo that.
-              (swap! attachment #(if (= (:path %) path)
-                                   (assoc % :url url :status :ready)
-                                   %))
-              (when-not (= (:path @attachment) path) (discard-file! path)))
-            (catch Exception e
-              (swap! attachment #(if (= (:path %) path) nil %))
-              (discard-file! path)
-              (reset! error (or (ex-message e) (str e))))))))))
+      (attach! path "paste.png"))))
+
+;; ------------------------------------------------------------------ picking
+
+;; Where the picker is looking, or nil when it is closed. A path, so the
+;; browsing is just this cell moving.
+(defonce image-picker (atom nil))
+
+(defn- readable-dir? [path]
+  (try (and (host/file-exists? path) (host/directory? path))
+       (catch Exception _ false)))
+
+(defn picker-roots
+  "The places worth opening the picker on, on whichever platform this is.
+
+  Only the ones that are actually there: a phone has no ~/Pictures and a
+  desktop no /sdcard, and a list of directories that are not there is a list of
+  dead ends. On Android everything outside the app's own storage is behind a
+  runtime permission this activity has no code to ask for, so what survives
+  this filter there is usually the app's own files — which is the honest
+  answer, not a bug to paper over."
+  []
+  (let [home (or (host/getenv "HOME") "")
+        under (fn [base] (when (seq base)
+                           (map #(str base "/" %)
+                                ["Pictures" "Downloads" "Download" "DCIM"])))]
+    (vec (distinct (filter readable-dir?
+                           (concat (under home)
+                                   (under "/sdcard")
+                                   (under "/storage/emulated/0")
+                                   [(media/cache-dir) home]))))))
+
+(defn- png? [name]
+  (str/ends-with? (str/lower-case (str name)) ".png"))
+
+(defn picker-entries
+  "What `dir` holds, as `{:dirs [...] :files [...]}` of full paths.
+
+  PNG only, for the same reason the media cache reads PNG only: it is what the
+  tree backend paints and what the upload sends. An unreadable directory —
+  which on Android is most of them — answers empty rather than throwing.
+
+  Hidden entries are left out: nothing a reader means to send lives in one, and
+  a home directory is unusable as a list with them in it."
+  [dir]
+  (let [names (try (sort (host/list-dir dir)) (catch Exception _ nil))
+        keep (remove #(str/starts-with? (str %) ".") names)
+        path (fn [n] (str dir "/" n))]
+    {:dirs (vec (filter readable-dir? (map path keep)))
+     :files (vec (map path (filter png? keep)))}))
+
+(defn parent-dir
+  "The directory above `dir`, or nil at the top."
+  [dir]
+  (let [up (str/join "/" (butlast (str/split (str dir) #"/")))]
+    (when (and (seq up) (not= up dir) (readable-dir? up)) up)))
+
+(defn open-image-picker!
+  "Open the picker, on the first place there is to look."
+  []
+  (reset! error nil)
+  (reset! image-picker (or (first (picker-roots)) "/")))
+
+(defn close-image-picker! [] (reset! image-picker nil))
+
+(defn browse! [dir] (when (readable-dir? dir) (reset! image-picker dir)))
+
+(defn- copy-file!
+  "Copy `from` to `to`, byte for byte."
+  [from to]
+  (let [in (java.io.FileInputStream. from)]
+    (try
+      (let [out (java.io.FileOutputStream. to)]
+        (try (.write out (.readAllBytes in))
+             (finally (.close out))))
+      (finally (try (.close in) (catch Exception _ nil))))))
+
+(defn pick-image!
+  "Attach the picture at `path` and close the picker.
+
+  Copied into `outgoing/` first rather than attached where it lies: the send
+  drops the attachment's file when it is done with it, and what it drops has to
+  be ours — not the reader's own picture, sitting in their pictures folder."
+  [path]
+  (let [copy (paste-path)]
+    (try
+      (host/mkdirs! (str (media/cache-dir) "/outgoing"))
+      (copy-file! path copy)
+      (close-image-picker!)
+      (attach! copy (or (last (str/split (str path) #"/")) "picture.png"))
+      (catch Exception e
+        (discard-file! copy)
+        (reset! error (str "Could not read that picture: " (or (ex-message e) e)))))))
 
 (defn send-draft!
   "Send the draft, with whatever picture is attached to it.

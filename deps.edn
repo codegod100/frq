@@ -2,12 +2,16 @@
 
  ;; glimmer owns the reactive half (ratom, components, reconciler);
  ;; glimmer-vidya paints it as Vidya/egui through libvidya's retained-tree ABI.
- ;; Our fork of glimmer, until the reconciler fix in it lands upstream: a
+ ;; Our fork of glimmer, until the reconciler fixes in it land upstream. A
  ;; component unmounted between a cell firing and the queued render running
  ;; used to render anyway, into widgets the backend had already freed and
  ;; handed out again — which took the message list apart in a busy channel.
+ ;; And replacing a native node with one of another tag left every watcher
+ ;; under it subscribed, so swapping the phone layout for the split one and
+ ;; back shredded the chat: one component's props painted onto another's
+ ;; widget.
  :deps {jolt-lang/glimmer   {:git/url "https://gitlab.com/nandithebull/glimmer"
-                             :git/sha "4e733aa26343cef0478d8dfd3f2b76c0113b0969"}
+                             :git/sha "399df371c790d690fb6e4560c3d4d7f838502857"}
         nandi/glimmer-vidya {:local/root "../jolt-native/jolt/glimmer-vidya"}}
 
  ;; Both objects come from gitlab.com/nandithebull/jolt-native, one crate each,
