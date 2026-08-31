@@ -165,9 +165,16 @@
        [:button {:label "Join"
                  :kind :primary
                  :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]]
-     [:entry {:text @s/search
-              :placeholder "Search channels"
-              :on-change #(reset! s/search %)}]
+     ;; The clear button only shows while there is something to clear: an
+     ;; empty box has nothing to undo, and a dead button beside it reads as
+     ;; one that stopped working.
+     [:hbox {:spacing 6}
+      [:entry {:text @s/search
+               :width-request 380
+               :placeholder "Search channels"
+               :on-change #(reset! s/search %)}]
+      (when (seq @s/search)
+        [:button {:label "✕" :on-click #(reset! s/search "")}])]
      (if (seq buffers)
        (for [b buffers] [conversation-row b])
        [:card {} [:dim-label {:label "No conversations yet — join a channel."}]])
