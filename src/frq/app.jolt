@@ -733,7 +733,7 @@
                ;; compose bar, and should: each appears because the reader just
                ;; asked for something — unlike the jump button, which appears
                ;; on its own and must not shift what is under it.
-               :reserve (+ 116
+               :reserve (+ 124
                            (if @s/replying-to 34 0)
                            (if @s/attachment 76 0))
                :stick-to-bottom true
@@ -771,7 +771,14 @@
                                "Uploading…"
                                "Picture attached")}]
          [:button {:label "✕" :on-click s/clear-attachment!}]])]
-     [:hbox {:spacing 8}
+     ;; The line and its buttons on the middle of the width rather than
+     ;; against its left edge: the entry asks for a fixed width, and on a
+     ;; window wider than that a left-aligned row leaves it stranded in the
+     ;; corner of an otherwise empty bar. On a phone the row is as wide as the
+     ;; window and centring costs nothing.
+     ;; A little air under the row, so the line being typed does not sit flat
+     ;; on the bottom edge of the window.
+     [:hbox {:spacing 8 :align :center :margin-bottom 8}
       ;; narrow enough that Send keeps its place on a phone-width row
       ;; A picture is pasted where everything else is typed: Ctrl+V. The field
       ;; answers a paste of text with the text, and one of a picture reaches
