@@ -759,11 +759,67 @@
   (let [up (str/join "/" (butlast (str/split (str dir) #"/")))]
     (when (and (seq up) (not= up dir) (readable-dir? up)) up)))
 
-(defn open-image-picker!
-  "Open the picker, on the first place there is to look."
+;; ------------------------------------------- the platform's own chooser
+
+;; Polling, because a chooser is another app's screen: it takes the reader away
+;; and gives nothing back through a handler here. `choosing` is what the poll
+;; runs on, and the count is what ends it — a reader who backs out without
+;; choosing tells us nothing at all, so the alternative is a poll that outlives
+;; the app's interest in the answer.
+(defonce ^:private choosing (atom nil))
+
+(def ^:private choose-poll-ms 300)
+
+(def ^:private choose-poll-limit
+  "Five minutes of asking. Long enough for someone who wandered off mid-choice,
+  short enough that a cancelled chooser is not still being polled for at
+  bedtime."
+  1000)
+
+(defn- take-chosen!
+  "Attach the picture the chooser has written, if it has written one yet."
   []
-  (reset! error nil)
-  (reset! image-picker (or (first (picker-roots)) "/")))
+  (let [path (paste-path)]
+    (host/mkdirs! (str (media/cache-dir) "/outgoing"))
+    (when (vidya/picked-image! path)
+      (reset! choosing nil)
+      (attach! path "picture.png")
+      true)))
+
+(defn- poll-chosen! []
+  (when-let [left @choosing]
+    (when-not (take-chosen!)
+      (if (pos? left)
+        (do (reset! choosing (dec left))
+            (vidya/after! choose-poll-ms poll-chosen!))
+        (reset! choosing nil)))))
+
+(defn choose-image!
+  "Open the platform's own picture chooser, where there is one; true when it
+  opened.
+
+  Preferred to browsing on a phone, and not only for the taste of it: what the
+  chooser hands back is a grant for the one picture the reader chose, so the
+  app needs no permission over their pictures at all — and without such a
+  permission, browsing finds almost nothing to show. False where there is no
+  chooser, which is every desktop, and there browsing is the answer."
+  []
+  (when (vidya/pick-image!)
+    (reset! error nil)
+    (reset! choosing choose-poll-limit)
+    (vidya/after! choose-poll-ms poll-chosen!)
+    true))
+
+(defn open-image-picker!
+  "Ask for a picture, whichever way this platform has of choosing one.
+
+  The platform's own chooser where there is one — it needs no permission and
+  knows where the reader's pictures actually are — and otherwise this app's
+  own browsing screen, which is what a desktop gets."
+  []
+  (when-not (choose-image!)
+    (reset! error nil)
+    (reset! image-picker (or (first (picker-roots)) "/"))))
 
 (defn close-image-picker! [] (reset! image-picker nil))
 

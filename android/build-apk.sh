@@ -6,6 +6,12 @@
 #                  glue, so it owns the event loop)
 #   libjoltapp.so  vidya's android/jolt_main.c plus frq's Jolt boot image,
 #                  dlopened by the above
+#   classes.dex    one Java class, and only because a picture chooser answers
+#                  through onActivityResult and a NativeActivity has nowhere to
+#                  deliver that
+#   libssl.so      OpenSSL, because the platform's own is not ours to load: an
+#   libcrypto.so   app's linker namespace refuses /system/lib64/libssl.so, and
+#                  without one there is no TLS at all on the phone
 #
 # Neither half is built here beyond that last link: the UI library comes from
 # vidya's `just ffi-android` and the boot image from build-jolt-boot.sh. Both
@@ -17,6 +23,7 @@ VIDYA="${VIDYA:-$(cd "$ROOT/../vidya" && pwd)}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/.local/share/android-sdk}"
 ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$HOME/.local/share/android-ndk-r29}"
 CHEZ_ANDROID="${CHEZ_ANDROID:-$HOME/.cache/vidya-chez-android}"
+OPENSSL_ANDROID="${OPENSSL_ANDROID:-$HOME/.cache/frq-openssl-android/lib}"
 BUILD="$ROOT/android/build"
 JOLT_BUILD="$BUILD/jolt"
 STAGE="$BUILD/stage"
@@ -24,13 +31,14 @@ TOOLS="$ANDROID_HOME/build-tools/36.0.0"
 ADB="${ADB:-$ANDROID_HOME/platform-tools/adb}"
 NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 PACKAGE="uk.nandi.frq"
-ACTIVITY="$PACKAGE/android.app.NativeActivity"
+ACTIVITY="$PACKAGE/.FrqActivity"
 API=28
 
 for path in \
   "$NDK_BIN/aarch64-linux-android$API-clang" \
   "$ANDROID_HOME/platforms/android-36/android.jar" \
-  "$TOOLS/aapt2" "$TOOLS/zipalign" "$TOOLS/apksigner"; do
+  "$TOOLS/aapt2" "$TOOLS/zipalign" "$TOOLS/apksigner" "$TOOLS/d8" \
+  "$OPENSSL_ANDROID/libssl.so" "$OPENSSL_ANDROID/libcrypto.so"; do
   [[ -e "$path" ]] || { echo "missing Android tool: $path" >&2; exit 1; }
 done
 
@@ -52,9 +60,31 @@ VIDYA_SO="$VIDYA/build/android/arm64-v8a/libvidya.so"
     jolt.boot jolt_boot.o
 )
 
+# --- the Java half ----------------------------------------------------------
+# One class: the photo chooser's result has to land somewhere, and native code
+# is not somewhere. d8 turns it into the classes.dex the runtime loads.
+JAVA_BUILD="$BUILD/java"
+rm -rf "$JAVA_BUILD"
+mkdir -p "$JAVA_BUILD/classes"
+# android.jar on the class path is where every android.* type comes from; the
+# JDK's own java.* is what is left, and this class uses nothing of it that
+# Android does not have. (`-bootclasspath` would be the stricter way to say
+# that, and javac refuses it for a release this recent.)
+javac --release 17 \
+  --class-path "$ANDROID_HOME/platforms/android-36/android.jar" \
+  -d "$JAVA_BUILD/classes" \
+  "$ROOT/android/java/uk/nandi/frq/FrqActivity.java"
+"$TOOLS/d8" --min-api $API --output "$JAVA_BUILD" \
+  $(find "$JAVA_BUILD/classes" -name '*.class')
+
 rm -rf "$STAGE"
 mkdir -p "$STAGE/lib/arm64-v8a"
+cp "$JAVA_BUILD/classes.dex" "$STAGE/classes.dex"
 cp "$VIDYA_SO" "$STAGE/lib/arm64-v8a/libvidya.so"
+# jolt.mvn-http dlopens these by name at first use; beside the app's own
+# libraries is where an app's namespace will answer for that name.
+cp "$OPENSSL_ANDROID/libssl.so" "$OPENSSL_ANDROID/libcrypto.so" \
+  "$STAGE/lib/arm64-v8a/"
 
 "$NDK_BIN/aarch64-linux-android$API-clang" \
   -shared -fPIC -O2 \
@@ -85,7 +115,10 @@ rm -f "$UNALIGNED" "$ALIGNED" "$APK"
   --version-name 0.1.0
 # Stored, not deflated: the loader maps these straight out of the APK.
 (cd "$STAGE" && zip -q -0 "$UNALIGNED" \
-  lib/arm64-v8a/libvidya.so lib/arm64-v8a/libjoltapp.so)
+  lib/arm64-v8a/libvidya.so lib/arm64-v8a/libjoltapp.so \
+  lib/arm64-v8a/libssl.so lib/arm64-v8a/libcrypto.so)
+# The dex is read by the runtime rather than mapped, so it may as well deflate.
+(cd "$STAGE" && zip -q "$UNALIGNED" classes.dex)
 "$TOOLS/zipalign" -f -p 4 "$UNALIGNED" "$ALIGNED"
 
 KEYSTORE="$HOME/.android/debug.keystore"

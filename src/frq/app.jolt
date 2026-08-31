@@ -723,6 +723,7 @@
       [:vbox {:key :call}
        (when (and name
                   (str/starts-with? name "#")
+                  (av/available?)
                   (not (av/call-in name))
                   (not (av/in-call?)))
          [:button {:label "Call" :on-click #(s/start-call! name)}])]]
