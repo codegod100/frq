@@ -158,29 +158,37 @@
 (defn chats-screen []
   (let [buffers (s/channel-list)]
     [:page {:max-width 620}
-     [:title {:label "Chats"}]
+     ;; Your nick in the title, where "Chats" alone said nothing you did not
+     ;; already know. It is what every channel calls you and what your own
+     ;; lines are signed with, and the only other place it showed was Settings.
+     [:title {:label (if (s/connected?) (str "Chats as " @s/form-nick) "Chats")}]
      [error-note]
+     ;; Join and search are the same shape — a channel box with a button
+     ;; beside it — so they read as one control block rather than a titled
+     ;; card and a stray row: same card, same widths, same gap. The screen
+     ;; title already says what the box is for, which is what the "Join
+     ;; channel" header was doing.
      [:card {}
-      [:title-2 {:label "Join channel"}]
-      [:hbox {:spacing 8}
-       [:entry {:text @s/join-input
-                :width-request 380
-                :placeholder "#channel"
-                :on-change #(reset! s/join-input %)
-                :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
-       [:button {:label "Join"
-                 :kind :primary
-                 :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]]
-     ;; The clear button only shows while there is something to clear: an
-     ;; empty box has nothing to undo, and a dead button beside it reads as
-     ;; one that stopped working.
-     [:hbox {:spacing 6}
-      [:entry {:text @s/search
-               :width-request 380
-               :placeholder "Search channels"
-               :on-change #(reset! s/search %)}]
-      (when (seq @s/search)
-        [:button {:label "✕" :on-click #(reset! s/search "")}])]
+      [:vbox {:spacing 8}
+       [:hbox {:spacing 8}
+        [:entry {:text @s/join-input
+                 :width-request 380
+                 :placeholder "#channel"
+                 :on-change #(reset! s/join-input %)
+                 :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
+        [:button {:label "Join"
+                  :kind :primary
+                  :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]
+       ;; The clear button only shows while there is something to clear: an
+       ;; empty box has nothing to undo, and a dead button beside it reads as
+       ;; one that stopped working.
+       [:hbox {:spacing 8}
+        [:entry {:text @s/search
+                 :width-request 380
+                 :placeholder "Search channels"
+                 :on-change #(reset! s/search %)}]
+        (when (seq @s/search)
+          [:button {:label "✕" :on-click #(reset! s/search "")}])]]]
      (if (seq buffers)
        (for [b buffers] [conversation-row b])
        [:card {} [:dim-label {:label "No conversations yet — join a channel."}]])
@@ -1024,4 +1032,22 @@
   (vidya/every! 200 #(let [w (vidya/window-width)]
                        (when (not= w @s/window-width)
                          (reset! s/window-width w))))
+  ;; The nick in the window title, so a second window of this client is told
+  ;; apart from the first by the one thing that differs — and so the answer to
+  ;; "who am I here?" is on screen without opening Settings.
+  ;;
+  ;; Polled, like the width above and for the same reason: the title belongs to
+  ;; the window rather than to the tree, so no render puts it there, and the
+  ;; nick is only settled once a connection has been made. Twice a second is
+  ;; far more often than a nick changes, and a string compare is what a tick
+  ;; costs when it has not.
+  ;; Seeded with the title `run` opens the window under, so the first tick of
+  ;; a launch that has nobody signed in yet sets nothing.
+  (let [shown (atom "frq")]
+    (vidya/every! 500 #(let [title (if (and (s/connected?) (seq @s/form-nick))
+                                     (str "frq — " @s/form-nick)
+                                     "frq")]
+                         (when (not= title @shown)
+                           (reset! shown title)
+                           (vidya/set-title! title)))))
   (ui/run app :title "frq" :width 520 :height 860))
