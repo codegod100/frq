@@ -149,11 +149,31 @@
      ;; `:wrap false` on the badges: they sit beside each other or not at all.
      [:title-2 {:label name}]
      [:hbox {:spacing 12 :wrap false}
-      [:status {:label (if (:joined? buffer) "joined" "not joined")
+      ;; A DM has no membership to report — there is nothing to be in — so the
+      ;; badge says what the buffer is instead of answering a question nobody
+      ;; asked of it.
+      [:status {:label (cond (s/dm? name) "direct message"
+                             (:joined? buffer) "joined"
+                             :else "not joined")
                 :live (boolean (:joined? buffer))}]
       (when (pos? unread) [:label {:label (str "● " unread)}])]
      [:dim-label {:label (s/last-preview buffer)}]
      [:button {:label "Open" :kind :primary :on-click #(s/open-channel! name)}]]))
+
+(def ^:private sidebar-width 320)
+
+(defn- control-entry-width
+  "How wide the join and search boxes ask to be.
+
+  A fixed 380 is right on a window that holds the list alone, and too wide for
+  the list as a split view's left column: the row it sits on is only
+  `sidebar-width` across, and an entry that asks for more than remains pushes
+  the button beside it onto a row of its own — Join under the box rather than
+  next to it. Beside the entry go the button and the gap, and around the row
+  the card's and the page's padding, so the column's share is what is left of
+  the sidebar after those."
+  []
+  (if (s/wide?) (- sidebar-width 130) 380))
 
 (defn chats-screen []
   (let [buffers (s/channel-list)]
@@ -171,12 +191,14 @@
      [:card {}
       [:vbox {:spacing 8}
        [:hbox {:spacing 8}
+        ;; Both kinds of conversation through one box: `#room` joins a
+        ;; channel, `@nick` opens a message to a person.
         [:entry {:text @s/join-input
-                 :width-request 380
-                 :placeholder "#channel"
+                 :width-request (control-entry-width)
+                 :placeholder "#channel or @nick"
                  :on-change #(reset! s/join-input %)
                  :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
-        [:button {:label "Join"
+        [:button {:label (if (str/starts-with? @s/join-input "@") "Message" "Join")
                   :kind :primary
                   :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]
        ;; The clear button only shows while there is something to clear: an
@@ -184,7 +206,7 @@
        ;; one that stopped working.
        [:hbox {:spacing 8}
         [:entry {:text @s/search
-                 :width-request 380
+                 :width-request (control-entry-width)
                  :placeholder "Search channels"
                  :on-change #(reset! s/search %)}]
         (when (seq @s/search)
@@ -833,15 +855,86 @@
         (when (and (empty? dirs) (empty? files))
           [:dim-label {:label "No pictures here that this app can read."}])]]]]))
 
+;; What the people panel asks for, and what the conversation beside it has to
+;; be told to leave. A column with `:fill-height` and no width takes the whole
+;; row — so the panel is only ever on screen if the message list is given a
+;; width that stops short of it.
+(def ^:private users-width 180)
+
+;; What the rows under the conversation need left to them: the jump button's
+;; row, the separator, the compose bar and the air around it. The columns of
+;; the row reserve it, and so nothing inside them has to — a `:scroll` that
+;; subtracted it again inside a column already stopped short would take the
+;; same points off the list twice.
+;;
+;; Plus the reply banner's row when there is one, and the pasted picture when
+;; there is one. Those rows do move the compose bar, and should: each appears
+;; because the reader just asked for something — unlike the jump button, which
+;; appears on its own and must not shift what is under it.
+(defn- below-messages []
+  ;; 140 is that, counted: the gap under the row of columns, the jump button's
+  ;; 34pt row, the separator and the two empty wrappers with a gap apiece, then
+  ;; the compose row and the air under it — its own and the window's. Short by
+  ;; any of it and the column runs past the bottom edge, which does not show as
+  ;; a list that is too long: it shows as a compose bar sitting flat on the
+  ;; bottom of the window with its margin cut off.
+  (+ 140
+     (if @s/replying-to 34 0)
+     (if @s/attachment 76 0)))
+
+(defn- messages-width
+  "How wide the message list may be with the people panel beside it.
+
+  Measured from the window rather than from what egui has left: the row is
+  painted left to right, and by the time the panel is placed the list has
+  already taken everything. On a wide window the chats list is holding the
+  first `sidebar-width` of the window; the rest is the margins and the gap
+  between the two columns."
+  []
+  (let [pane (- @s/window-width (if (s/wide?) sidebar-width 0))]
+    (max 240 (- pane users-width 8 28))))
+
+(defn- member-row [{:keys [nick prefix]}]
+  ;; The mode where there is one, dim: it says how someone is listed, not who
+  ;; they are, and the name is what the eye is scanning for. A space where
+  ;; there is none, rather than nothing at all: the label is always in the row,
+  ;; so every name starts at the same place — and a column wrapped around a
+  ;; label that comes and goes is a column, which sits its text against the top
+  ;; of the row rather than on the line the name is on.
+  ;;
+  ;; The name is a button because a person is somewhere to go: pressing one
+  ;; opens a conversation with them.
+  [:hbox {:key nick :spacing 6 :wrap false}
+   [:dim-label {:label (if (seq prefix) prefix " ")}]
+   [:button {:label nick :on-click #(s/open-dm! nick)}]])
+
+(defn users-panel
+  "Who is in the channel, beside the conversation.
+
+  The list is the server's — NAMES on the way in, kept up by the joins and
+  parts after it — so a channel this client has never been in has nothing to
+  show, and says so rather than showing an empty column."
+  [name]
+  (let [people (s/member-list name)]
+    [:vbox {:key :users :width-request users-width :fill-height true
+            :reserve (below-messages) :spacing 8}
+     [:title-2 {:label (str "People " (count people))}]
+     [:scroll {:scroll-key (str "users-" name)
+               :orientation :vertical}
+      (if (seq people)
+        (for [p people] [member-row p])
+        [:dim-label {:label "Nobody listed yet."}])]]))
+
 (defn chat-screen []
   (let [name @s/current
-        buffer (get @s/channels name)]
+        buffer (get @s/channels name)
+        show-users? (and @s/show-users? name (str/starts-with? name "#"))]
     ;; Not a :page — a page scrolls everything, which would carry the compose
     ;; bar off the bottom with the backlog. The message list is the only thing
     ;; that scrolls, bounded so what follows it keeps its room.
-    ;; Less room under the compose row than around it: the space a row at the
-    ;; bottom of a screen wants is above it, not beneath it.
-    [:vbox {:spacing 8 :margin 12 :margin-bottom 4}
+    ;; Same margin all round: the compose row's own air is what centres it in
+    ;; the strip below the separator, and it is measured from this edge.
+    [:vbox {:spacing 8 :margin 12}
      [:hbox {:spacing 8}
       ;; The way back to the list, on a window with room for one thing at a
       ;; time. Beside the list there is nothing to go back to, so the button
@@ -860,7 +953,15 @@
                   (av/available?)
                   (not (av/call-in name))
                   (not (av/in-call?)))
-         [:button {:label "Call" :on-click #(s/start-call! name)}])]]
+         [:button {:label "Call" :on-click #(s/start-call! name)}])]
+      ;; The people panel's switch, in a wrapper of its own for the same
+      ;; reason: it is only offered in a channel, where there is a membership
+      ;; to show.
+      [:vbox {:key :people}
+       (when (and name (str/starts-with? name "#"))
+         [:button {:label (str "People " (s/member-count name))
+                   :kind (when @s/show-users? :primary)
+                   :on-click s/toggle-users!}])]]
      [error-note]
      [call-bar name]
      ;; :reserve leaves room for everything below: the jump button's row, the
@@ -873,22 +974,28 @@
      ;; unmounts the backlog behind it; without a name of its own the position
      ;; would come back as a fresh one, and ← Back would answer a click on a
      ;; message halfway up a week of history with the top of the buffer.
-     [:scroll {:scroll-key "chat-messages"
-               :orientation :vertical
-               ;; Plus the reply banner's row when there is one, and the
-               ;; pasted picture when there is one. Those rows do move the
-               ;; compose bar, and should: each appears because the reader just
-               ;; asked for something — unlike the jump button, which appears
-               ;; on its own and must not shift what is under it.
-               :reserve (+ 124
-                           (if @s/replying-to 34 0)
-                           (if @s/attachment 76 0))
-               :stick-to-bottom true
-               :scroll-to-bottom @s/jump-tick
-               :on-change #(reset! s/at-present? (= "end" %))}
-      (if (seq (:messages buffer))
-        (message-rows (:messages buffer))
-        [:dim-label {:label "Nothing here yet."}])]
+     ;; The backlog and, when it is asked for, who is in the room beside it.
+     ;; The row is always there and the panel comes and goes inside a wrapper
+     ;; of its own: a child that appeared and vanished would renumber the row
+     ;; for the reconciler, and take the message list's scroll position with
+     ;; it every time the panel was toggled.
+     [:hbox {:spacing 8 :wrap false}
+      [:vbox {:key :messages :fill-height true
+              :reserve (below-messages)
+              :width-request (if show-users? (messages-width) 0)}
+       [:scroll {:scroll-key "chat-messages"
+                 :orientation :vertical
+                 :stick-to-bottom true
+                 :scroll-to-bottom @s/jump-tick
+                 :on-change #(reset! s/at-present? (= "end" %))}
+        (if (seq (:messages buffer))
+          (message-rows (:messages buffer))
+          [:dim-label {:label "Nothing here yet."}])]]
+      ;; The wrapper takes no height of its own: the panel inside it is the
+      ;; column, and a fill-height wrapper around it would claim the strip the
+      ;; compose bar sits in whether or not the panel was showing.
+      [:vbox {:key :people-pane}
+       (when show-users? [users-panel name])]]
      ;; Only while it is needed, and directly above the compose bar: the way
      ;; back to the present belongs next to the thing that puts you there.
      ;; The row keeps its height whether or not the button is in it, so the
@@ -923,9 +1030,13 @@
      ;; window wider than that a left-aligned row leaves it stranded in the
      ;; corner of an otherwise empty bar. On a phone the row is as wide as the
      ;; window and centring costs nothing.
-     ;; A little air under the row, so the line being typed does not sit flat
-     ;; on the bottom edge of the window.
-     [:hbox {:spacing 8 :align :center :margin-bottom 8}
+     ;; Equal air above and below, so the row sits on the middle of the strip
+     ;; between the separator and the bottom edge rather than flat against it.
+     ;; Above it is three of the column's gaps: one after the separator and one
+     ;; for each of the empty wrappers — the reply banner and the attachment,
+     ;; which cost a gap apiece whether or not they have anything in them. This
+     ;; margin plus the window's own is what answers them underneath.
+     [:hbox {:spacing 8 :align :center :margin-bottom 12}
       ;; narrow enough that Send keeps its place on a phone-width row
       ;; A picture is pasted where everything else is typed: Ctrl+V. The field
       ;; answers a paste of text with the text, and one of a picture reaches
@@ -944,8 +1055,6 @@
       [:button {:label "Send" :kind :primary :on-click s/send-draft!}]]]))
 
 ;; ---------------------------------------------------------------- split
-
-(def ^:private sidebar-width 320)
 
 (defn- no-chat-pane
   "What fills the second pane before a conversation has been picked. The pane

@@ -90,6 +90,13 @@
 (defonce lightbox (atom nil))            ; {:path :url}
 (defonce join-input (atom ""))
 
+;; Whether the chat screen is showing who is in the channel. Off by default:
+;; the panel costs the conversation a column, and the reader is here for the
+;; conversation.
+(defonce show-users? (atom false))
+
+(defn toggle-users! [] (swap! show-users? not))
+
 ;; The window's content width in points, polled from the backend a few times a
 ;; second. The app is laid out for a phone-width window, and this is what lets
 ;; a wide one be more than a phone with margins: past `wide-width` the channel
@@ -130,7 +137,7 @@
 
 (defn connected? [] (some? @conn))
 
-(declare channel-order)
+(declare channel-order request-names!)
 
 (defn- remember-channels!
   "Write the order out. Off the caller's thread: opening a channel should not
@@ -138,6 +145,12 @@
   way."
   []
   (future (store/save-channels! (channel-order))))
+
+(defn dm?
+  "Whether a buffer is a conversation with a person rather than a room. Every
+  channel name starts with `#`; what does not is somebody's nick."
+  [name]
+  (and (seq name) (not (str/starts-with? name "#"))))
 
 (defn normalize-channel [s]
   (let [s (str/trim (or s ""))]
@@ -149,7 +162,9 @@
   (if (contains? m name)
     m
     (assoc m name {:name name :messages [] :unread 0
-                   :joined? false :joining? false :accessed 0})))
+                   :joined? false :joining? false :accessed 0
+                   ;; nick -> mode prefix, for the people panel
+                   :users {}})))
 
 (defonce ^{:doc "Bumped whenever a fetched image becomes available, so the
   chat view re-renders without every message row watching the media cache."}
@@ -217,7 +232,11 @@
                (not (:joined? buffer))
                (not (:joining? buffer)))
       (swap! channels #(assoc-in % [name :joining?] true))
-      (irc/join! @conn name))))
+      (irc/join! @conn name)))
+  ;; Already in it, and nobody listed: the membership survived a restart the
+  ;; NAMES that came with it did not.
+  (when (:joined? (get @channels name))
+    (request-names! name)))
 
 (defn- parse-reactions
   "The server's tally of what is already on a message, as
@@ -261,6 +280,129 @@
                                    msg))
                                msgs))
                m)))))
+
+;; --- who is in the room ------------------------------------------------------
+;; A channel's `:users` is nick -> mode prefix ("@", "+", or ""). The list is
+;; the server's: NAMES on the way in, and every JOIN, PART, QUIT, KICK and NICK
+;; after it. Nothing here asks who is there — being told is what membership is.
+
+(def ^:private mode-prefixes
+  "The characters a server puts in front of a nick in NAMES, and in the same
+  order the panel sorts them: owner, admin, op, half-op, voice."
+  "~&@%+")
+
+(defn- split-prefix
+  "One NAMES entry into `[prefix nick]`. A nick never starts with one of these,
+  so what is in front of it is a mode and not part of the name."
+  [entry]
+  (if (and (seq entry) (str/index-of mode-prefixes (subs entry 0 1)))
+    [(subs entry 0 1) (subs entry 1)]
+    ["" entry]))
+
+(defn- names-line
+  "Fold one 353 into the channel's pending list. Pending rather than live: the
+  reply comes in as many lines as it takes and ends with 366, and replacing
+  `:users` on each of them would empty the panel and refill it a name at a
+  time."
+  [channel names]
+  (swap! channels
+         (fn [m]
+           (reduce (fn [m entry]
+                     (let [[prefix nick] (split-prefix entry)]
+                       (assoc-in m [channel :names-acc nick] prefix)))
+                   (ensure-channel m channel)
+                   (remove str/blank? (str/split (or names "") #" "))))))
+
+(defn- names-end!
+  "366: the pending list becomes the list."
+  [channel]
+  (swap! channels
+         (fn [m]
+           (if-let [acc (get-in m [channel :names-acc])]
+             (-> m (assoc-in [channel :users] acc)
+                   (update channel dissoc :names-acc))
+             m))))
+
+(defn- add-user! [channel nick]
+  (when (and channel nick)
+    (swap! channels #(-> (ensure-channel % channel)
+                         (update-in [channel :users] (fnil assoc {}) nick "")))))
+
+(defn- remove-user! [channel nick]
+  (when (and channel nick)
+    (swap! channels #(update-in % [channel :users] dissoc nick))))
+
+(defn- remove-user-everywhere!
+  "A QUIT names no channel — the person left the server, so they left every
+  room this client is watching them in."
+  [nick]
+  (swap! channels
+         (fn [m]
+           (reduce-kv (fn [m k v] (assoc m k (update v :users dissoc nick)))
+                      {} m))))
+
+(defn- rename-user!
+  "A NICK, in every channel the old name was in. Their modes come with them:
+  renaming is not leaving."
+  [old new]
+  (swap! channels
+         (fn [m]
+           (reduce-kv (fn [m k v]
+                        (assoc m k
+                               (if-let [prefix (get (:users v) old)]
+                                 (update v :users #(-> % (dissoc old) (assoc new prefix)))
+                                 v)))
+                      {} m))))
+
+(defn- apply-mode!
+  "A channel MODE, for the letters that change how someone is listed. `params`
+  is the mode string and whoever it was applied to, in order; anything else in
+  it — a key, a limit, a ban — names no member and is skipped."
+  [channel modes args]
+  (let [letters {\q "~" \a "&" \o "@" \h "%" \v "+"}]
+    (loop [chars (seq modes) args args adding? true]
+      (when-let [c (first chars)]
+        (case c
+          \+ (recur (rest chars) args true)
+          \- (recur (rest chars) args false)
+          (if-let [prefix (letters c)]
+            (do (when-let [nick (first args)]
+                  (swap! channels
+                         (fn [m]
+                           (if (get-in m [channel :users nick])
+                             (assoc-in m [channel :users nick] (if adding? prefix ""))
+                             m))))
+                (recur (rest chars) (rest args) adding?))
+            ;; A mode that takes an argument without naming a member still eats
+            ;; one, and reading the next letter's nick out of the wrong place
+            ;; would put a mode on a stranger. Only the setting form takes one.
+            (recur (rest chars) (if adding? (rest args) args) adding?)))))))
+
+(def ^:private prefix-rank
+  (into {"" (count mode-prefixes)}
+        (map-indexed (fn [i c] [(str c) i]) mode-prefixes)))
+
+(defn member-list
+  "Who is in `channel`, as `{:nick :prefix}`, ops first and then alphabetically
+  — the order every other client lists them in, and the one a reader scanning
+  for a name expects."
+  [channel]
+  (->> (get-in @channels [channel :users])
+       (map (fn [[nick prefix]] {:nick nick :prefix prefix}))
+       (sort-by (juxt #(prefix-rank (:prefix %) 99) #(str/lower-case (:nick %))))
+       vec))
+
+(defn member-count [channel]
+  (count (get-in @channels [channel :users])))
+
+(defn request-names!
+  "Ask who is in a channel we are already in. freeq re-joins an authenticated
+  user's channels at registration, which happens without a JOIN reaching this
+  client — and so without the NAMES that follows one."
+  [channel]
+  (when (and @conn channel (str/starts-with? channel "#")
+             (empty? (get-in @channels [channel :users])))
+    (irc/send-line! @conn (str "NAMES " channel))))
 
 (declare join! join-call!)
 
@@ -396,13 +538,20 @@
                    ;; every channel again, and saying so on top of the backlog
                    ;; already there is just a second line of noise.
                    (when fresh? (push-message! ch "*" (str "Joined " ch))))
-                 (push-message! ch "*" (str from " joined"))))
+                 (do (add-user! ch from)
+                     (push-message! ch "*" (str from " joined")))))
+      ;; NAMES, a line at a time. The channel is the parameter that names one:
+      ;; the reply is `<us> <symbol> <channel> :<names>`, and a server that
+      ;; leaves the symbol out shifts everything before the list along by one.
+      "353" (let [ch (first (filter #(str/starts-with? (or % "") "#") params))]
+              (when ch (names-line ch (last params))))
       ;; End of NAMES. A plain JOIN is replayed history before this arrives, so
       ;; a channel that reaches here with nothing in it was restored rather
       ;; than joined — freeq re-joins an authenticated user's channels at
       ;; registration and leaves the backlog for the client to ask for.
       "366" (let [ch (second params)
                   said (remove :system? (get-in @channels [ch :messages]))]
+              (names-end! ch)
               (when (and ch @conn (empty? said))
                 (irc/send-line! @conn
                                 (str "CHATHISTORY LATEST " ch " * " history-limit))))
@@ -410,9 +559,33 @@
       "PART" (let [ch (first params)]
                (if (= from @form-nick)
                  (swap! channels #(-> % (assoc-in [ch :joined?] false)
-                                        (assoc-in [ch :joining?] false)))
-                 (push-message! ch "*" (str from " left"))))
-      "QUIT" nil
+                                        (assoc-in [ch :joining?] false)
+                                        (assoc-in [ch :users] {})))
+                 (do (remove-user! ch from)
+                     (push-message! ch "*" (str from " left")))))
+      "KICK" (let [[ch who] params]
+               (if (= who @form-nick)
+                 (swap! channels #(-> % (assoc-in [ch :joined?] false)
+                                        (assoc-in [ch :joining?] false)
+                                        (assoc-in [ch :users] {})))
+                 (remove-user! ch who))
+               (push-message! ch "*" (str who " was kicked by " from)))
+      ;; A QUIT and a NICK name no channel, so both are folded into every
+      ;; buffer the person was listed in — and said out loud only where they
+      ;; were, which is what keeps a stranger's rename out of a quiet room.
+      "QUIT" (let [rooms (keep (fn [[k v]] (when (get (:users v) from) k)) @channels)]
+               (doseq [ch rooms]
+                 (push-message! ch "*" (str from " quit")))
+               (remove-user-everywhere! from))
+      "NICK" (let [new-nick (last params)
+                   rooms (keep (fn [[k v]] (when (get (:users v) from) k)) @channels)]
+               (when (= from @form-nick) (reset! form-nick new-nick))
+               (doseq [ch rooms]
+                 (push-message! ch "*" (str from " is now " new-nick)))
+               (rename-user! from new-nick))
+      "MODE" (let [[target modes & args] params]
+               (when (str/starts-with? (or target "") "#")
+                 (apply-mode! target modes args)))
       ("NOTICE" "372" "375" "376" "002" "003" "004")
       (reset! status (or (last params) @status))
       ;; 473 invite-only, 474 banned, 475 keyed, 477 needs registration,
@@ -449,7 +622,7 @@
                            (reset! connecting? false)
                            (swap! channels
                                   #(reduce-kv (fn [m k v]
-                                                (assoc m k (assoc v :joined? false :joining? false)))
+                                                (assoc m k (assoc v :joined? false :joining? false :users {})))
                                               {} %))
                            (reset! status "Disconnected"))
       "*ERROR*" (do (reset! error (first params))
@@ -612,18 +785,35 @@
   ;; The buffers survive, the memberships do not — leaving `joined?` set would
   ;; have the next Open show a channel nobody is in.
   (swap! channels #(reduce-kv (fn [m k v]
-                                (assoc m k (assoc v :joined? false :joining? false)))
+                                (assoc m k (assoc v :joined? false :joining? false :users {})))
                               {} %))
   (reset! status "Not connected")
   (reset! screen :connect))
+
+(defn open-dm!
+  "Open a conversation with one person. There is nothing to join — a DM buffer
+  is a place to type at somebody, and it exists as soon as it is asked for.
+
+  Our own nick is not one of them: a buffer talking to yourself would take the
+  place in the list of one that could answer."
+  [nick]
+  (let [nick (str/trim (or nick ""))]
+    (when (and (seq nick) (not= nick @form-nick))
+      (open-channel! nick))))
 
 (defn join! [name]
   ;; Deliberately not clearing `error` here: joining is what follows a
   ;; successful registration, and a SASL refusal that arrived moments earlier
   ;; is the one thing the user most needs to still be on screen.
-  (let [ch (normalize-channel name)]
-    (when (seq ch)
-      (open-channel! ch))))
+  ;;
+  ;; `@nick` opens a DM instead. One box for both: what the reader wants is to
+  ;; be somewhere, and the sigil says where — the same way it does on the wire.
+  (let [name (str/trim (or name ""))]
+    (if (str/starts-with? name "@")
+      (open-dm! (subs name 1))
+      (let [ch (normalize-channel name)]
+        (when (seq ch)
+          (open-channel! ch))))))
 
 ;; ------------------------------------------------------------------ pasting
 
@@ -1050,12 +1240,13 @@
          vec)))
 
 (defn channel-order
-  "Just the channel names, most recently opened first — what gets written to
-  disk. Buffers never opened are left out: a DM that arrived once is not a
-  place this client has been."
+  "The buffer names, most recently opened first — what gets written to disk.
+  Buffers never opened are left out: a DM that arrived once and was never read
+  is not a place this client has been, and neither is a channel someone
+  mentioned. One that was opened is, whether it is a room or a person."
   []
   (->> (vals @channels)
-       (filter #(and (str/starts-with? (:name %) "#") (pos? (:accessed % 0))))
+       (filter #(pos? (:accessed % 0)))
        (sort-by #(- (:accessed % 0)))
        (mapv :name)))
 
@@ -1075,6 +1266,7 @@
                            acc
                            (assoc acc name {:name name :messages [] :unread 0
                                             :joined? false :joining? false
+                                            :users {}
                                             :accessed (swap! access-tick inc)})))
                        m
                        ordered))))
