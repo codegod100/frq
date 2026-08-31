@@ -138,14 +138,19 @@
   (let [name (:name buffer)
         unread (:unread buffer)]
     [:card {:key name}
-     ;; Name, membership and unread count on one line — they describe the same
-     ;; thing, and the row below is for the button alone.
-     [:hbox {:spacing 12}
-      [:title-2 {:label name}]
+     ;; The name gets the line, and membership and unread count the one under
+     ;; it. All three on one line is what the list pane has no room for: the
+     ;; name takes what it likes, the badges are left the remainder, and a
+     ;; long name squeezes them into a status reading "joine/d" and a count
+     ;; split down two lines — while the card, sized to a row that no longer
+     ;; fits, sticks out past the cards above and below it.
+     ;;
+     ;; `:wrap false` on the badges: they sit beside each other or not at all.
+     [:title-2 {:label name}]
+     [:hbox {:spacing 12 :wrap false}
       [:status {:label (if (:joined? buffer) "joined" "not joined")
                 :live (boolean (:joined? buffer))}]
-      [:vbox {:key :unread}
-       (when (pos? unread) [:label {:label (str "● " unread)}])]]
+      (when (pos? unread) [:label {:label (str "● " unread)}])]
      [:dim-label {:label (s/last-preview buffer)}]
      [:button {:label "Open" :kind :primary :on-click #(s/open-channel! name)}]]))
 
