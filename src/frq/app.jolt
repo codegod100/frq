@@ -162,27 +162,32 @@
      ;; lines are signed with, and the only other place it showed was Settings.
      [:title {:label (if (s/connected?) (str "Chats as " @s/form-nick) "Chats")}]
      [error-note]
+     ;; Join and search are the same shape — a channel box with a button
+     ;; beside it — so they read as one control block rather than a titled
+     ;; card and a stray row: same card, same widths, same gap. The screen
+     ;; title already says what the box is for, which is what the "Join
+     ;; channel" header was doing.
      [:card {}
-      [:title-2 {:label "Join channel"}]
-      [:hbox {:spacing 8}
-       [:entry {:text @s/join-input
-                :width-request 380
-                :placeholder "#channel"
-                :on-change #(reset! s/join-input %)
-                :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
-       [:button {:label "Join"
-                 :kind :primary
-                 :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]]
-     ;; The clear button only shows while there is something to clear: an
-     ;; empty box has nothing to undo, and a dead button beside it reads as
-     ;; one that stopped working.
-     [:hbox {:spacing 6}
-      [:entry {:text @s/search
-               :width-request 380
-               :placeholder "Search channels"
-               :on-change #(reset! s/search %)}]
-      (when (seq @s/search)
-        [:button {:label "✕" :on-click #(reset! s/search "")}])]
+      [:vbox {:spacing 8}
+       [:hbox {:spacing 8}
+        [:entry {:text @s/join-input
+                 :width-request 380
+                 :placeholder "#channel"
+                 :on-change #(reset! s/join-input %)
+                 :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
+        [:button {:label "Join"
+                  :kind :primary
+                  :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]
+       ;; The clear button only shows while there is something to clear: an
+       ;; empty box has nothing to undo, and a dead button beside it reads as
+       ;; one that stopped working.
+       [:hbox {:spacing 8}
+        [:entry {:text @s/search
+                 :width-request 380
+                 :placeholder "Search channels"
+                 :on-change #(reset! s/search %)}]
+        (when (seq @s/search)
+          [:button {:label "✕" :on-click #(reset! s/search "")}])]]]
      (if (seq buffers)
        (for [b buffers] [conversation-row b])
        [:card {} [:dim-label {:label "No conversations yet — join a channel."}]])
