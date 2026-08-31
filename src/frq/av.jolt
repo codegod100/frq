@@ -73,6 +73,21 @@
 (def ^:private status-ended 2)
 (def ^:private status-failed 3)
 
+(defonce ^:private media-plane
+  ;; Whether `libjoltmoq` is here at all, asked once by calling the smallest
+  ;; thing in it. It is not on the phone — nobody has cross-built the media
+  ;; plane for Android — and a client that cannot make calls is still a client,
+  ;; so the answer gates the call surface rather than ending the run. Every
+  ;; other binding in this namespace is reached only from behind it.
+  (delay
+    (try (raw-init-logging) true
+         (catch Exception _ false))))
+
+(defn available?
+  "Whether calls can happen here at all."
+  []
+  @media-plane)
+
 (defn- flag [b] (if b 1 0))
 (defn- pref [s] (or s ""))
 
@@ -335,7 +350,8 @@
   alone rather than re-dialled."
   [server]
   (when-let [{:keys [session-id token media]} @local-call]
-    (when (and (seq session-id)
+    (when (and (available?)
+               (seq session-id)
                (not (contains? #{:dialling :live} media))
                (can-dial? server token))
       (start-media! server))))
@@ -541,17 +557,21 @@
   Worth doing unconditionally: it says nothing at all without a `RUST_LOG`,
   and when a call misbehaves it is the only thing that knows why — MoQ
   subscription, codec negotiation and device open all happen on the far side of
-  the boundary, where no jolt-level trace can see them."
+  the boundary, where no jolt-level trace can see them.
+
+  Asking whether the media plane is there is the same call, so this is it."
   []
-  (raw-init-logging))
+  (available?))
 
 (defn install-pump!
-  "Start pumping the media plane every frame. Returns a timer id.
+  "Start pumping the media plane every frame. Returns a timer id, or nil where
+  there is no media plane to pump.
 
   Sixteen milliseconds rather than a longer gap because this is where video
   arrives: polling slower than the window paints would show every other frame."
   []
-  (vidya/every! 16 pump!))
+  (when (available?)
+    (vidya/every! 16 pump!)))
 
 (defn tiles
   "Everyone with a picture in the current call, the self-view last.
