@@ -533,7 +533,12 @@
   [width key]
   (let [mine? (= av/local-feed key)]
     [:vbox {:key key :spacing 2}
+     ;; `:upscale` because a tile is a slot the layout sized, not a picture
+     ;; sitting at whatever the camera happened to send. Without it a 480-wide
+     ;; stream draws 480 wide in a 900-point slot and the wall looks broken —
+     ;; which is exactly what it did.
      [:image {:feed key
+              :upscale true
               :max-width width
               :max-height (long (* width 0.75))}]
      [:dim-label {:label (if mine? "You" key)}]]))
