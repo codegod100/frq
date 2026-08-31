@@ -1,0 +1,55 @@
+#!/usr/bin/env dotslash
+
+// The NDK, pinned the way every other tool here is.
+//
+// bin/clang is the path named, but the whole archive is what matters: the
+// driver finds its sysroot, its resource directory and the rest of the LLVM
+// binaries relative to itself, so the tree has to travel intact. The name is
+// only what makes this a runnable shim as well as a manifest.
+//
+// Google publishes SHA-1 for these and nothing else, so the digests below were
+// taken from the archives and checked against the SHA-1 in repository2-3.xml.
+//
+// There is no Linux/arm64 NDK. Both macOS entries are the x86_64 prebuilt,
+// which is what Google ships — an arm64 host runs it under Rosetta.
+{
+  "name": "android-ndk-r29",
+  "platforms": {
+    "linux-x86_64": {
+      "size": 783549481,
+      "hash": "sha256",
+      "digest": "4abbbcdc842f3d4879206e9695d52709603e52dd68d3c1fff04b3b5e7a308ecf",
+      "format": "zip",
+      "path": "android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin/clang",
+      "providers": [
+        {
+          "url": "https://dl.google.com/android/repository/android-ndk-r29-linux.zip"
+        }
+      ]
+    },
+    "macos-x86_64": {
+      "size": 1049519838,
+      "hash": "sha256",
+      "digest": "ce5e4b100ec5fe5be4eb3edcb2c02528824ff9cda3860f5304619be6c3da34d3",
+      "format": "zip",
+      "path": "android-ndk-r29/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang",
+      "providers": [
+        {
+          "url": "https://dl.google.com/android/repository/android-ndk-r29-darwin.zip"
+        }
+      ]
+    },
+    "macos-aarch64": {
+      "size": 1049519838,
+      "hash": "sha256",
+      "digest": "ce5e4b100ec5fe5be4eb3edcb2c02528824ff9cda3860f5304619be6c3da34d3",
+      "format": "zip",
+      "path": "android-ndk-r29/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang",
+      "providers": [
+        {
+          "url": "https://dl.google.com/android/repository/android-ndk-r29-darwin.zip"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,20 @@
+#!/bin/sh
+# The NDK's clang, as the linker rustc runs for an Android target.
+#
+# The buck-side twin of this is toolchains/ndk.sh, which the C toolchain gets
+# as a dependency; both resolve the same archive, pinned in one place —
+# android-ndk.dotslash beside this script. rustc reaches it through a shim
+# instead because -Clinker takes a plain string: rustc_flags cannot carry an
+# artifact path, so the linker has to be something with a stable name. The cfg
+# in toolchains/BUCK is what keeps two NDKs from sharing a cache entry.
+#
+# ANDROID_NDK_HOME wins if it is set, so a machine that already has an NDK
+# skips the download.
+set -e
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+api=${JOLT_ANDROID_API:-28}
+target=${JOLT_ANDROID_TARGET:-aarch64-linux-android}
+
+# android-ndk-bin is where the lookup lives, because an APK build wants the
+# other binaries out of the same archive.
+exec "$("$dir/android-ndk-bin")/clang" --target="$target$api" "$@"

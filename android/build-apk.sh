@@ -4,8 +4,8 @@
 #   libvidya.so    the C ABI on Rust/egui, cross-compiled by buck2, and the
 #                  NativeActivity's own library (it holds android-activity's
 #                  glue, so it owns the event loop)
-#   libjoltapp.so  vidya's android/jolt_main.c plus frq's Jolt boot image,
-#                  dlopened by the above
+#   libjoltapp.so  jolt-native's android/jolt_main.c plus frq's Jolt boot
+#                  image, dlopened by the above
 #   classes.dex    one Java class, and only because a picture chooser answers
 #                  through onActivityResult and a NativeActivity has nowhere to
 #                  deliver that
@@ -14,12 +14,29 @@
 #                  without one there is no TLS at all on the phone
 #
 # Neither half is built here beyond that last link: the UI library comes from
-# vidya's `just ffi-android` and the boot image from build-jolt-boot.sh. Both
-# native pieces are vidya's — only the boot image is frq's.
+# jolt-native's `just ffi-android` and the boot image from build-jolt-boot.sh.
+# Both native pieces are jolt-native's — only the boot image is frq's.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VIDYA="${VIDYA:-$(cd "$ROOT/../vidya" && pwd)}"
+
+# Where jolt-native is, answered the same way the justfile answers it: a
+# sibling checkout wins, and otherwise it is the clone `just lib` leaves under
+# .jolt-native. --git-common-dir rather than the working tree because this
+# script runs from a worktree as readily as from the checkout, and in one of
+# those "../jolt-native" is not a sibling of anything.
+CHECKOUT="$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)")"
+if [[ -z "${JOLT_NATIVE:-}" ]]; then
+  if [[ -d "$CHECKOUT/../jolt-native" ]]; then
+    JOLT_NATIVE="$(cd "$CHECKOUT/../jolt-native" && pwd)"
+  else
+    JOLT_NATIVE="$CHECKOUT/.jolt-native"
+  fi
+fi
+[[ -d "$JOLT_NATIVE" ]] || {
+  echo "no jolt-native at $JOLT_NATIVE — run \`just lib\` to clone it" >&2
+  exit 1
+}
 ANDROID_HOME="${ANDROID_HOME:-$HOME/.local/share/android-sdk}"
 ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$HOME/.local/share/android-ndk-r29}"
 CHEZ_ANDROID="${CHEZ_ANDROID:-$HOME/.cache/vidya-chez-android}"
@@ -43,8 +60,11 @@ for path in \
 done
 
 # --- the UI half ------------------------------------------------------------
-( cd "$VIDYA" && just ffi-android >&2 )
-VIDYA_SO="$VIDYA/build/android/arm64-v8a/libvidya.so"
+# buck2 fetches its own NDK for this, from the pin in jolt-native's
+# scripts/android-ndk.dotslash, so the toolchain below is the only one that has
+# to be installed by hand.
+( cd "$JOLT_NATIVE" && just ffi-android >&2 )
+VIDYA_SO="$JOLT_NATIVE/build/android/arm64-v8a/libvidya.so"
 [[ -f "$VIDYA_SO" ]] || { echo "missing $VIDYA_SO" >&2; exit 1; }
 
 # --- the Jolt half ----------------------------------------------------------
@@ -89,11 +109,10 @@ cp "$OPENSSL_ANDROID/libssl.so" "$OPENSSL_ANDROID/libcrypto.so" \
 "$NDK_BIN/aarch64-linux-android$API-clang" \
   -shared -fPIC -O2 \
   -o "$STAGE/lib/arm64-v8a/libjoltapp.so" \
-  "$VIDYA/android/jolt_main.c" \
+  "$JOLT_NATIVE/android/jolt_main.c" \
   "$JOLT_BUILD/jolt_boot.o" \
   -I"$JOLT_BUILD" \
-  -I"$VIDYA/raylib/include" \
-  -I"$VIDYA/ffi/include" \
+  -I"$JOLT_NATIVE/crates/jolt-vidya/include" \
   -L"$STAGE/lib/arm64-v8a" \
   "$CHEZ_ANDROID/tarm64le/boot/tarm64le/libkernel.a" \
   "$CHEZ_ANDROID/lz4/lib/liblz4.a" \

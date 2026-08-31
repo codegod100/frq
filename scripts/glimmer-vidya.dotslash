@@ -1,0 +1,62 @@
+#!/usr/bin/env dotslash
+
+// The Jolt side that binds the tree ABI, from jolt-native's v0.1.0 release.
+//
+// deps.edn takes this as a git dependency, and jolt resolves it into its own
+// cache. The boot image cannot: a cross compile has no dependency resolution,
+// so every source root has to be named, and a path into somebody's ~/.jolt is
+// not a thing a build can be handed. This is the same tree at the same commit,
+// as an archive an action can depend on.
+{
+  "name": "glimmer-vidya",
+  "platforms": {
+    "linux-x86_64": {
+      "size": 17964,
+      "hash": "sha256",
+      "digest": "3842a5981c0656eb14915aead80814286040c24e83732d5e69d4f4470308fbf5",
+      "format": "tar.gz",
+      "path": "glimmer-vidya/deps.edn",
+      "providers": [
+        {
+          "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz"
+        }
+      ]
+    },
+    "linux-aarch64": {
+      "size": 17964,
+      "hash": "sha256",
+      "digest": "3842a5981c0656eb14915aead80814286040c24e83732d5e69d4f4470308fbf5",
+      "format": "tar.gz",
+      "path": "glimmer-vidya/deps.edn",
+      "providers": [
+        {
+          "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz"
+        }
+      ]
+    },
+    "macos-x86_64": {
+      "size": 17964,
+      "hash": "sha256",
+      "digest": "3842a5981c0656eb14915aead80814286040c24e83732d5e69d4f4470308fbf5",
+      "format": "tar.gz",
+      "path": "glimmer-vidya/deps.edn",
+      "providers": [
+        {
+          "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz"
+        }
+      ]
+    },
+    "macos-aarch64": {
+      "size": 17964,
+      "hash": "sha256",
+      "digest": "3842a5981c0656eb14915aead80814286040c24e83732d5e69d4f4470308fbf5",
+      "format": "tar.gz",
+      "path": "glimmer-vidya/deps.edn",
+      "providers": [
+        {
+          "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz"
+        }
+      ]
+    }
+  }
+}

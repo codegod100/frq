@@ -1,6 +1,14 @@
 # Build outputs: the boot image, the staged libraries, the APK.
 /android/build/
 
+# libvidya, staged out of jolt-native by the `buck` recipe.
+/android/prebuilt/
+
+# buck2 output tree.
+/buck-out
+# Written by the `buck` recipe: this machine's paths, not a shared setting.
+/.buckconfig.local
+
 # jolt-native, cloned by `just lib` when there is no sibling checkout.
 /.jolt-native/
 
