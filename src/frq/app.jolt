@@ -489,6 +489,11 @@
       ;; words: the name and the time say where the message came from, and the
       ;; chips at the far end are the two answers to it.
       [:vbox {:key :who}
+       ;; An event has no sender to head it, but it still happened at a time,
+       ;; and a column of joins and quits with no clock on it says nothing
+       ;; about how long the room was quiet. The time alone is that heading.
+       (when (and (:system? m) (:at m))
+         [:dim-label {:label (clock/clock-time (:at m))}])
        (when-not (:system? m)
          ;; Everything that is about the person rather than the line: their
          ;; picture, their name, and when they started saying this.
