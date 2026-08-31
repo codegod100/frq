@@ -88,6 +88,32 @@
 (defonce lightbox (atom nil))            ; {:path :url}
 (defonce join-input (atom ""))
 
+;; The window's content width in points, polled from the backend a few times a
+;; second. The app is laid out for a phone-width window, and this is what lets
+;; a wide one be more than a phone with margins: past `wide-width` the channel
+;; list and the conversation are both on screen instead of taking turns.
+(defonce window-width (atom 0))
+
+;; Where the second pane starts paying for itself. Below this a 300pt list
+;; beside a conversation leaves the messages narrower than the phone layout
+;; they were written for.
+(def wide-width 900)
+
+(defn wide?
+  "True while the window has room for the list and a conversation at once."
+  []
+  (>= @window-width wide-width))
+
+(defn chat-visible?
+  "Whether the conversation in `current` is on screen.
+
+  On a narrow window that is the chat screen alone. On a wide one the chats
+  screen shows it too, in the pane beside the list — so this, and not the
+  screen, is what decides whether an arriving line counts as unread."
+  []
+  (or (= :chat @screen)
+      (and (wide?) (= :chats @screen))))
+
 ;; Whether the chat view is showing the newest line, and a counter the view
 ;; watches to be told to go back to it. A counter rather than a flag: a flag
 ;; would need clearing, and there is no frame in which to clear it.
@@ -150,7 +176,7 @@
      (swap! channels
             (fn [m]
               (let [m (ensure-channel m channel)
-                    viewing? (and (= :chat @screen) (= channel @current))]
+                    viewing? (and (chat-visible?) (= channel @current))]
                 (-> m
                     (update-in [channel :messages] conj
                                {:from from :text text :system? (= "*" from)
@@ -170,7 +196,10 @@
   buffer stays), and opening one is a request to be in it."
   [name]
   (reset! current name)
-  (reset! screen :chat)
+  ;; On a wide window the conversation lives in the chats screen's second
+  ;; pane, beside the list; :chat is the narrow window's way of showing it
+  ;; instead of the list, and there is nothing there to trade it for.
+  (reset! screen (if (wide?) :chats :chat))
   ;; A picker belongs to the message it was opened on; carrying it into another
   ;; buffer would offer to react to something that is no longer on screen.
   (reset! reacting nil)
