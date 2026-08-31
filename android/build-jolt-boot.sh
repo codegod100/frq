@@ -9,7 +9,12 @@ VIDYA="${VIDYA:-$(cd "$ROOT/../vidya" && pwd)}"
 # has to be named here.
 GLIMMER="${GLIMMER:-$HOME/.jolt/gitlibs/https___github.com_jolt-lang_glimmer/5581c331c51aff989259b9e8e92ec920fe5e6741/src}"
 OUT="${1:?usage: build-jolt-boot.sh OUTPUT_DIRECTORY}"
-JOLT="${JOLT:-$(command -v jolt)}"
+# The DotSlash-pinned jolt beside this script, not whatever is on PATH: an
+# upstream jolt cannot open a TLS connection on Android — it reads the socket
+# address out of `struct addrinfo` at glibc's offset, which is Bionic's
+# `ai_canonname` — so a build made with one produces an APK that cannot sign in
+# or send a picture. Override with JOLT= to use another.
+JOLT="${JOLT:-$ROOT/scripts/jolt}"
 MODULE="${MODULE:-frq.app}"
 CHEZ_ANDROID="${CHEZ_ANDROID:-$HOME/.cache/vidya-chez-android}"
 HOST_SCHEME="$CHEZ_ANDROID/ta6le/bin/ta6le/scheme"
