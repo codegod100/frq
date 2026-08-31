@@ -859,7 +859,13 @@
 ;; because the reader just asked for something — unlike the jump button, which
 ;; appears on its own and must not shift what is under it.
 (defn- below-messages []
-  (+ 124
+  ;; 140 is that, counted: the gap under the row of columns, the jump button's
+  ;; 34pt row, the separator and the two empty wrappers with a gap apiece, then
+  ;; the compose row and the air under it — its own and the window's. Short by
+  ;; any of it and the column runs past the bottom edge, which does not show as
+  ;; a list that is too long: it shows as a compose bar sitting flat on the
+  ;; bottom of the window with its margin cut off.
+  (+ 140
      (if @s/replying-to 34 0)
      (if @s/attachment 76 0)))
 
