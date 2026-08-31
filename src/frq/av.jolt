@@ -495,11 +495,14 @@
 ;; is people looking at each other, not a contact sheet.
 (def ^:private want-tile 160)
 
-;; A tile narrower than this is not a face, it is a thumbnail of one. The
-;; ceiling is where a tile stops being a tile and starts being the screen — at
-;; which point the person wants the picture, not the call.
+;; A tile narrower than this is not a face, it is a thumbnail of one.
 (def ^:private min-tile 96)
-(def ^:private max-tile 240)
+
+;; And an upper bound, so that one person alone does not become a wall-sized
+;; portrait in a maximised window. Generous rather than tight — what actually
+;; stops tiles growing is the height budget below, and this is only here so
+;; there is an answer on a screen tall enough not to bind.
+(def ^:private max-tile 480)
 
 ;; What a tile costs in height beyond its picture: the name under it, and the
 ;; gap to the row below.
@@ -510,46 +513,45 @@
 ;; being that and starts being a video app with a chat box attached.
 (def ^:private wall-share 0.34)
 
-(defn- tile-height [width] (+ (long (* width 0.75)) tile-label))
-
 (defn- rows-for [n cols] (max 1 (quot (+ n (dec cols)) cols)))
 
 (defn tile-width
-  "How wide each of `n` tiles across should be in a window of `width` points.
+  "How wide a tile is with `n` across and `rows` down, in a window of `width`
+  by `height` points.
 
-  A wider window makes everyone bigger, which is the point of dragging one
-  wider during a call; a second person appearing shrinks the first rather than
-  pushing them off the edge."
-  [width n]
+  Bounded by both axes, and the height is usually the one that binds. That is
+  deliberate: a fixed ceiling meant a window dragged from half the screen to
+  all of it changed the tiles by six points, because they were already against
+  it. Deriving the ceiling from the wall's share of the height means a taller
+  window really does make the faces bigger."
+  [width height n rows]
   (let [n (max 1 n)
-        usable (max 0 (- (or width 0) wall-chrome (* tile-gap (dec n))))]
-    (-> (quot usable n)
+        rows (max 1 rows)
+        across (max 0 (- (or width 0) wall-chrome (* tile-gap (dec n))))
+        by-width (quot across n)
+        ;; What the row height allows, once the name and the gap are paid for.
+        down (- (quot (long (* (or height 0) wall-share)) rows) tile-gap tile-label)
+        by-height (long (/ (max 0 down) 0.75))]
+    (-> (min by-width by-height)
         (max min-tile)
         (min max-tile))))
 
 (defn columns
-  "How many tiles to put across a window of `width` by `height` points.
+  "How many tiles to put across, for the biggest tiles the window allows.
 
-  Two pressures, and the second is why this is not simply a division. Across:
-  tiles are kept near the size they want rather than crammed to the minimum,
-  because four faces at a hundred points each is worse than two rows of two at
-  twice that. Down: the whole wall has to fit its share of the window, so when
-  the rows that follow from a comfortable width would be taller than that, it
-  takes more columns and smaller tiles instead — which is what stops five
-  people in a narrow window from stacking five rows deep and pushing the
-  conversation off the screen."
+  Every arrangement from one row to one column is tried and the roomiest wins,
+  because neither axis alone decides it: more columns buy height by spending
+  width, and which is worth more depends on the shape of the window. Ties go to
+  fewer columns, which is the arrangement with fewer rows."
   [width height n]
-  (let [n (max 1 n)
-        usable (- (or width 0) wall-chrome)
-        want (-> (quot (+ usable tile-gap) (+ want-tile tile-gap)) (max 1) (min n))
-        budget (* (or height 0) wall-share)
-        fits? (fn [cols]
-                (<= (* (rows-for n cols) (+ (tile-height (tile-width width cols)) tile-gap))
-                    budget))]
-    ;; From the width we would like, widen until the wall fits its share. The
-    ;; last candidate is every tile on one row, which is as short as the wall
-    ;; can be made — if that still does not fit, it is the best on offer.
-    (or (first (filter fits? (range want (inc n)))) n)))
+  (let [n (max 1 n)]
+    (reduce (fn [best cols]
+              (if (> (tile-width width height cols (rows-for n cols))
+                     (tile-width width height best (rows-for n best)))
+                cols
+                best))
+            1
+            (range 2 (inc n)))))
 
 (defn tile-rows
   "The tiles as `[width [[key ...] ...]]` — one width, and the rows to draw.
@@ -559,6 +561,7 @@
   as though something had gone wrong rather than as a layout."
   ([] (tile-rows @window-width @window-height (tiles)))
   ([width height keys]
-   (let [cols (columns width height (count keys))]
-     [(tile-width width cols)
+   (let [n (count keys)
+         cols (columns width height n)]
+     [(tile-width width height cols (rows-for n cols))
       (mapv vec (partition-all cols keys))])))
