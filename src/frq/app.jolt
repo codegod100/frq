@@ -157,7 +157,10 @@
 (defn chats-screen []
   (let [buffers (s/channel-list)]
     [:page {:max-width 620}
-     [:title {:label "Chats"}]
+     ;; Your nick in the title, where "Chats" alone said nothing you did not
+     ;; already know. It is what every channel calls you and what your own
+     ;; lines are signed with, and the only other place it showed was Settings.
+     [:title {:label (if (s/connected?) (str "Chats as " @s/form-nick) "Chats")}]
      [error-note]
      [:card {}
       [:title-2 {:label "Join channel"}]
@@ -950,4 +953,22 @@
   (vidya/every! 200 #(let [w (vidya/window-width)]
                        (when (not= w @s/window-width)
                          (reset! s/window-width w))))
+  ;; The nick in the window title, so a second window of this client is told
+  ;; apart from the first by the one thing that differs — and so the answer to
+  ;; "who am I here?" is on screen without opening Settings.
+  ;;
+  ;; Polled, like the width above and for the same reason: the title belongs to
+  ;; the window rather than to the tree, so no render puts it there, and the
+  ;; nick is only settled once a connection has been made. Twice a second is
+  ;; far more often than a nick changes, and a string compare is what a tick
+  ;; costs when it has not.
+  ;; Seeded with the title `run` opens the window under, so the first tick of
+  ;; a launch that has nobody signed in yet sets nothing.
+  (let [shown (atom "frq")]
+    (vidya/every! 500 #(let [title (if (and (s/connected?) (seq @s/form-nick))
+                                     (str "frq — " @s/form-nick)
+                                     "frq")]
+                         (when (not= title @shown)
+                           (reset! shown title)
+                           (vidya/set-title! title)))))
   (ui/run app :title "frq" :width 520 :height 860))
