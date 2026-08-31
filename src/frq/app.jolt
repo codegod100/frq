@@ -303,13 +303,31 @@
   said, not a second thing said."
   14)
 
-(defn- react-button
-  "The way to put an emoji on a message, beside the way to answer it.
+(defn- action-chips
+  "Answering and reacting, on the sender's row above the message.
 
-  Both are things done *to* a message rather than parts of it, so they share
-  the sender's line and the right edge. It opens the picker on this message."
+  Both are things done *to* a message rather than parts of it, so they ride
+  the sender's row against its right edge, at the size a reaction is. In the
+  line with the text they took width off every line under them and wrapped a
+  message that had the room to sit on one.
+
+  Chips rather than buttons: a button is sized for a label and these carry a
+  glyph, which made two lozenges taller than the line they belonged to.
+  `:reaction` with no count is the same pill the picker offers, so what you
+  press to react and what appears once you have look like one family.
+
+  A row laid out from the right lays its first child furthest right, so
+  reacting comes first in the source and this reads ↩️ then 🙂 on screen."
   [channel m]
-  [:button {:label "☺" :on-click #(s/open-picker! channel m)}])
+  [:hbox {:key :actions :align :end :spacing 4}
+   [:reaction {:key :react
+               :emoji "🙂"
+               :size pill-size
+               :on-click #(s/open-picker! channel m)}]
+   [:reaction {:key :reply
+               :emoji "↩️"
+               :size pill-size
+               :on-click #(s/reply-to! m)}]])
 
 (defn- reaction-row
   "What people have put on a message, under it.
@@ -437,18 +455,18 @@
      [:dim-label {:label "Click for the full profile"}]]))
 
 (defn message-row
-  "One message. `prev` is the message above it, which decides whether this one
-  repeats the sender.
+  "One message: who said it, when, what you can do to it, and the words.
+
+  Every line names its sender, rather than the first of a run only. A run
+  collapsed to one heading reads well until you answer the fourth line of it,
+  and then the line quoted back has no name on it; and the actions live on the
+  sender's row, which a headerless line has nowhere to put.
 
   Sender above the text, not beside it: a wrapping label in a horizontal row
   lays out against the row's width rather than the column's, so one long URL
   drags every line that follows it off the left edge."
-  [i prev m]
-  (let [same-sender? (and prev
-                          (not (:system? m))
-                          (not (:system? prev))
-                          (= (:from prev) (:from m)))
-        ;; What a jump landed on wears a surface of its own for a moment, so
+  [i m]
+  (let [;; What a jump landed on wears a surface of its own for a moment, so
         ;; the answer to "which one was I sent to" is on the screen rather
         ;; than in the reader's count of rows.
         highlit? (boolean (and (:id m) (= (:id m) @s/highlight)))]
@@ -457,22 +475,21 @@
             ;; list's scrollbar rides it too — without this the ↩ is what the
             ;; scrollbar is drawn over.
             :margin-right 10
-            ;; Space above a new speaker, none inside their run: the gap is
-            ;; what separates one person's block from the next, and evenly
-            ;; spaced lines are what made the column read as one dense list.
-            :margin-top (if same-sender? 0 10)
+            ;; One gap between messages: every line carries its own heading
+            ;; now, so there are no runs to hold together and nothing for a
+            ;; closed-up line to belong to.
+            :margin-top 10
             ;; The jump target is what a "go to message" click scrolls to.
             :scroll-here (boolean (and (:id m) (= (:id m) @s/jump-to)))}
      ;; Likewise a key each: the surface a jump leaves behind is a different
      ;; node from the plain column, not the same node wearing another tag.
      [(if highlit? :card :vbox) {:key (if highlit? :body-card :body-plain)
                                  :spacing 2 :margin 0}
-      ;; A run from one person reads as one block; repeating the nick on every
-      ;; line is what made a busy channel look like a list of headers. The time
-      ;; rides on that same line, for the same reason: once per run, not once
-      ;; per line.
+      ;; Who, when, and what can be done about it, on one line above the
+      ;; words: the name and the time say where the message came from, and the
+      ;; chips at the far end are the two answers to it.
       [:vbox {:key :who}
-       (when-not (or same-sender? (:system? m))
+       (when-not (:system? m)
          ;; Everything that is about the person rather than the line: their
          ;; picture, their name, and when they started saying this.
          [:hbox {:spacing 6}
@@ -505,52 +522,32 @@
           [:label {:label (:from m)}]
           (when-let [at (:at m)]
             [:dim-label {:label (clock/clock-time at)}])
-          ])]
-      ;; Every message can be answered, not only the one that opened a run —
-      ;; laid out from the right so the action sits at the edge and the text
-      ;; takes the width that is left. The text keeps a column of its own:
-      ;; a wrapping label directly in a row wraps against the row.
+          ;; And the two things you can do to the message, at the far end of
+          ;; its heading: a nested row laid out from the right takes what is
+          ;; left of the width and puts the chips against the edge of it, so
+          ;; the words below keep the whole column.
+          ;;
+          ;; A key of its own for each branch, rather than one key whose node
+          ;; changes tag under it: a line this client sent has no msgid until
+          ;; the server echoes it back, and swapping a `:spacer` for a chip in
+          ;; place is what left the row rebuilt in the wrong order.
+          (if (:id m)
+            [action-chips {:key :actions} @s/current m]
+            [:spacer {:key :actions-gap :size 0}])])]
       ;; A little air under the sender's row: the name and face are a heading
       ;; for what follows, and a heading that touches its text is not one.
-      [:hbox {:key :line :align :end :spacing 6 :margin-top 10}
-       ;; Answering and reacting sit together because they are the same kind
-       ;; of thing: what you do to a message rather than what it says. Both
-       ;; are in the row itself rather than in a box of their own — a box with
-       ;; no width takes the rest of the row and puts the text on a line below
-       ;; it, and one with a width takes the column's whole height. Reacting
-       ;; comes first in the source because a row laid out from the right lays
-       ;; its first child furthest right: on screen this reads ↩ then ☺.
-       ;; A key of its own for each branch, rather than one key whose node
-       ;; changes tag under it: a line this client sent has no msgid until the
-       ;; server echoes it back, and swapping a `:spacer` for a `:button` in
-       ;; place is what left the row rebuilt in the wrong order — the actions
-       ;; ended up after the text, and every row beside it laid out from an
-       ;; edge that was no longer the row's. Two keys make it a removal and an
-       ;; addition, which is what it is.
-       (if (:id m)
-         [react-button {:key :react-button} @s/current m]
-         [:spacer {:key :react-gap :size 0}])
-       (if (:id m)
-         [:button {:key :reply-button :label "↩" :on-click #(s/reply-to! m)}]
-         [:spacer {:key :reply-gap :size 0}])
-       ;; The text column carries the pills as well as the words: put them
-       ;; outside this row and they sit below it, and the row is as tall as
-       ;; the buttons at its right edge — which is half a line of air between
-       ;; a message and the reactions on it, coming from nothing anyone asked
-       ;; for.
-       [:vbox {:key :text :spacing 2}
-        ;; What this answers, in the column the answer itself is in: the chip
-        ;; is a quote of a line, so it wraps to the width a line has. Outside
-        ;; this column it wrapped to the whole row instead — wider than any
-        ;; message, and out to the window's edge on a narrow screen.
-        [:vbox {:key :reply-chip}
-         (when-let [reply-to (:reply-to m)]
-           [reply-chip @s/current reply-to])]
-        (map-indexed (fn [j run] (run-node j run (:system? m)))
-                     (text-runs (:text m)))
-        [:vbox {:key :reactions-row :margin-top 6}
-         (when (and (:id m) (not (:system? m)) (seq (:reactions m)))
-           [reaction-row @s/current m])]]]
+      ;; The text keeps a column of its own: a wrapping label directly in a
+      ;; row wraps against the row.
+      [:vbox {:key :text :spacing 2 :margin-top 4}
+       ;; What this answers, in the column the answer itself is in: the chip
+       ;; is a quote of a line, so it wraps to the width a line has. Outside
+       ;; this column it wrapped to the whole row instead — wider than any
+       ;; message, and out to the window's edge on a narrow screen.
+       [:vbox {:key :reply-chip}
+        (when-let [reply-to (:reply-to m)]
+          [reply-chip @s/current reply-to])]
+       (map-indexed (fn [j run] (run-node j run (:system? m)))
+                    (text-runs (:text m)))]
       ;; And the picker, when this is the message it was opened on: under the
       ;; line it is about, where the reader is already looking.
       ;;
@@ -571,7 +568,15 @@
                [:image {:key url
                       :src path
                       :max-height 260
-                      :on-click #(reset! s/lightbox {:path path :url url})}]))))]]]))
+                      :on-click #(reset! s/lightbox {:path path :url url})}]))))]
+      ;; Reactions go last, under whatever the message turned out to be: a
+      ;; line with a picture on it is the picture, and pills between the words
+      ;; and the image they introduce read as reactions to the words alone.
+      ;; Nothing moves for a message with no picture — the box above it is
+      ;; empty, and the pills still sit under the last line of text.
+      [:vbox {:key :reactions-row :margin-top 6}
+       (when (and (:id m) (not (:system? m)) (seq (:reactions m)))
+         [reaction-row @s/current m])]]]))
 
 (defn- day-separator [day-key label]
   [:vbox {:key day-key :spacing 4 :margin 0}
@@ -598,7 +603,7 @@
                 ;; replay, an echo taking the place of what was sent — shifts
                 ;; every row after it onto the widgets of its neighbour.
                 true (conj ^{:key (or (:id m) (str "row-" i))}
-                           [message-row i (when-not new-day? prev) m]))))
+                           [message-row i m]))))
           (range (count messages))
           messages))
 
