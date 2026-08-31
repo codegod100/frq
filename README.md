@@ -18,6 +18,7 @@ src/frq/store.jolt   the saved sign-in, mode 600 in the config directory
 src/frq/avatars.jolt profile pictures, by DID or handle
 src/frq/media.jolt   image links: spot them, fetch them once, cache on disk
 src/frq/upload.jolt  a pasted picture to freeq's media endpoint, as multipart
+src/frq/av.jolt      calls: the signaling, and a handle on the media plane
 src/frq/clock.jolt   the reader's own zone, twelve-hour times, day headings
 src/frq/emoji.jolt   the picker's catalog: every drawable emoji and its name
 src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
@@ -32,12 +33,18 @@ Android is logcat.
 
 ## Running
 
-`libvidya` from Vidya's Rust/egui backend, then the app:
+Both native libraries, then the app:
 
 ```bash
 just lib
 just run
 ```
+
+`just lib` builds [jolt-native](https://gitlab.com/nandithebull/jolt-native),
+which is where every shared object this client loads comes from: `libvidya`,
+the retained-tree ABI glimmer paints through, and `libjoltmoq`, the AV media
+plane. They come out of one directory, and `just run` puts that one directory
+on the loader path.
 
 `just run` is `jolt -M:frq` with `LD_LIBRARY_PATH` pointed at the built
 library. It connects to `irc.freeq.at:6697` over TLS and joins `#test`. Untick
@@ -132,6 +139,37 @@ surface — that surface does not work on Android either, while the syscalls do.
 * Conversations listed most recently opened first
 * Bluesky avatars beside the sender, resolved from the DID freeq tags each
   message with
+* Calls: a Call button opens one in a channel, a banner offers Join where
+  somebody already has, and in one there is mute, deafen, video and leave. Mute
+  and deafen are separate — a deafened microphone still carries your voice.
+  Whoever turns a camera on appears as a tile; the self-view is labelled You
+  and sits last, where it cannot push a face you are talking to off the row
+
+## Calls
+
+Signaling is IRC and lives here: `+freeq.at/av-start`, `av-join` and `av-leave`
+go out as TAGMSGs and the server broadcasts `+freeq.at/av-state` back, which is
+what actually moves this client's state — a press is optimistic, and the server
+settles it. Losing a race to open a call (`start-collision`) is answered by
+joining the call that won rather than by reporting an error, since the person
+asked to be in a call in that room and there is one.
+
+Media is not IRC and is not here. Audio and video ride MoQ — Media over QUIC —
+through freeq's SFU, and that is `libjoltmoq`: Opus, H.264, capture and
+transport, lifted out of sleek rather than written a second time in jolt.
+`src/frq/av.jolt` is the whole of what frq says to it, and two of its rules
+shape this side:
+
+* **Nothing calls back.** Status and video are polled, drained by a timer that
+  glimmer runs on the loop thread — the only thread allowed to touch a node.
+* **A frame is borrowed.** The decoder's own buffer is handed to Vidya as a
+  pointer and painted by an `:image` with a `:feed`. The pixels never become a
+  jolt value and are never copied on this side, which is the only way thirty
+  frames a second is affordable here.
+
+The SFU is dialled once the server has minted a token, not when we ask to join:
+a remote SFU refuses a connection without one, and the MoQ client then retries
+in a loop that looks exactly like a hang.
 
 ## Limits
 
@@ -145,12 +183,17 @@ surface — that surface does not work on Android either, while the syscalls do.
   format, and a fetch needs TLS, so the phone shows links. The link is left in
   place either way.
 * **Nothing evicts the media cache.**
+* **Calls are desktop-only.** `libjoltmoq` is not built for Android here, and
+  the camera and microphone paths that are would still need the runtime
+  permissions the APK does not ask for.
+* **One call at a time**, which is the media plane's rule and the microphone's.
+* **No call is offered in a DM** — freeq's AV signaling is a channel's.
 * **Pasting a picture needs a sign-in and a desktop.** The upload is filed
   under the DID of a live session, so a guest cannot make one; and it is read
   off the clipboard through the ABI's `vidya_clipboard_image_png`, which
   arboard backs on desktop and nothing backs on Android. It also shares
   nothing to your PDS and posts nothing to Bluesky — those fields are opt-in
   and this client does not send them.
-* **No scrollback trimming, reactions, threads, or calls.**
+* **No scrollback trimming or threads.**
 * A sent line waits up to 200ms for the reader thread to flush it.
 * Message lists are keyed vboxes; glimmer-vidya has no `:listbox` yet.

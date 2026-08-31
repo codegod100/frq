@@ -8,6 +8,7 @@
             [glimmer.ratom :as r :refer [atom]]
             [jolt.host :as host]
             [frq.atproto :as atproto]
+            [frq.av :as av]
             [frq.clock :as clock]
             [frq.emoji :as emoji]
             [frq.irc :as irc]
@@ -88,6 +89,32 @@
 (defonce lightbox (atom nil))            ; {:path :url}
 (defonce join-input (atom ""))
 
+;; The window's content width in points, polled from the backend a few times a
+;; second. The app is laid out for a phone-width window, and this is what lets
+;; a wide one be more than a phone with margins: past `wide-width` the channel
+;; list and the conversation are both on screen instead of taking turns.
+(defonce window-width (atom 0))
+
+;; Where the second pane starts paying for itself. Below this a 300pt list
+;; beside a conversation leaves the messages narrower than the phone layout
+;; they were written for.
+(def wide-width 900)
+
+(defn wide?
+  "True while the window has room for the list and a conversation at once."
+  []
+  (>= @window-width wide-width))
+
+(defn chat-visible?
+  "Whether the conversation in `current` is on screen.
+
+  On a narrow window that is the chat screen alone. On a wide one the chats
+  screen shows it too, in the pane beside the list — so this, and not the
+  screen, is what decides whether an arriving line counts as unread."
+  []
+  (or (= :chat @screen)
+      (and (wide?) (= :chats @screen))))
+
 ;; Whether the chat view is showing the newest line, and a counter the view
 ;; watches to be told to go back to it. A counter rather than a flag: a flag
 ;; would need clearing, and there is no frame in which to clear it.
@@ -150,7 +177,7 @@
      (swap! channels
             (fn [m]
               (let [m (ensure-channel m channel)
-                    viewing? (and (= :chat @screen) (= channel @current))]
+                    viewing? (and (chat-visible?) (= channel @current))]
                 (-> m
                     (update-in [channel :messages] conj
                                {:from from :text text :system? (= "*" from)
@@ -170,7 +197,10 @@
   buffer stays), and opening one is a request to be in it."
   [name]
   (reset! current name)
-  (reset! screen :chat)
+  ;; On a wide window the conversation lives in the chats screen's second
+  ;; pane, beside the list; :chat is the narrow window's way of showing it
+  ;; instead of the list, and there is nothing there to trade it for.
+  (reset! screen (if (wide?) :chats :chat))
   ;; A picker belongs to the message it was opened on; carrying it into another
   ;; buffer would offer to react to something that is no longer on screen.
   (reset! reacting nil)
@@ -231,7 +261,60 @@
                                msgs))
                m)))))
 
-(declare join!)
+(declare join! join-call!)
+
+;; --- calls -------------------------------------------------------------------
+;; Signaling only. The audio and video themselves are `frq.av`'s, and behind it
+;; libjoltmoq's; what happens here is that the server's broadcasts become state
+;; the screens can read, and a press becomes a TAGMSG.
+
+(defn apply-call-state!
+  "A `+freeq.at/av-state` broadcast: fold it in, and say so in the buffer.
+
+  The system line is worth the space — a call is the one thing that happens in
+  a channel while nobody types, and without a line saying so the only trace of
+  someone joining is a number quietly changing in a banner."
+  [channel st]
+  (av/apply-state! channel st)
+  ;; And try to dial. The token may already be in hand — from this join, or
+  ;; from the last time we were in this same session — in which case the
+  ;; server's agreement that we are in the call is the last thing we were
+  ;; waiting for. `try-start-media!` refuses if there is nothing to dial with
+  ;; or a call is already up, so calling it on every state change is safe.
+  (when (av/in-call? channel)
+    (av/try-start-media! @form-host))
+  (let [line (av/state-message st)]
+    (when (seq line)
+      (push-message! channel "*" line))))
+
+(defn apply-call-error!
+  "A `+freeq.at/av-error`. Most say the call failed; one says we lost a race.
+
+  `start-collision` means our `av-start` and someone else's crossed and theirs
+  won. The server names the winning session, so the answer is to join that one
+  rather than to report an error for something the person asked for and can
+  have — they wanted to be in a call in this room, and there is one."
+  [tags code]
+  (let [reason (or (irc/tag-value tags "+freeq.at/av-reason") code)
+        session-id (irc/tag-value tags "+freeq.at/av-id")
+        lc @av/local-call
+        channel (:channel lc)]
+    (if (and (= "start-collision" code) (seq session-id) channel
+             (or (:awaiting-start? lc) (str/blank? (:session-id lc))))
+      (do
+        (push-message! channel "*" "Call already open — joining it instead")
+        (av/stop-media!)
+        (join-call! channel session-id))
+      (do
+        (when channel
+          (push-message! channel "*" (str "Call error: " reason)))
+        ;; Only tear down a call the error is actually about. A `join-failed`
+        ;; naming someone else's session is not ours to act on.
+        (when (and lc
+                   (or (str/blank? (or session-id ""))
+                       (str/blank? (:session-id lc))
+                       (= session-id (:session-id lc))))
+          (av/stop-media!))))))
 
 (defn apply-msg!
   "Fold one parsed IRC message into the state."
@@ -280,10 +363,22 @@
                                (irc/tag-value tags "+draft/reply"))
                      add (or (irc/tag-value tags "+react")
                              (irc/tag-value tags "+draft/react"))
-                     remove-it (irc/tag-value tags "+freeq.at/unreact")]
+                     remove-it (irc/tag-value tags "+freeq.at/unreact")
+                     call-state (av/parse-state tags)
+                     ;; The token is directed at our own nick rather than at
+                     ;; the channel, so `buffer` is a DM key here and says
+                     ;; nothing about which call it is for. The session id in
+                     ;; the tag is what does.
+                     token (irc/tag-value tags "+freeq.at/av-token")
+                     call-error (irc/tag-value tags "+freeq.at/av-error")]
                  (cond
                    add (update-reaction! buffer msgid add from true)
                    remove-it (update-reaction! buffer msgid remove-it from false)
+                   call-state (apply-call-state! buffer call-state)
+                   token (av/apply-token! @form-host
+                                          (irc/tag-value tags "+freeq.at/av-id")
+                                          token)
+                   call-error (apply-call-error! tags call-error)
                    :else nil))
       "JOIN" (let [ch (first params)]
                (if (= from @form-nick)
@@ -855,6 +950,61 @@
           (irc/react! c channel msgid emoji)
           (irc/unreact! c channel msgid emoji)))
       (update-reaction! channel msgid emoji @form-nick on?))))
+
+(defn start-call!
+  "Open a call on this channel.
+
+  Optimistic: the controls appear on the press. What comes back settles it —
+  an `av-state` says the room has a call, an `av-token` starts the media, and
+  a `start-collision` means someone beat us to it and we join theirs instead."
+  [channel]
+  (when-let [c @conn]
+    (let [nick (or (:nick @session) @form-nick)
+          instance (av/begin! {:channel channel
+                               :nick nick
+                               :muted? false
+                               :speaker-muted? false
+                               ;; Audio first, always. A call that opened with
+                               ;; the camera on would be a call that showed
+                               ;; someone's room before they had agreed to.
+                               :camera? false})]
+      (irc/tagmsg! c channel (av/start-tags instance nil)))))
+
+(defn join-call!
+  "Join the call already open on this channel."
+  [channel session-id]
+  (when-let [c @conn]
+    (let [nick (or (:nick @session) @form-nick)
+          instance (av/begin! {:channel channel
+                               :session-id session-id
+                               :nick nick
+                               :muted? false
+                               :speaker-muted? false
+                               :camera? false})]
+      (irc/tagmsg! c channel (av/join-tags session-id instance)))))
+
+(defn announce-leave!
+  "Tell the room this device is out of a call it did not choose to leave.
+
+  freeq counts a participant until an `av-leave` says otherwise, so a media
+  plane that fails silently leaves a ghost behind — and the next Join adds
+  another beside it. Registered with `frq.av` at startup, because that
+  namespace has no connection to send on."
+  [{:keys [channel session-id instance]}]
+  (when (and @conn (seq (or session-id "")))
+    (irc/tagmsg! @conn channel (av/leave-tags session-id instance))))
+
+(defn leave-call!
+  "Leave the call, telling the room and the SFU both.
+
+  The media plane goes down first and on its own account: the person pressed
+  leave, so the microphone should be shut whether or not the TAGMSG gets out."
+  []
+  (when-let [{:keys [channel session-id instance]} @av/local-call]
+    (av/stop-media!)
+    (when-let [c @conn]
+      (when (seq session-id)
+        (irc/tagmsg! c channel (av/leave-tags session-id instance))))))
 
 (defn channel-list
   "Buffers most recently opened first, filtered by the search box.

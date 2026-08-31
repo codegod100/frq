@@ -8,6 +8,7 @@
             [glimmer.ratom :as r :refer [atom]]
             [glimmer.core :as ui]
             [glimmer-vidya.core :as vidya]
+            [frq.av :as av]
             [frq.avatars :as avatars]
             [frq.clock :as clock]
             [frq.media :as media]
@@ -164,9 +165,16 @@
        [:button {:label "Join"
                  :kind :primary
                  :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]]
-     [:entry {:text @s/search
-              :placeholder "Search channels"
-              :on-change #(reset! s/search %)}]
+     ;; The clear button only shows while there is something to clear: an
+     ;; empty box has nothing to undo, and a dead button beside it reads as
+     ;; one that stopped working.
+     [:hbox {:spacing 6}
+      [:entry {:text @s/search
+               :width-request 380
+               :placeholder "Search channels"
+               :on-change #(reset! s/search %)}]
+      (when (seq @s/search)
+        [:button {:label "✕" :on-click #(reset! s/search "")}])]
      (if (seq buffers)
        (for [b buffers] [conversation-row b])
        [:card {} [:dim-label {:label "No conversations yet — join a channel."}]])
@@ -519,6 +527,118 @@
       [:button {:label "← Back" :on-click #(reset! s/lightbox nil)}]]
      [:image {:src path :fit true :on-click #(reset! s/lightbox nil)}]]))
 
+(defn- call-tile
+  "One participant's picture, at the width the row worked out for it.
+
+  `:feed` rather than `:src`: these pixels never touch the disk and never
+  become a value here — the media plane hands the decoder's own buffer to
+  Vidya as a pointer, and the tag paints whatever arrived last under that name.
+
+  The height is three quarters of the width, which is the shape a camera hands
+  over. Naming both keeps a portrait phone from making its tile tall enough to
+  push the row off the screen — the picture is fitted inside, never stretched."
+  [width key]
+  (let [mine? (= av/local-feed key)]
+    [:vbox {:key key :spacing 2}
+     ;; `:upscale` because a tile is a slot the layout sized, not a picture
+     ;; sitting at whatever the camera happened to send. Without it a 480-wide
+     ;; stream draws 480 wide in a 900-point slot and the wall looks broken —
+     ;; which is exactly what it did.
+     [:image {:feed key
+              :upscale true
+              :max-width width
+              :max-height (long (* width 0.75))}]
+     [:dim-label {:label (if mine? "You" key)}]]))
+
+(defn- call-wall
+  "Everyone with a camera on, sized to the window they are being watched in.
+
+  A call with no video is the normal case and should look like one — a row of
+  empty frames would suggest something had failed to load.
+
+  Both cells this reads are what subscribe it: `av/tiles` for who is on
+  screen, and the window width so the tiles follow a window being dragged.
+  Without either it would lay itself out once, on the first frame, and keep
+  that shape for the rest of the call."
+  []
+  (let [[width rows] (av/tile-rows)]
+    [:vbox {:key :call-wall :spacing 6}
+     ;; A seq, not a vector: children splice, and a vector would be read as one
+     ;; more hiccup element — which an empty one is not.
+     (for [[i keys] (map-indexed vector rows)]
+       [:hbox {:key i :spacing 8}
+        (for [key keys]
+          [call-tile width key])])]))
+
+(defn- call-controls
+  "What the person in a call can do about it.
+
+  Mute and deafen are separate buttons because they are separate things: a
+  deafened microphone still carries your voice, and one control for both would
+  make the quieter of the two a surprise."
+  []
+  (let [{:keys [muted? speaker-muted? camera? has-camera? has-mic? media]} @av/local-call]
+    [:vbox {:key :call-controls :spacing 6}
+     [:hbox {:spacing 8}
+      [:label {:label (case media
+                        :waiting "Asking to join…"
+                        :dialling "Connecting…"
+                        :live "In call"
+                        :failed "Call failed"
+                        "In call")}]
+      ;; A microphone that is not there is worth saying so: the call works,
+      ;; and the person is listening rather than silent by choice.
+      (when (and (= :live media) (not has-mic?))
+        [:dim-label {:label "· listening only"}])]
+     [:hbox {:spacing 8}
+      [:button {:label (if muted? "Unmute" "Mute")
+                :on-click #(av/set-muted! (not muted?))}]
+      [:button {:label (if speaker-muted? "Undeafen" "Deafen")
+                :on-click #(av/set-speaker-muted! (not speaker-muted?))}]
+      ;; Only offered when there is a camera to turn on. Nothing is more
+      ;; annoying than a control that does nothing and does not say why.
+      (when has-camera?
+        [:button {:label (if camera? "Stop video" "Start video")
+                  :on-click #(av/set-camera! (not camera?))}])
+      [:button {:label "Leave" :on-click #(s/leave-call!)}]]
+     (when-let [e @av/media-error]
+       [:dim-label {:label (str "⚠ " e)}])]))
+
+(defn call-bar
+  "The call in this channel, whatever state it is in. Always a node.
+
+  Three cases, and the empty one matters as much as the others: a channel with
+  no call must render *something* here, because the reconciler matches children
+  by position and a banner that came and went would patch the message list into
+  a button."
+  [channel]
+  [:vbox {:key :call-bar :spacing 6}
+   (cond
+     (av/in-call? channel)
+     [:card {}
+      [:vbox {:spacing 6}
+       [call-controls]
+       [call-wall]]]
+
+     ;; A call is open in this room and we are not in it.
+     (av/call-in channel)
+     (let [{:keys [session-id participants title]} (av/call-in channel)]
+       [:card {}
+        [:hbox {:spacing 8}
+         [:label {:label (str "📞 " (or title "Call in progress")
+                              (if (and participants (pos? participants))
+                                (str " · " participants)
+                                ""))}]
+         [:button {:label "Join"
+                   :on-click #(s/join-call! channel session-id)}]]])
+
+     ;; We are in a call, but in a different room. Say which, since the
+     ;; controls are not on this screen to be found by looking.
+     (av/in-call?)
+     [:dim-label {:label (str "In a call in " (:channel @av/local-call))}]
+
+     :else nil)])
+
 (defn image-picker-screen
   "The pictures on this device, to send one of.
 
@@ -584,9 +704,25 @@
     ;; bottom of a screen wants is above it, not beneath it.
     [:vbox {:spacing 8 :margin 12 :margin-bottom 4}
      [:hbox {:spacing 8}
-      [:button {:label "← Chats" :on-click #(reset! s/screen :chats)}]
-      [:title {:label (or name "Chat")}]]
+      ;; The way back to the list, on a window with room for one thing at a
+      ;; time. Beside the list there is nothing to go back to, so the button
+      ;; goes — in a wrapper of its own, since a child that comes and goes
+      ;; would otherwise renumber the row for the reconciler.
+      [:vbox {:key :back}
+       (when-not (s/wide?)
+         [:button {:label "← Chats" :on-click #(reset! s/screen :chats)}])]
+      [:title {:label (or name "Chat")}]
+      ;; Same wrapper trick: only in a channel, and only when there is no call
+      ;; to join already — the bar below offers Join in that case, and two ways
+      ;; into the same call is one more than anybody needs.
+      [:vbox {:key :call}
+       (when (and name
+                  (str/starts-with? name "#")
+                  (not (av/call-in name))
+                  (not (av/in-call?)))
+         [:button {:label "Call" :on-click #(s/start-call! name)}])]]
      [error-note]
+     [call-bar name]
      ;; :reserve leaves room for everything below: the jump button's row, the
      ;; separator and the compose bar. It does not vary with whether the button
      ;; is showing, and neither does that row — a reserve that changed would
@@ -660,6 +796,46 @@
                :on-activate s/send-draft!}]
       [:button {:label "Send" :kind :primary :on-click s/send-draft!}]]]))
 
+;; ---------------------------------------------------------------- split
+
+(def ^:private sidebar-width 320)
+
+(defn- no-chat-pane
+  "What fills the second pane before a conversation has been picked. The pane
+  is there either way — a list that widened into two columns and back again as
+  channels were opened would be a worse answer than an empty half."
+  []
+  [:vbox {:spacing 8 :margin 12}
+   [:title {:label "frq"}]
+   [:card {} [:dim-label {:label "Pick a conversation on the left."}]]])
+
+(defn split-screen
+  "The chats list and the conversation side by side, for a window wide enough
+  to hold both.
+
+  Same components as the narrow layout, in a row instead of one at a time: the
+  list keeps its own scroll and its own tab bar, and the conversation keeps the
+  compose bar pinned under a backlog that scrolls on its own.
+
+  Both panes take `:fill-height`: a column in a row is otherwise as tall as the
+  row, which at the moment it is placed is one button — and the list and the
+  message backlog both size themselves against the height they are handed.
+
+  Only the list is given a width. The conversation takes what is left, rather
+  than the window's width minus the list's: the list costs a little more than
+  its 320 (its page has padding of its own), and a second column asking for
+  more than remains is wrapped onto a row below — painting the whole
+  conversation off the bottom of the window, which reads exactly like a
+  conversation that has gone missing."
+  []
+  [:hbox {:spacing 0 :wrap false}
+   [:vbox {:key :list :width-request sidebar-width :fill-height true}
+    [chats-screen]]
+   [:vbox {:key :chat :fill-height true}
+    (if @s/current
+      [chat-screen]
+      [no-chat-pane])]])
+
 ;; ---------------------------------------------------------------- discover
 
 (defn discover-screen []
@@ -719,13 +895,17 @@
   (cond
     @s/lightbox [lightbox-screen]
     @s/image-picker [image-picker-screen]
-    :else
-    (case @s/screen
-      :connect [connect-screen]
-      :chat [chat-screen]
-      :discover [discover-screen]
-      :settings [settings-screen]
-      [chats-screen])))
+    ;; Wide enough for both, and on one of the two screens that are halves of
+    ;; the same thing: the list and the conversation it opens. Discover and
+    ;; settings stay whole screens — they are somewhere else, not the other
+    ;; half of here.
+    (and (s/wide?) (contains? #{:chats :chat} @s/screen)) [split-screen]
+    :else (case @s/screen
+            :connect [connect-screen]
+            :chat [chat-screen]
+            :discover [discover-screen]
+            :settings [settings-screen]
+            [chats-screen])))
 
 (defn -main [& _]
   ;; Before the window: the rooms this client has been in, and a saved sign-in
@@ -739,4 +919,22 @@
     ;; user should be looking at while this happens, and if it fails, the
     ;; error lands somewhere visible.
     (vidya/after! 150 s/connect!))
+  ;; Calls arrive rather than being asked for, so the media plane is drained
+  ;; every frame whether or not one is up — the drain costs a single integer
+  ;; read when it is not. It has to be a timer: `frame-rgba!` and everything
+  ;; else that touches a node belongs to the loop thread, and this is glimmer's
+  ;; way of getting onto it.
+  (av/init-logging!)
+  ;; Who to tell when a call ends under us rather than at our asking. Set here
+  ;; rather than in frq.av because sending a TAGMSG needs the connection, and
+  ;; that belongs to the state layer.
+  (reset! av/on-dropped s/announce-leave!)
+  (vidya/after! 0 av/install-pump!)
+  ;; The window's width, into a ratom, a few times a second. Polled rather than
+  ;; delivered: the backend reports a size by writing it onto the window node,
+  ;; and only what a component derefs re-renders — so the layout follows a drag
+  ;; of the window's edge without every frame touching the tree.
+  (vidya/every! 200 #(let [w (vidya/window-width)]
+                       (when (not= w @s/window-width)
+                         (reset! s/window-width w))))
   (ui/run app :title "frq" :width 520 :height 860))
