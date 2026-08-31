@@ -9,6 +9,16 @@
   []
   (host/file-exists? "/system/bin/am"))
 
+(defonce ^:private desktop (delay (not (android?))))
+
+(defn desktop?
+  "True where there is a pointer to hover with, rather than a finger. Asked
+  once per render of every row that has a face on it, so the answer is worked
+  out once and kept — the question is a file that either exists or does not,
+  and nothing about it changes while the app runs."
+  []
+  @desktop)
+
 (defn open-url!
   "Hand a URL to whatever shows web pages here. The backend knows what that
   means — xdg-open on a desktop, an ACTION_VIEW intent on Android, where no

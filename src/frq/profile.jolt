@@ -82,6 +82,27 @@
 
 (defn close! [] (reset! viewing nil))
 
+;; The face the pointer is resting on, or nil — `{:nick :actor}`, the same
+;; shape as `viewing`. A card is painted for this one alone rather than hung
+;; under every avatar in the column: the tree keeps whatever it is given, and
+;; a channel's worth of unseen profile cards is a tree nobody looks at.
+(defonce hovering (atom nil))
+
+(defn hover!
+  "The pointer has come to rest on someone's face. Starts the same two fetches
+  opening them would, so the card has something on it by the time it is read."
+  [nick actor]
+  (reset! hovering {:nick nick :actor actor})
+  (when (seq actor) (avatars/fetch! actor #(swap! tick inc)))
+  (fetch! actor))
+
+(defn unhover!
+  "The pointer has left `nick`'s face. Guarded by who is being left, so the
+  leaving of one face cannot take down the card of the next one — both edges
+  arrive in the same frame when the pointer crosses straight over."
+  [nick]
+  (swap! hovering #(when-not (= nick (:nick %)) %)))
+
 (defn web-url
   "Their profile on the web, by handle where there is one and DID otherwise."
   [{:keys [handle did]}]

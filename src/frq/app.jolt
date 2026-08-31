@@ -372,6 +372,48 @@
       (when (pos? over)
         [:dim-label {:label (str "and " over " more — keep typing to narrow it")}])]]))
 
+(defn hover-card
+  "Who someone is, in the few lines that fit beside a pointer.
+
+  The profile screen's opening, without the ways onward: a picture, the name
+  they go by, their handle, and the first of their bio. What it cannot say yet
+  it says plainly — a fetch in flight, a guest with no identity to look up —
+  because a card that is blank while it waits reads as a card with nothing on
+  it."
+  [nick actor]
+  (let [_ @profile/tick
+        _ @s/media-tick
+        pr (profile/entry actor)
+        ready? (= :ready (:status pr))
+        display (or (:display-name pr) nick)]
+    [:vbox {:spacing 6}
+     [:hbox {:spacing 10}
+      [:avatar {:label nick
+                :src (or (avatars/path-when-ready actor) "")
+                :size 48}]
+      [:vbox {:spacing 2}
+       [:title-2 {:label display}]
+       [:vbox {:key :nick}
+        (when (not= display nick) [:dim-label {:label nick}])]
+       [:vbox {:key :handle}
+        (when-let [h (and ready? (not-empty (or (:handle pr) "")))]
+          [:label {:label (str "@" h)}])]]]
+     ;; Shorter than the screen's: this is a glance, not a read, and a bio
+     ;; that fills the window beside a pointer is in the way of the chat.
+     [:vbox {:key :bio :spacing 2}
+      (when-let [bio (and ready? (:description pr))]
+        (for [[i line] (map-indexed vector (str/split-lines (profile/truncate bio 200)))]
+          [:label {:key i :label line}]))]
+     [:vbox {:key :stats}
+      (when-let [line (and ready? (profile/stats-line pr))]
+        [:dim-label {:label line}])]
+     [:vbox {:key :status}
+      (cond
+        (nil? actor) [:dim-label {:label "Guest — no Bluesky identity"}]
+        (= :loading (:status pr)) [:dim-label {:label "Loading…"}]
+        (= :failed (:status pr)) [:dim-label {:label "No Bluesky profile found"}])]
+     [:dim-label {:label "Click for the full profile"}]]))
+
 (defn message-row
   "One message. `prev` is the message above it, which decides whether this one
   repeats the sender.
@@ -419,11 +461,22 @@
           ;; The face is also the way to the person behind it: Vidya's plain
           ;; label does not answer the pointer, so the tap sleek puts on the
           ;; nick lives here, on the one thing in the row that does.
+          ;; And, where there is a pointer to ask with, resting on the face
+          ;; answers before the click does: the card under it is the profile
+          ;; screen's first few lines, painted beside the pointer.
           (let [_ @s/media-tick]
-            [:avatar {:label (:from m)
-                      :src (or (avatars/path-when-ready (:actor m)) "")
-                      :size 32
-                      :on-click #(profile/open! (:from m) (:actor m))}])
+            [:avatar (cond-> {:label (:from m)
+                              :src (or (avatars/path-when-ready (:actor m)) "")
+                              :size 32
+                              :on-click #(profile/open! (:from m) (:actor m))}
+                       (platform/desktop?)
+                       (assoc :on-hover #(profile/hover! (:from m) (:actor m))
+                              :on-unhover #(profile/unhover! (:from m))))
+             ;; Only the hovered face carries one: a card is painted when its
+             ;; node has children, and the pointer is on one face at a time.
+             (when (and (platform/desktop?)
+                        (= (:from m) (:nick @profile/hovering)))
+               [hover-card (:from m) (:actor m)])])
           ;; The name carries the row, so it is set at body size in the plain
           ;; text colour: dimmed caption made the one thing you scan a column
           ;; for the faintest thing on it.
