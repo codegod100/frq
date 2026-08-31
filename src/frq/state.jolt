@@ -276,6 +276,13 @@
   someone joining is a number quietly changing in a banner."
   [channel st]
   (av/apply-state! channel st)
+  ;; And try to dial. The token may already be in hand — from this join, or
+  ;; from the last time we were in this same session — in which case the
+  ;; server's agreement that we are in the call is the last thing we were
+  ;; waiting for. `try-start-media!` refuses if there is nothing to dial with
+  ;; or a call is already up, so calling it on every state change is safe.
+  (when (av/in-call? channel)
+    (av/try-start-media! @form-host))
   (let [line (av/state-message st)]
     (when (seq line)
       (push-message! channel "*" line))))

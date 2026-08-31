@@ -189,6 +189,15 @@
 ;; without depending on the client that owns the connection.
 (defonce on-dropped (atom nil))
 
+;; SFU tokens, by session id.
+;;
+;; The server mints one when you join, and does not necessarily mint another
+;; when you join the same call again — so a client that forgets it on the way
+;; out has nothing to dial with on the way back in, and rejoining signals
+;; correctly and then sits there with no video. Kept past the call for exactly
+;; that, and overwritten whenever a fresh one arrives.
+(defonce ^:private session-tokens (atom {}))
+
 ;; Feeds pushed to Vidya, so the ones that stop can be dropped again. Without
 ;; this the last frame of someone who left hangs on the wall for the rest of
 ;; the call.
@@ -248,7 +257,15 @@
     ;; ended it. Leaving the local call set would leave the controls up over
     ;; a session the SFU has already forgotten.
     (when (and (= :ended action) (in-call? channel))
-      (stop-media!))))
+      (stop-media!))
+    ;; The server agreeing we are in the call is the other moment worth
+    ;; dialling on. A join we opened optimistically has no session id until
+    ;; this arrives — and a *re*join often brings no token with it, because the
+    ;; server already minted one for this session and does not mint a second.
+    (when (and (not= :ended action) (in-call? channel))
+      (when (and (seq session-id) (str/blank? (:session-id @local-call)))
+        (swap! local-call assoc :session-id session-id))
+      true)))
 
 ;; --- the media plane, as this client uses it ---------------------------------
 
@@ -284,6 +301,8 @@
       (try (announce call) (catch Exception _ nil))))
   (stop-media!))
 
+(declare try-start-media!)
+
 (defn- start-media!
   "Dial the SFU for the call we have already joined over IRC.
 
@@ -305,23 +324,45 @@
       (do (swap! local-call assoc :media :failed)
           (reset! media-error (str "no SFU for " server))))))
 
+(defn try-start-media!
+  "Dial the SFU if there is a call to dial for, and we are not already on it.
+
+  Called from every signal that might mean the call is ready — the server
+  agreeing we joined, a token arriving, a rejoin — because none of them is
+  reliably the one that comes last. What makes that safe is the two guards:
+  `can-dial?` refuses a remote SFU with no token rather than retrying in a
+  loop that looks like a hang, and a call already up or on its way is left
+  alone rather than re-dialled."
+  [server]
+  (when-let [{:keys [session-id token media]} @local-call]
+    (when (and (seq session-id)
+               (not (contains? #{:dialling :live} media))
+               (can-dial? server token))
+      (start-media! server))))
+
 (defn apply-token!
-  "The server minted us an SFU token — dial the media plane with it.
+  "The server minted us an SFU token — remember it, and dial.
 
   This arrives as a TAGMSG directed at our own nick rather than at the channel,
   so the buffer it came in on says nothing about which call it is for; the
-  session id in the tag does. One that names a different session than ours is
-  not ours."
+  session id in the tag does. One naming a different session than ours is not
+  ours.
+
+  Remembered past the end of the call, because the server does not always mint
+  a second one when you rejoin the same session."
   [server session-id token]
   (when-let [lc @local-call]
     (when (or (str/blank? session-id)
               (str/blank? (:session-id lc))
               (= session-id (:session-id lc)))
-      (swap! local-call
-             #(-> %
-                  (assoc :token token :awaiting-start? false)
-                  (cond-> (seq session-id) (assoc :session-id session-id))))
-      (start-media! server))))
+      (let [sid (if (seq session-id) session-id (:session-id lc))]
+        (when (seq sid)
+          (swap! session-tokens assoc sid token))
+        (swap! local-call
+               #(-> %
+                    (assoc :token token :awaiting-start? false)
+                    (cond-> (seq sid) (assoc :session-id sid)))))
+      (try-start-media! server))))
 
 (defn begin!
   "Record that this device is joining `channel`, before the server has agreed.
@@ -338,7 +379,10 @@
              :session-id (or session-id "")
              :instance instance
              :nick nick
-             :token nil
+             ;; What we were given last time we were in this call, if
+             ;; anything. A rejoin the server answers with no new token
+             ;; still has something to dial with.
+             :token (get @session-tokens (or session-id ""))
              :awaiting-start? (str/blank? (or session-id ""))
              :muted? (boolean muted?)
              :speaker-muted? (boolean speaker-muted?)
