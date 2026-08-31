@@ -178,6 +178,17 @@
 ;; The last thing the media plane failed with, for the line under the controls.
 (defonce media-error (atom nil))
 
+;; What to do when this device stops being in a call without having asked to.
+;;
+;; The media plane failing is not the server hearing about it: freeq counts a
+;; participant until an `av-leave` says otherwise. Dropping out quietly leaves
+;; a ghost in the room, and pressing Join again adds a second one — which is
+;; how a channel ends up reporting seven people in a call with two.
+;;
+;; `frq.state` puts the TAGMSG here. This namespace cannot send one itself
+;; without depending on the client that owns the connection.
+(defonce on-dropped (atom nil))
+
 ;; Feeds pushed to Vidya, so the ones that stop can be dropped again. Without
 ;; this the last frame of someone who left hangs on the wall for the rest of
 ;; the call.
@@ -249,15 +260,29 @@
   (reset! feeds []))
 
 (defn stop-media!
-  "Leave the media plane and forget the call. Signaling is the caller's to send
-  — `leave!` does both, and this is what is left when the server ended it for
-  us."
+  "Leave the media plane and forget the call, telling nobody.
+
+  For the two cases where the server already knows: it ended the call itself,
+  or the caller is about to send an `av-leave` of its own. Anything else wants
+  `dropped!`, or freeq goes on counting a participant who is not there."
   []
   (raw-stop)
   (drop-feeds!)
   (reset! feeds [])
   (reset! local-call nil)
   (reset! media-error nil))
+
+(defn dropped!
+  "We are out of the call and did not ask to be — the media plane failed, or
+  the transport went away under it.
+
+  Tells whoever registered `on-dropped` first, while the session id and
+  instance it needs are still here to be read, and only then forgets them."
+  []
+  (when-let [announce @on-dropped]
+    (when-let [call @local-call]
+      (try (announce call) (catch Exception _ nil))))
+  (stop-media!))
 
 (defn- start-media!
   "Dial the SFU for the call we have already joined over IRC.
@@ -374,12 +399,21 @@
                                         :has-camera? (not (zero? (raw-status-has-camera)))
                                         :has-mic? (not (zero? (raw-status-has-mic))))))
 
+          ;; Both of these are the call ending underneath us rather than at
+          ;; our request, so both have to be announced. A failure keeps the
+          ;; local call up afterwards so the reason stays on screen — but the
+          ;; server is told either way, because we are no longer in the call
+          ;; whether or not the person has read why yet.
           (= code status-ended)
-          (stop-media!)
+          (dropped!)
 
           (= code status-failed)
-          (do (reset! media-error (status-text))
-              (swap! local-call #(when % (assoc % :media :failed)))))
+          (let [why (status-text)
+                call @local-call]
+            (when-let [announce @on-dropped]
+              (when call (try (announce call) (catch Exception _ nil))))
+            (reset! media-error why)
+            (swap! local-call #(when % (assoc % :media :failed)))))
         (recur)))))
 
 (defn- pump-frames!
@@ -498,20 +532,24 @@
 ;; A tile narrower than this is not a face, it is a thumbnail of one.
 (def ^:private min-tile 96)
 
-;; And an upper bound, so that one person alone does not become a wall-sized
-;; portrait in a maximised window. Generous rather than tight — what actually
-;; stops tiles growing is the height budget below, and this is only here so
-;; there is an answer on a screen tall enough not to bind.
-(def ^:private max-tile 480)
+;; And an upper bound, so one person alone does not become a wall-sized
+;; portrait. Generous rather than tight — what actually stops tiles growing is
+;; the height budget below, and this is only here so there is an answer on a
+;; screen tall enough that it never binds.
+(def ^:private max-tile 720)
 
 ;; What a tile costs in height beyond its picture: the name under it, and the
 ;; gap to the row below.
 (def ^:private tile-label 22)
 
-;; The wall's share of the window. A call in a chat client is something you
-;; have *while* reading the room — past about a third of the height it stops
-;; being that and starts being a video app with a chat box attached.
-(def ^:private wall-share 0.34)
+;; The wall's share of the window height.
+;;
+;; A third was the first guess and it was wrong: on a 1920x1060 screen it held
+;; one person to a 440-point tile with fourteen hundred points of empty width
+;; beside them, which reads as video that will not scale — because in every way
+;; the eye can tell, it does not. Half leaves the conversation legible under it
+;; while letting a maximised window actually be worth maximising.
+(def ^:private wall-share 0.5)
 
 (defn- rows-for [n cols] (max 1 (quot (+ n (dec cols)) cols)))
 

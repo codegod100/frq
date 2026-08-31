@@ -788,6 +788,17 @@
                                :camera? false})]
       (irc/tagmsg! c channel (av/join-tags session-id instance)))))
 
+(defn announce-leave!
+  "Tell the room this device is out of a call it did not choose to leave.
+
+  freeq counts a participant until an `av-leave` says otherwise, so a media
+  plane that fails silently leaves a ghost behind — and the next Join adds
+  another beside it. Registered with `frq.av` at startup, because that
+  namespace has no connection to send on."
+  [{:keys [channel session-id instance]}]
+  (when (and @conn (seq (or session-id "")))
+    (irc/tagmsg! @conn channel (av/leave-tags session-id instance))))
+
 (defn leave-call!
   "Leave the call, telling the room and the SFU both.
 

@@ -807,5 +807,9 @@
   ;; else that touches a node belongs to the loop thread, and this is glimmer's
   ;; way of getting onto it.
   (av/init-logging!)
+  ;; Who to tell when a call ends under us rather than at our asking. Set here
+  ;; rather than in frq.av because sending a TAGMSG needs the connection, and
+  ;; that belongs to the state layer.
+  (reset! av/on-dropped s/announce-leave!)
   (vidya/after! 0 av/install-pump!)
   (ui/run app :title "frq" :width 520 :height 860))
