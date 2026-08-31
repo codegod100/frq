@@ -160,6 +160,21 @@
      [:dim-label {:label (s/last-preview buffer)}]
      [:button {:label "Open" :kind :primary :on-click #(s/open-channel! name)}]]))
 
+(def ^:private sidebar-width 320)
+
+(defn- control-entry-width
+  "How wide the join and search boxes ask to be.
+
+  A fixed 380 is right on a window that holds the list alone, and too wide for
+  the list as a split view's left column: the row it sits on is only
+  `sidebar-width` across, and an entry that asks for more than remains pushes
+  the button beside it onto a row of its own — Join under the box rather than
+  next to it. Beside the entry go the button and the gap, and around the row
+  the card's and the page's padding, so the column's share is what is left of
+  the sidebar after those."
+  []
+  (if (s/wide?) (- sidebar-width 130) 380))
+
 (defn chats-screen []
   (let [buffers (s/channel-list)]
     [:page {:max-width 620}
@@ -179,7 +194,7 @@
         ;; Both kinds of conversation through one box: `#room` joins a
         ;; channel, `@nick` opens a message to a person.
         [:entry {:text @s/join-input
-                 :width-request 380
+                 :width-request (control-entry-width)
                  :placeholder "#channel or @nick"
                  :on-change #(reset! s/join-input %)
                  :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
@@ -191,7 +206,7 @@
        ;; one that stopped working.
        [:hbox {:spacing 8}
         [:entry {:text @s/search
-                 :width-request 380
+                 :width-request (control-entry-width)
                  :placeholder "Search channels"
                  :on-change #(reset! s/search %)}]
         (when (seq @s/search)
@@ -839,8 +854,6 @@
        [:vbox {:key :empty}
         (when (and (empty? dirs) (empty? files))
           [:dim-label {:label "No pictures here that this app can read."}])]]]]))
-
-(def ^:private sidebar-width 320)
 
 ;; What the people panel asks for, and what the conversation beside it has to
 ;; be told to leave. A column with `:fill-height` and no width takes the whole
