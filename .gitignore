@@ -5,3 +5,7 @@
 /.jolt/
 /.lsp/
 /.clj-kondo/
+
+# Nix build symlinks.
+/result
+/result-*

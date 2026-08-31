@@ -1,0 +1,81 @@
+{
+  "nodes": {
+    "glimmer": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788135429,
+        "narHash": "sha256-20W4kmcL05O7V7EQKXuH+kVBpBtQZhhj5yTm9QqxQss=",
+        "ref": "refs/heads/main",
+        "rev": "399df371c790d690fb6e4560c3d4d7f838502857",
+        "revCount": 32,
+        "type": "git",
+        "url": "https://gitlab.com/nandithebull/glimmer"
+      },
+      "original": {
+        "rev": "399df371c790d690fb6e4560c3d4d7f838502857",
+        "type": "git",
+        "url": "https://gitlab.com/nandithebull/glimmer"
+      }
+    },
+    "jolt-native": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788142815,
+        "narHash": "sha256-ehaIvgeA7ce9m7T9AxyPTHpnYVrG2lQRH3RkkF612GY=",
+        "ref": "refs/heads/main",
+        "rev": "70072e8e48ad396caeab6f6bd18b999cf449ec8f",
+        "revCount": 13,
+        "type": "git",
+        "url": "https://gitlab.com/nandithebull/jolt-native"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://gitlab.com/nandithebull/jolt-native"
+      }
+    },
+    "jolt-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788135812,
+        "narHash": "sha256-DvVmjNN09mfxp67Y9zOyXNbAIYR9h2gpuyTbdj777a8=",
+        "ref": "refs/heads/main",
+        "rev": "6f1d436f6e4cb1e2f878c5fc90c39a48a8bf4310",
+        "revCount": 2803,
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/jolt-lang/jolt"
+      },
+      "original": {
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/jolt-lang/jolt"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1788039129,
+        "narHash": "sha256-pa4Q0qErvCvzCaaUph7Sm37RhR4xvPrYI8Lgz6k85+A=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "d2f67949798825fe853f7c5d0492b8bf016d3f88",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "glimmer": "glimmer",
+        "jolt-native": "jolt-native",
+        "jolt-src": "jolt-src",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
