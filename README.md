@@ -16,6 +16,7 @@ src/frq/atproto.jolt handle → DID → PDS → session, and the SASL payloads
 src/frq/oauth.jolt   the broker flow: login URL, loopback capture, /session
 src/frq/store.jolt   the saved sign-in, mode 600 in the config directory
 src/frq/avatars.jolt profile pictures, by DID or handle
+src/frq/profile.jolt who someone is: the Bluesky profile behind a nick
 src/frq/media.jolt   image links: spot them, fetch them once, cache on disk
 src/frq/upload.jolt  a pasted picture to freeq's media endpoint, as multipart
 src/frq/av.jolt      calls: the signaling, and a handle on the media plane
