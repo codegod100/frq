@@ -13,6 +13,7 @@
             [frq.clock :as clock]
             [frq.media :as media]
             [frq.platform :as platform]
+            [frq.profile :as profile]
             [frq.state :as s]))
 
 ;; ---------------------------------------------------------------- pieces
@@ -407,10 +408,14 @@
           ;; fetch lands, and for the guests who have no profile at all, which
           ;; is what keeps the column of faces straight down the left.
           ;; Reading the tick subscribes this row to a fetch finishing.
+          ;; The face is also the way to the person behind it: Vidya's plain
+          ;; label does not answer the pointer, so the tap sleek puts on the
+          ;; nick lives here, on the one thing in the row that does.
           (let [_ @s/media-tick]
             [:avatar {:label (:from m)
                       :src (or (avatars/path-when-ready (:actor m)) "")
-                      :size 32}])
+                      :size 32
+                      :on-click #(profile/open! (:from m) (:actor m))}])
           ;; The name carries the row, so it is set at body size in the plain
           ;; text colour: dimmed caption made the one thing you scan a column
           ;; for the faintest thing on it.
@@ -513,6 +518,74 @@
                            [message-row i (when-not new-day? prev) m]))))
           (range (count messages))
           messages))
+
+(defn profile-screen
+  "Who someone is: sleek's peer profile modal, as a screen.
+
+  A screen rather than a layer for the same reason the lightbox is one — the
+  tree backend paints in a single layer, with no z-order to hang a modal from.
+  So the back row does what sleek's ✕ and backdrop did.
+
+  The picture is the same cached file the chat column draws, at a size worth
+  looking at; the bio is split into a label a line, so a bio that was written
+  as several lines is still several lines here."
+  []
+  (let [{:keys [nick actor]} @profile/viewing
+        ;; Reading both ticks subscribes this screen to the two fetches it is
+        ;; waiting on: the profile itself, and the picture on it.
+        _ @profile/tick
+        _ @s/media-tick
+        pr (profile/entry actor)
+        ready? (= :ready (:status pr))
+        display (or (:display-name pr) nick)
+        url (when ready? (profile/web-url pr))]
+    [:page {:max-width 520}
+     [:hbox {:spacing 8}
+      [:button {:label "← Back" :on-click profile/close!}]]
+     [:card {}
+      [:hbox {:spacing 12}
+       [:avatar {:label nick
+                 :src (or (avatars/path-when-ready actor) "")
+                 :size 72}]
+       [:vbox {:spacing 2}
+        [:title-2 {:label display}]
+        ;; The nick under the display name only when they differ — repeating
+        ;; it is a line that says nothing.
+        [:vbox {:key :nick}
+         (when (not= display nick) [:dim-label {:label nick}])]
+        [:vbox {:key :handle}
+         (when-let [h (and ready? (not-empty (or (:handle pr) "")))]
+           [:label {:label (str "@" h)}])]]]
+      ;; The DID is the identity itself, and outlasts both the nick and the
+      ;; handle — so it is on the screen, in full, rather than implied.
+      [:vbox {:key :did :spacing 2}
+       (when-let [did (:did pr)] [:dim-label {:label did}])]
+      [:vbox {:key :bio :spacing 2}
+       (when-let [bio (and ready? (:description pr))]
+         (for [[i line] (map-indexed vector (str/split-lines (profile/truncate bio 600)))]
+           [:label {:key i :label line}]))]
+      [:vbox {:key :stats}
+       (when-let [line (and ready? (profile/stats-line pr))]
+         [:dim-label {:label line}])]
+      ;; What is happening, or why nothing is: a guest has no identity to look
+      ;; up, and saying so is a better answer than a spinner that never lands.
+      [:vbox {:key :status :spacing 4}
+       (cond
+         (nil? actor)
+         [:dim-label {:label "Guest — no Bluesky / AT Protocol identity"}]
+
+         (= :loading (:status pr))
+         [:hbox {:spacing 8}
+          [:spinner {}]
+          [:dim-label {:label "Loading Bluesky profile…"}]]
+
+         (= :failed (:status pr))
+         [:dim-label {:label "No Bluesky profile found"}])]
+      [:vbox {:key :actions}
+       (when url
+         [:button {:label "Bluesky ↗"
+                   :kind :primary
+                   :on-click #(platform/open-url! url)}])]]]))
 
 (defn lightbox-screen
   "One picture, as big as the window will paint it.
@@ -907,6 +980,7 @@
 (defn app []
   (cond
     @s/lightbox [lightbox-screen]
+    @profile/viewing [profile-screen]
     @s/image-picker [image-picker-screen]
     ;; Wide enough for both, and on one of the two screens that are halves of
     ;; the same thing: the list and the conversation it opens. Discover and

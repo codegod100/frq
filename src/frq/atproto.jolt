@@ -59,6 +59,36 @@
   (let [m (re-find (re-pattern (str "\"" field "\"\\s*:\\s*\"([^\"]*)\"")) (or json ""))]
     (second m)))
 
+(defn json-num
+  "The numeric value of a top-level JSON field, or nil.
+
+  Written out as a string rather than parsed into a number: the counts on a
+  profile are only ever printed, and \"1204\" is what printing them wants."
+  [json field]
+  (second (re-find (re-pattern (str "\"" field "\"\\s*:\\s*(-?[0-9]+)")) (or json ""))))
+
+(defn json-unescape
+  "A JSON string body back to the text it stands for.
+
+  `json-str` hands back the escapes as they were written, which is right for a
+  DID or a URL — none of them contains one — and wrong for a bio, where the
+  line breaks someone typed arrive as backslash-n. Only the escapes a bio can
+  carry are undone; a stray backslash is left alone rather than eaten."
+  [s]
+  (str/replace (or s "") #"\\(u[0-9a-fA-F]{4}|.)"
+               (fn [[whole esc]]
+                 (case (first esc)
+                   \n "\n"
+                   \t "\t"
+                   \r "\r"
+                   \b "\b"
+                   \f "\f"
+                   \" "\""
+                   \\ "\\"
+                   \/ "/"
+                   \u (str (char (Integer/parseInt (subs esc 1) 16)))
+                   whole))))
+
 (defn- json-escape [s]
   (-> (or s "")
       (str/replace "\\" "\\\\")
