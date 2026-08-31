@@ -529,7 +529,13 @@
     ;; bottom of a screen wants is above it, not beneath it.
     [:vbox {:spacing 8 :margin 12 :margin-bottom 4}
      [:hbox {:spacing 8}
-      [:button {:label "← Chats" :on-click #(reset! s/screen :chats)}]
+      ;; The way back to the list, on a window with room for one thing at a
+      ;; time. Beside the list there is nothing to go back to, so the button
+      ;; goes — in a wrapper of its own, since a child that comes and goes
+      ;; would otherwise renumber the row for the reconciler.
+      [:vbox {:key :back}
+       (when-not (s/wide?)
+         [:button {:label "← Chats" :on-click #(reset! s/screen :chats)}])]
       [:title {:label (or name "Chat")}]]
      [error-note]
      ;; :reserve leaves room for everything below: the jump button's row, the
@@ -602,6 +608,46 @@
                :on-activate s/send-draft!}]
       [:button {:label "Send" :kind :primary :on-click s/send-draft!}]]]))
 
+;; ---------------------------------------------------------------- split
+
+(def ^:private sidebar-width 320)
+
+(defn- no-chat-pane
+  "What fills the second pane before a conversation has been picked. The pane
+  is there either way — a list that widened into two columns and back again as
+  channels were opened would be a worse answer than an empty half."
+  []
+  [:vbox {:spacing 8 :margin 12}
+   [:title {:label "frq"}]
+   [:card {} [:dim-label {:label "Pick a conversation on the left."}]]])
+
+(defn split-screen
+  "The chats list and the conversation side by side, for a window wide enough
+  to hold both.
+
+  Same components as the narrow layout, in a row instead of one at a time: the
+  list keeps its own scroll and its own tab bar, and the conversation keeps the
+  compose bar pinned under a backlog that scrolls on its own.
+
+  Both panes take `:fill-height`: a column in a row is otherwise as tall as the
+  row, which at the moment it is placed is one button — and the list and the
+  message backlog both size themselves against the height they are handed.
+
+  Only the list is given a width. The conversation takes what is left, rather
+  than the window's width minus the list's: the list costs a little more than
+  its 320 (its page has padding of its own), and a second column asking for
+  more than remains is wrapped onto a row below — painting the whole
+  conversation off the bottom of the window, which reads exactly like a
+  conversation that has gone missing."
+  []
+  [:hbox {:spacing 0 :wrap false}
+   [:vbox {:key :list :width-request sidebar-width :fill-height true}
+    [chats-screen]]
+   [:vbox {:key :chat :fill-height true}
+    (if @s/current
+      [chat-screen]
+      [no-chat-pane])]])
+
 ;; ---------------------------------------------------------------- discover
 
 (defn discover-screen []
@@ -658,14 +704,19 @@
 ;; ---------------------------------------------------------------- shell
 
 (defn app []
-  (if @s/lightbox
-    [lightbox-screen]
-    (case @s/screen
-      :connect [connect-screen]
-      :chat [chat-screen]
-      :discover [discover-screen]
-      :settings [settings-screen]
-      [chats-screen])))
+  (cond
+    @s/lightbox [lightbox-screen]
+    ;; Wide enough for both, and on one of the two screens that are halves of
+    ;; the same thing: the list and the conversation it opens. Discover and
+    ;; settings stay whole screens — they are somewhere else, not the other
+    ;; half of here.
+    (and (s/wide?) (contains? #{:chats :chat} @s/screen)) [split-screen]
+    :else (case @s/screen
+            :connect [connect-screen]
+            :chat [chat-screen]
+            :discover [discover-screen]
+            :settings [settings-screen]
+            [chats-screen])))
 
 (defn -main [& _]
   ;; Before the window: the rooms this client has been in, and a saved sign-in
@@ -679,4 +730,11 @@
     ;; user should be looking at while this happens, and if it fails, the
     ;; error lands somewhere visible.
     (vidya/after! 150 s/connect!))
+  ;; The window's width, into a ratom, a few times a second. Polled rather than
+  ;; delivered: the backend reports a size by writing it onto the window node,
+  ;; and only what a component derefs re-renders — so the layout follows a drag
+  ;; of the window's edge without every frame touching the tree.
+  (vidya/every! 200 #(let [w (vidya/window-width)]
+                       (when (not= w @s/window-width)
+                         (reset! s/window-width w))))
   (ui/run app :title "frq" :width 520 :height 860))
