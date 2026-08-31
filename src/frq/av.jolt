@@ -192,6 +192,13 @@
 ;; be handed to Vidya, and paint into no node at all.
 (defonce feeds (atom []))
 
+;; The window's width in points, so a tile can be a share of it rather than a
+;; number somebody picked. A cell for the same reason `feeds` is one: a
+;; component that asked the backend at render time would lay itself out once,
+;; on the first frame, and keep that shape however the window was dragged.
+(defonce window-width (atom 0))
+(defonce window-height (atom 0))
+
 ;; The self-view is keyed this way by the media plane; the UI wants to know
 ;; which tile is its own, to label it and to mirror nothing else.
 (def local-feed "__local__")
@@ -421,12 +428,30 @@
       (when-not (= ordered @feeds)
         (reset! feeds ordered)))))
 
+(defn- pump-window!
+  "Follow the window's width, so a call wall can divide it.
+
+  Outside the `live?` guard: the width is wanted the frame a call *starts*, and
+  a cell first written at that moment would lay the wall out against a zero.
+
+  Written only when it changes, and only in whole points. A window being
+  dragged produces a fractional width every frame, and a cell that took each
+  one would re-render the wall for a third of a point of difference nobody can
+  see."
+  []
+  (let [[w h] (vidya/screen-size)
+        w (long w)
+        h (long h)]
+    (when-not (= w @window-width) (reset! window-width w))
+    (when-not (= h @window-height) (reset! window-height h))))
+
 (defn pump!
   "One frame's worth of the media plane. Cheap when no call is up.
 
   Runs on the loop thread — `vidya/frame-rgba!` may not be called from anywhere
   else, and neither may anything that touches a node."
   []
+  (pump-window!)
   (when (live?)
     (pump-status!)
     (pump-frames!)
@@ -457,3 +482,83 @@
   someone turns their camera on."
   []
   @feeds)
+
+;; What the wall cannot use: the window's own edges, the card the tiles sit in,
+;; and the gaps between them. Measured against the chat screen's margins rather
+;; than guessed — 12 a side outside the card, 8 a side within it.
+(def ^:private wall-chrome 44)
+(def ^:private tile-gap 8)
+
+;; The size a tile wants to be. Columns are chosen to keep tiles near this
+;; rather than to fit as many across as will physically go: four faces at a
+;; hundred points each is worse than two rows of two at twice that, and a call
+;; is people looking at each other, not a contact sheet.
+(def ^:private want-tile 160)
+
+;; A tile narrower than this is not a face, it is a thumbnail of one. The
+;; ceiling is where a tile stops being a tile and starts being the screen — at
+;; which point the person wants the picture, not the call.
+(def ^:private min-tile 96)
+(def ^:private max-tile 240)
+
+;; What a tile costs in height beyond its picture: the name under it, and the
+;; gap to the row below.
+(def ^:private tile-label 22)
+
+;; The wall's share of the window. A call in a chat client is something you
+;; have *while* reading the room — past about a third of the height it stops
+;; being that and starts being a video app with a chat box attached.
+(def ^:private wall-share 0.34)
+
+(defn- tile-height [width] (+ (long (* width 0.75)) tile-label))
+
+(defn- rows-for [n cols] (max 1 (quot (+ n (dec cols)) cols)))
+
+(defn tile-width
+  "How wide each of `n` tiles across should be in a window of `width` points.
+
+  A wider window makes everyone bigger, which is the point of dragging one
+  wider during a call; a second person appearing shrinks the first rather than
+  pushing them off the edge."
+  [width n]
+  (let [n (max 1 n)
+        usable (max 0 (- (or width 0) wall-chrome (* tile-gap (dec n))))]
+    (-> (quot usable n)
+        (max min-tile)
+        (min max-tile))))
+
+(defn columns
+  "How many tiles to put across a window of `width` by `height` points.
+
+  Two pressures, and the second is why this is not simply a division. Across:
+  tiles are kept near the size they want rather than crammed to the minimum,
+  because four faces at a hundred points each is worse than two rows of two at
+  twice that. Down: the whole wall has to fit its share of the window, so when
+  the rows that follow from a comfortable width would be taller than that, it
+  takes more columns and smaller tiles instead — which is what stops five
+  people in a narrow window from stacking five rows deep and pushing the
+  conversation off the screen."
+  [width height n]
+  (let [n (max 1 n)
+        usable (- (or width 0) wall-chrome)
+        want (-> (quot (+ usable tile-gap) (+ want-tile tile-gap)) (max 1) (min n))
+        budget (* (or height 0) wall-share)
+        fits? (fn [cols]
+                (<= (* (rows-for n cols) (+ (tile-height (tile-width width cols)) tile-gap))
+                    budget))]
+    ;; From the width we would like, widen until the wall fits its share. The
+    ;; last candidate is every tile on one row, which is as short as the wall
+    ;; can be made — if that still does not fit, it is the best on offer.
+    (or (first (filter fits? (range want (inc n)))) n)))
+
+(defn tile-rows
+  "The tiles as `[width [[key ...] ...]]` — one width, and the rows to draw.
+
+  One width for every tile, not one per row: a last row holding a single person
+  would otherwise draw them at twice the size of everybody above, which reads
+  as though something had gone wrong rather than as a layout."
+  ([] (tile-rows @window-width @window-height (tiles)))
+  ([width height keys]
+   (let [cols (columns width height (count keys))]
+     [(tile-width width cols)
+      (mapv vec (partition-all cols keys))])))

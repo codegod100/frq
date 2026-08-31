@@ -521,35 +521,42 @@
      [:image {:src path :fit true :on-click #(reset! s/lightbox nil)}]]))
 
 (defn- call-tile
-  "One participant's picture.
+  "One participant's picture, at the width the row worked out for it.
 
   `:feed` rather than `:src`: these pixels never touch the disk and never
   become a value here — the media plane hands the decoder's own buffer to
-  Vidya as a pointer, and the tag paints whatever arrived last under that name."
-  [key]
+  Vidya as a pointer, and the tag paints whatever arrived last under that name.
+
+  The height is three quarters of the width, which is the shape a camera hands
+  over. Naming both keeps a portrait phone from making its tile tall enough to
+  push the row off the screen — the picture is fitted inside, never stretched."
+  [width key]
   (let [mine? (= av/local-feed key)]
     [:vbox {:key key :spacing 2}
-     [:image {:feed key :max-width 240 :max-height 180}]
+     [:image {:feed key
+              :max-width width
+              :max-height (long (* width 0.75))}]
      [:dim-label {:label (if mine? "You" key)}]]))
 
 (defn- call-wall
-  "Everyone with a camera on, or nothing at all.
+  "Everyone with a camera on, sized to the window they are being watched in.
 
   A call with no video is the normal case and should look like one — a row of
-  empty frames would suggest something had failed to load. The row itself is
-  always here even when empty, so a tile appearing adds a child rather than
-  changing the shape of the tree around it.
+  empty frames would suggest something had failed to load.
 
-  `av/tiles` reads a cell the pump writes, which is what subscribes this
-  component: without that this would render once, with nobody on screen, and
-  never hear that someone had turned a camera on."
+  Both cells this reads are what subscribe it: `av/tiles` for who is on
+  screen, and the window width so the tiles follow a window being dragged.
+  Without either it would lay itself out once, on the first frame, and keep
+  that shape for the rest of the call."
   []
-  [:vbox {:key :call-wall :spacing 6}
-   [:hbox {:key :tiles :spacing 8}
-    ;; A seq, not a vector: children splice, and a vector would be read as one
-    ;; more hiccup element — which an empty one is not.
-    (for [key (av/tiles)]
-      [call-tile key])]])
+  (let [[width rows] (av/tile-rows)]
+    [:vbox {:key :call-wall :spacing 6}
+     ;; A seq, not a vector: children splice, and a vector would be read as one
+     ;; more hiccup element — which an empty one is not.
+     (for [[i keys] (map-indexed vector rows)]
+       [:hbox {:key i :spacing 8}
+        (for [key keys]
+          [call-tile width key])])]))
 
 (defn- call-controls
   "What the person in a call can do about it.
