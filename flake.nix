@@ -13,9 +13,10 @@
   #
   # On a machine that is not NixOS the GL driver is the host's and the loader
   # will not find it, so the window never opens ("GL display: argument does not
-  # name a valid config"). Launch through nixGL there:
-  #
-  #   nix run --impure "git+https://github.com/nix-community/nixGL#nixGLIntel" -- ./result/bin/frq
+  # name a valid config"). The launcher handles that itself: off NixOS it hands
+  # the process to nixGL, which puts the host's driver ahead of the store's.
+  # Nothing extra to type, and a distrobox/container Arch is the same case as
+  # a bare one.
   description = "frq — a freeq client in jolt";
 
   inputs = {
@@ -38,9 +39,15 @@
       url = "git+https://gitlab.com/nandithebull/glimmer?rev=399df371c790d690fb6e4560c3d4d7f838502857";
       flake = false;
     };
+
+    # Only ever used off NixOS, to put the host GL driver on the loader path.
+    nixgl = {
+      url = "github:nix-community/nixGL";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer }:
+  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, nixgl }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = f:
@@ -50,6 +57,11 @@
       packages = forEachSystem (pkgs:
         let
           inherit (pkgs) lib;
+
+          # Mesa, despite the name: it covers Intel and AMD alike. The NVIDIA
+          # wrappers are the ones that need --impure (they read the host kernel
+          # module's version), which is why this only ever reaches for Intel.
+          nixGL = nixgl.packages.${pkgs.stdenv.hostPlatform.system}.nixGLIntel;
 
           # libvidya (the retained-tree ABI glimmer-vidya binds, on egui) and
           # libjoltmoq (the AV media plane). One workspace, two cdylibs.
@@ -172,7 +184,14 @@
           frqScript = pkgs.writeShellScript "frq" ''
             export LD_LIBRARY_PATH="${native}/lib:${lib.makeLibraryPath runtimeLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             cd ${frqSource}
-            exec ${joltRuntime}/bin/jolt \
+
+            # On NixOS the store's Mesa is the system's and the window opens.
+            # Anywhere else the real driver is the host's, so defer to nixGL —
+            # it prepends the host driver, which has to win over ours.
+            runner=""
+            [ -e /run/current-system ] || runner="${nixGL}/bin/nixGLIntel"
+
+            exec ''${runner} ${joltRuntime}/bin/jolt \
               -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-vidya {:local/root "${glimmerVidya}"}}}' \
               -M:frq "$@"
           '';
