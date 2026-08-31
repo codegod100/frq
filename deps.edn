@@ -12,7 +12,9 @@
  ;; widget.
  :deps {jolt-lang/glimmer   {:git/url "https://gitlab.com/nandithebull/glimmer"
                              :git/sha "399df371c790d690fb6e4560c3d4d7f838502857"}
-        nandi/glimmer-vidya {:local/root "../jolt-native/jolt/glimmer-vidya"}}
+        nandi/glimmer-vidya {:git/url "https://gitlab.com/nandithebull/jolt-native"
+                             :git/sha "70072e8e48ad396caeab6f6bd18b999cf449ec8f"
+                             :deps/root "jolt/glimmer-vidya"}}
 
  ;; Both objects come from gitlab.com/nandithebull/jolt-native, one crate each,
  ;; out of one target directory:
@@ -24,7 +26,7 @@
  ;; lives in src/frq/av.jolt; the media half is three thousand lines of codec
  ;; and transport that would only be written badly a second time here.
  ;;
- ;;   cd ../jolt-native && just build
+ ;;   just lib
  :jolt/native [{:name "vidya"
                 :darwin ["libvidya.dylib"]
                 :linux ["libvidya.so"]}

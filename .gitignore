@@ -1,6 +1,9 @@
 # Build outputs: the boot image, the staged libraries, the APK.
 /android/build/
 
+# jolt-native, cloned by `just lib` when there is no sibling checkout.
+/.jolt-native/
+
 # Tool caches.
 /.jolt/
 /.lsp/
