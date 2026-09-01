@@ -97,8 +97,8 @@ C ABI, which owns the event loop as the NativeActivity's own library) and
 from the vidya checkout; only the boot image is frq's.
 
 ```bash
-./android/build-apk.sh run      # build, install, launch on a connected device
-./android/build-apk.sh log      # logcat, filtered
+./android/build-apk.bb run      # build, install, launch on a connected device
+./android/build-apk.bb log      # logcat, filtered
 ```
 
 Needs what vidya's Android build needs — SDK, NDK r29, and a cross-built Chez
