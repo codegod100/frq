@@ -205,6 +205,18 @@ let
       (load "${xpatch}")
       (optimize-level 2)
       (generate-inspector-information #f)
+      ;; Packed harder, not packed for the first time: fasl output is
+      ;; compressed already, but with lz4 at its fastest setting, and on
+      ;; this image that leaves 2.3 MB on the table. What reads it back is
+      ;; the kernel linked into libjoltapp, which has zlib because
+      ;; chezAndroid is configured ZLIB=-lz — so nothing extra ships to
+      ;; decompress it.
+      ;;
+      ;; Less than the ratio of the whole file suggests (15.9 MB to 13.6):
+      ;; compression is per fasl entry rather than over the image.
+      (fasl-compressed #t)
+      (compress-format 'gzip)
+      (compress-level 'maximum)
       (compile-file "$PWD/project/app.build/flat.ss" "$PWD/cross/flat.so")
       (make-boot-file "$PWD/jolt.boot" '()
         "${targetBoot}/petite.boot"
@@ -333,6 +345,20 @@ let
     cp ${opensslAndroid.out}/lib/libcrypto.so stage/lib/${abi}/libcrypto.so
     cp ${classesDex} stage/classes.dex
     chmod -R u+w stage
+
+    # Everything the loader needs is in .dynsym, and that is what --strip-all
+    # keeps: what goes is .symtab and the debug sections, which are read by a
+    # debugger and by nothing on the phone. Worth about a third of the package
+    # — libjoltmoq and libc++_shared are most of it, and the release libraries
+    # arrive unstripped because jolt-native's own build does not strip them.
+    #
+    # Here rather than in the derivations that produce them: the inputs stay
+    # whole (a stripped libjoltapp is a worse thing to hand a debugger, and
+    # `nix build .#libjoltapp` is how it is looked at), and this is the one
+    # place that knows the difference between an object and a shipped one.
+    # The NDK's, not nixpkgs' — the host strip has no opinion worth trusting
+    # about an arm64 object.
+    ${ndkBin}/llvm-strip --strip-all stage/lib/${abi}/*.so
 
     ${buildTools}/aapt2 link -o "$out" -I ${androidJar} \
       --manifest ${self}/android/AndroidManifest.xml \
