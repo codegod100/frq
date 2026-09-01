@@ -29,4 +29,4 @@
   execution_platforms = root//platforms:cache
 
 [project]
-  ignore = .git,android/build,.jolt-native,buck-out
+  ignore = .git,android/build,build,buck-out

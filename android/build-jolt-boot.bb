@@ -21,32 +21,8 @@ exec "$(dirname "$0")/../scripts/bb" "$0" "$@"
          '[clojure.string :as str])
 
 (def root (str (fs/canonicalize (fs/path (fs/parent *file*) ".."))))
-(def jolt-native (paths/jolt-native root))
 (def args *command-line-args*)
 (def stamp-only? (= "--stamp" (first args)))
-
-(def glimmer
-  (paths/env "GLIMMER"
-             (str (fs/path (fs/home) ".jolt" "gitlibs"
-                           "https___gitlab.com_nandithebull_glimmer"
-                           (paths/dep-sha root "https://gitlab.com/nandithebull/glimmer")
-                           "src"))))
-
-;; glimmer-vidya lives inside jolt-native, so a sibling checkout answers for it
-;; the way it answers for libvidya; the cache is the fallback, at the sha
-;; deps.edn pins.
-(def glimmer-vidya
-  (or (paths/env "GLIMMER_VIDYA" nil)
-      (let [in-checkout (fs/path jolt-native "jolt" "glimmer-vidya" "src")]
-        (if (fs/directory? in-checkout)
-          (str in-checkout)
-          (str (fs/path (fs/home) ".jolt" "gitlibs"
-                        "https___gitlab.com_nandithebull_jolt-native"
-                        (paths/dep-sha root "https://gitlab.com/nandithebull/jolt-native")
-                        "jolt" "glimmer-vidya" "src"))))))
-
-(paths/require-paths! "Jolt source root" [glimmer glimmer-vidya]
-                      "run `jolt -M:frq --help` once to populate the git cache")
 
 ;; The DotSlash-pinned jolt, not whatever is on PATH: an upstream jolt cannot
 ;; open a TLS connection on Android — it reads the socket address out of
@@ -66,6 +42,41 @@ exec "$(dirname "$0")/../scripts/bb" "$0" "$@"
         (if (and dotslash manifest)
           (paths/out dotslash "--" "fetch" manifest)
           (str (fs/path root "scripts" "jolt"))))))
+
+;; The two source roots that are not this repo's, asked of jolt rather than
+;; guessed at. `jolt path` prints what it resolved deps.edn to, which is the
+;; only thing that knows where a git dependency landed: a plain :git/sha goes
+;; to one cache layout and one with :deps/root to another, and glimmer and
+;; glimmer-vidya are one of each.
+;;
+;; GLIMMER and GLIMMER_VIDYA name them instead when a caller already knows.
+;; buck sets the second: the jolt cache cannot be an action input, so that
+;; build hands over the release archive it fetched by digest, and with both set
+;; nothing here shells out at all.
+(def roots
+  (delay
+    ;; From this tree, whatever directory the caller was in: deps.edn is what
+    ;; `path` reads.
+    (str/split (str/trim (:out (p/shell {:out :string :dir root} jolt "path"))) #":")))
+
+(defn root-of [k env pred]
+  (or (paths/env env nil)
+      (first (filter pred @roots))
+      (paths/die (str "jolt resolved no " (name k) " source root")
+                 "check the :deps in deps.edn")))
+
+;; Matched by name rather than by shape: a cache path carries the repo, the sha
+;; and — for a dependency with a :deps/root — the root inside it, and which of
+;; those it ends with is jolt's business, not this script's.
+(defn names? [root s] (str/includes? root s))
+
+(def glimmer-vidya
+  (root-of :glimmer-vidya "GLIMMER_VIDYA" #(names? % "glimmer-vidya")))
+(def glimmer
+  (root-of :glimmer "GLIMMER" #(and (names? % "glimmer")
+                                    (not (names? % "glimmer-vidya")))))
+
+(paths/require-paths! "Jolt source root" [glimmer glimmer-vidya])
 
 (def module (paths/env "MODULE" "frq.app"))
 (def chez (paths/env "CHEZ_ANDROID" (str (fs/path (fs/home) ".cache" "vidya-chez-android"))))

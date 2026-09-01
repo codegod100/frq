@@ -58,26 +58,26 @@ DIST = {
     },
     "glimmer-vidya": {
         "linux-aarch64": {
-            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-glimmer-vidya-v0.1.2.tar.gz",
-            "sha256": "1e544ef9c354e56bbfe280fee72e79e4a8bd6c746fe51a779e0afebb4465917d",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-glimmer-vidya-v0.1.3.tar.gz",
+            "sha256": "5ea0f7d2c3d3ff56daa3983c7222bd724a6dd4d6977c6b3bb2311d7d708ea9fe",
             "strip_prefix": "glimmer-vidya",
             "type": "tar.gz"
         },
         "linux-x86_64": {
-            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-glimmer-vidya-v0.1.2.tar.gz",
-            "sha256": "1e544ef9c354e56bbfe280fee72e79e4a8bd6c746fe51a779e0afebb4465917d",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-glimmer-vidya-v0.1.3.tar.gz",
+            "sha256": "5ea0f7d2c3d3ff56daa3983c7222bd724a6dd4d6977c6b3bb2311d7d708ea9fe",
             "strip_prefix": "glimmer-vidya",
             "type": "tar.gz"
         },
         "macos-aarch64": {
-            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-glimmer-vidya-v0.1.2.tar.gz",
-            "sha256": "1e544ef9c354e56bbfe280fee72e79e4a8bd6c746fe51a779e0afebb4465917d",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-glimmer-vidya-v0.1.3.tar.gz",
+            "sha256": "5ea0f7d2c3d3ff56daa3983c7222bd724a6dd4d6977c6b3bb2311d7d708ea9fe",
             "strip_prefix": "glimmer-vidya",
             "type": "tar.gz"
         },
         "macos-x86_64": {
-            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-glimmer-vidya-v0.1.2.tar.gz",
-            "sha256": "1e544ef9c354e56bbfe280fee72e79e4a8bd6c746fe51a779e0afebb4465917d",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-glimmer-vidya-v0.1.3.tar.gz",
+            "sha256": "5ea0f7d2c3d3ff56daa3983c7222bd724a6dd4d6977c6b3bb2311d7d708ea9fe",
             "strip_prefix": "glimmer-vidya",
             "type": "tar.gz"
         }

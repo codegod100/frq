@@ -1,9 +1,9 @@
 # The APK, as derivations rather than as a buck2 graph.
 #
 # android/BUCK builds the same five things, and does it better for a person at
-# a terminal: it is incremental, and it lets a sibling jolt-native checkout win
-# over the pinned release so that editing the Rust rebuilds the APK. Nothing
-# here replaces that. What this adds is the other build — from nothing, on a
+# a terminal: it is incremental, and it fetches jolt-native's release by digest
+# rather than rebuilding the world. Nothing here replaces that. What this adds
+# is the other build — from nothing, on a
 # machine with no Android SDK, no NDK, no hand-built Chez cross target and no
 # ~/.cache at all:
 #

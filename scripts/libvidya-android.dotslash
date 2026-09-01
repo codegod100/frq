@@ -6,9 +6,10 @@
 // same object `just ffi-android` produces there, pinned so that building the
 // APK needs neither that checkout nor an NDK.
 //
-// A sibling jolt-native checkout still wins over this: see the `buck` recipe
-// in the justfile. Anyone working on both repos at once builds what they are
-// editing; everyone else gets these bytes.
+// This is the only answer, and deliberately: a checkout used to win over it,
+// which meant the APK on a phone depended on which directories happened to sit
+// beside this one. To build against a jolt-native you are editing, cut a
+// release of it and point these manifests at it — `just bump <tag>`.
 {
   "name": "libvidya-android",
   "platforms": {

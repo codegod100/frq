@@ -3,12 +3,10 @@
 exec "$(dirname "$0")/bb" "$0" "$@"
 )
 
-;; The app. The native libraries are wherever jolt-native is — a sibling
-;; checkout, or the clone `just lib` leaves under .jolt-native.
-(require '[babashka.classpath :as cp])
-(cp/add-classpath (str (babashka.fs/parent *file*)))
-(require '[frq.paths :as paths]
-         '[babashka.fs :as fs]
+;; The app, with the native libraries `just lib` linked into build/lib on the
+;; loader path. Those are jolt-native's release, fetched by digest; nothing
+;; here looks for a checkout of it.
+(require '[babashka.fs :as fs]
          '[babashka.process :as p])
 
 (def root (str (fs/canonicalize (fs/path (fs/parent *file*) ".."))))
@@ -17,5 +15,5 @@ exec "$(dirname "$0")/bb" "$0" "$@"
  (:exit @(apply p/process
                 {:inherit true
                  :extra-env {"LD_LIBRARY_PATH"
-                             (str (fs/path (paths/jolt-native root) "target" "release"))}}
+                             (str (fs/path root "build" "lib"))}}
                 "jolt" "-M:frq" *command-line-args*)))
