@@ -165,10 +165,17 @@
 
             # jolt.deps shells out to git and unzip, and jolt.mvn-http dlopens
             # OpenSSL through the JOLT_OPENSSL_LIBDIR seam.
+            #
+            # TZDIR so a zone *name* resolves wherever this runs: frq.clock
+            # hands one to tzset, and glibc then looks for the tzfile under
+            # /usr/share/zoneinfo unless told otherwise — which a NixOS host
+            # does not have. The store's own tzdata is there on both kinds of
+            # machine. --set-default, so a TZDIR the user set still wins.
             postFixup = ''
               wrapProgram "$out/bin/jolt" \
                 --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.git pkgs.unzip ]}" \
                 --set-default JOLT_OPENSSL_LIBDIR "${pkgs.lib.makeLibraryPath [ pkgs.openssl ]}" \
+                --set-default TZDIR "${pkgs.tzdata}/share/zoneinfo" \
                 --set-default SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
             '';
           };

@@ -12,12 +12,25 @@
 (def ^:private zone
   ;; TZ if it is set, otherwise whatever /etc/localtime points at, otherwise
   ;; UTC — which is wrong by hours but never wrong by a day's worth of parsing.
+  ;;
+  ;; /etc/localtime is not always a symlink. In a container it is often the
+  ;; bytes themselves — distrobox's Arch has it as an overlay-mounted regular
+  ;; file — and then `readlink -f` answers with the path it was given and there
+  ;; is no zone name to read out of it at all. That fell through to UTC, so a
+  ;; channel read seven hours ahead of the clock on the same screen.
+  ;;
+  ;; The colon form is what libc has for exactly this: `TZ=:/etc/localtime`
+  ;; names the tzfile by path rather than by zone, and tzset reads it with the
+  ;; transitions intact — the offset it gives is DST-correct per instant, not a
+  ;; fixed one. Nothing downstream cares that this is a path: the zone is only
+  ;; ever handed back to tz-offset-seconds, never shown.
   (delay
     (or (let [tz (host/getenv "TZ")] (when (seq tz) tz))
         (try
           (second (re-find #"/zoneinfo/(.+)$"
                            (str/trim (str (host/sh-out "readlink -f /etc/localtime")))))
           (catch Exception _ nil))
+        (when (host/file-exists? "/etc/localtime") ":/etc/localtime")
         "UTC")))
 
 (defn now-ms [] (quot (host/wall-nanos) 1000000))
