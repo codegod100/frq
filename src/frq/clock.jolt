@@ -31,6 +31,15 @@
                            (str/trim (str (host/sh-out "readlink -f /etc/localtime")))))
           (catch Exception _ nil))
         (when (host/file-exists? "/etc/localtime") ":/etc/localtime")
+        ;; Android has neither: no TZ in the environment and no /etc/localtime
+        ;; to point at or read, so both branches above come up empty and the
+        ;; APK read every channel in UTC. The zone is a system property there,
+        ;; and bionic resolves the name against its own tzdata just as glibc
+        ;; resolves it against /usr/share/zoneinfo — so the name is all we need.
+        (try
+          (let [tz (str/trim (str (host/sh-out "getprop persist.sys.timezone")))]
+            (when (seq tz) tz))
+          (catch Exception _ nil))
         "UTC")))
 
 (defn now-ms [] (quot (host/wall-nanos) 1000000))
