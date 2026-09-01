@@ -1,6 +1,6 @@
 # The APK, as derivations rather than as a buck2 graph.
 #
-# android/BUCK builds the same five things, and does it better for a person at
+# android/BUCK builds the same things, and does it better for a person at
 # a terminal: it is incremental, and it lets a sibling jolt-native checkout win
 # over the pinned release so that editing the Rust rebuilds the APK. Nothing
 # here replaces that. What this adds is the other build — from nothing, on a
@@ -45,30 +45,43 @@ let
   ndkBin = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/bin";
   cc = "${ndkBin}/aarch64-linux-android${apiLevel}-clang";
 
-  # The two halves that come out of jolt-native's releases, by the digests
-  # scripts/*.dotslash pins. Same bytes buck fetches; DotSlash's `digest` is
-  # over the archive, which is what fetchurl hashes too.
-  libvidya = pkgs.fetchurl {
-    url = "https://gitlab.com/-/project/85910092/uploads/a7264f20582e6d42d45b17fe626ba471/jolt-native-android-arm64-v0.1.1.tar.gz";
-    sha256 = "bb85c57ea263b9bfe113927c6f6b0c8c6414b97056bcb0281b8444187616a233";
+  # What comes out of jolt-native's releases, by the digests scripts/*.dotslash
+  # pin. Same bytes buck fetches; DotSlash's `digest` is over the archive,
+  # which is what fetchurl hashes too.
+  #
+  # One archive, two libraries: libvidya (the retained-tree UI) and libjoltmoq
+  # (the AV media plane). They are built together and only make sense together
+  # — libjoltapp links both — so there is one pin for the pair rather than two
+  # that could drift apart.
+  nativeRelease = pkgs.fetchurl {
+    url = "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-android-arm64-v0.1.3.tar.gz";
+    sha256 = "4519745bae6db9a791a71b38a26478879e246166802b0a48dbf7d45e4d45a108";
   };
 
   glue = pkgs.fetchurl {
-    url = "https://gitlab.com/-/project/85910092/uploads/16b1a3ea32dac6737fc21aec701d7b0c/jolt-native-android-glue-v0.1.1.tar.gz";
-    sha256 = "7f4c179d72a3660ce8e80c3cf52a788ea33d7ef97d6f624310e61e7f4f98851b";
+    url = "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-android-glue-v0.1.3.tar.gz";
+    sha256 = "83313eda124f2a0cfff6827cf4473600c1f71db2f208d654b97068a85af38da5";
   };
 
-  # Unpacked once, so the three consumers below name files rather than repeat
-  # the tar.
-  vidyaLib = pkgs.runCommand "libvidya-android" { } ''
+  # Unpacked once, so the consumers below name files rather than repeat the tar.
+  nativeLibs = pkgs.runCommand "jolt-native-android" { } ''
     mkdir -p "$out"
-    tar -xzf ${libvidya} -C "$out"
+    tar -xzf ${nativeRelease} -C "$out"
   '';
 
   glueSrc = pkgs.runCommand "jolt-android-glue" { } ''
     mkdir -p "$out"
     tar -xzf ${glue} -C "$out" --strip-components=1
   '';
+
+  # The C++ runtime, out of the same NDK the glue is compiled with.
+  #
+  # openh264 is C++, and its build script asks to be linked against
+  # `libc++_shared.so` by name — so libjoltmoq carries that as a DT_NEEDED. An
+  # app's linker namespace will not hand out the platform's own copy (there is
+  # no stable one to hand out), so the APK carries it, exactly as it carries
+  # OpenSSL below and for the same reason.
+  libcxx = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so";
 
   # --- Chez's arm64 cross target ------------------------------------------
   # The one piece with no nixpkgs equivalent: `pkgs.chez` builds a Scheme for
@@ -232,7 +245,8 @@ let
   # crash on the phone.
   libjoltapp = pkgs.runCommand "libjoltapp.so" { } ''
     mkdir -p lib
-    cp ${vidyaLib}/libvidya.so lib/libvidya.so
+    cp ${nativeLibs}/libvidya.so lib/libvidya.so
+    cp ${nativeLibs}/libjoltmoq.so lib/libjoltmoq.so
 
     ${cc} -shared -fPIC -O2 -o "$out" \
       ${glueSrc}/android/jolt_main.c \
@@ -242,7 +256,7 @@ let
       -Llib \
       ${chezAndroid}/tarm64le/boot/tarm64le/libkernel.a \
       ${chezAndroid}/lz4/lib/liblz4.a \
-      -lvidya -landroid -llog -lz -ldl -lm -Wl,--no-undefined
+      -lvidya -ljoltmoq -landroid -llog -lz -ldl -lm -Wl,--no-undefined
   '';
 
   # --- the Java half --------------------------------------------------------
@@ -311,7 +325,9 @@ let
       nativeBuildInputs = [ pkgs.zip ];
     } ''
     mkdir -p stage/lib/${abi}
-    cp ${vidyaLib}/libvidya.so stage/lib/${abi}/libvidya.so
+    cp ${nativeLibs}/libvidya.so stage/lib/${abi}/libvidya.so
+    cp ${nativeLibs}/libjoltmoq.so stage/lib/${abi}/libjoltmoq.so
+    cp ${libcxx} stage/lib/${abi}/libc++_shared.so
     cp ${libjoltapp} stage/lib/${abi}/libjoltapp.so
     cp ${opensslAndroid.out}/lib/libssl.so stage/lib/${abi}/libssl.so
     cp ${opensslAndroid.out}/lib/libcrypto.so stage/lib/${abi}/libcrypto.so
@@ -324,7 +340,8 @@ let
       --version-code 1 --version-name ${version}
 
     ( cd stage && \
-      zip -q -0 "$out" lib/${abi}/libvidya.so lib/${abi}/libjoltapp.so \
+      zip -q -0 "$out" lib/${abi}/libvidya.so lib/${abi}/libjoltmoq.so \
+                       lib/${abi}/libc++_shared.so lib/${abi}/libjoltapp.so \
                        lib/${abi}/libssl.so lib/${abi}/libcrypto.so && \
       zip -q "$out" classes.dex )
   '';

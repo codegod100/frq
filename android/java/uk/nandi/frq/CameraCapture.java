@@ -63,6 +63,15 @@ public final class CameraCapture {
     private static long frameCount;
     /** Host activity — used to read live display rotation while capturing. */
     private static volatile Activity hostActivity;
+
+    /**
+     * Whether the dialog has been raised in this process. Once, because the
+     * ask after a refusal is one the system does not show at all — it answers
+     * denied straight away, which here would be an invisible loop between the
+     * check below and the retry it schedules. After a refusal the grant comes
+     * from Settings, and the next start finds it.
+     */
+    private static volatile boolean permissionAsked;
     private static int sensorOrientationDeg = 90;
     private static boolean frontFacing = true;
 
@@ -184,6 +193,29 @@ public final class CameraCapture {
             stopLocked();
             if (activity.checkSelfPermission(android.Manifest.permission.CAMERA)
                     != PackageManager.PERMISSION_GRANTED) {
+                // Ask, once, and come back here when the reader has answered.
+                // The retry re-checks rather than trusting the dialog, so a
+                // refusal lands on this same branch a second time — by then
+                // permissionAsked is set and it reports denied instead of
+                // asking again.
+                if (activity instanceof FrqActivity && !permissionAsked) {
+                    permissionAsked = true;
+                    final Activity host = activity;
+                    final String requested = cameraId;
+                    ((FrqActivity) activity)
+                            .ensurePermissions(
+                                    new String[] {
+                                        android.Manifest.permission.CAMERA,
+                                        android.Manifest.permission.RECORD_AUDIO,
+                                    },
+                                    new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            startOnThread(host, requested);
+                                        }
+                                    });
+                    return;
+                }
                 Log.e(TAG, "CAMERA permission not granted");
                 onCameraState(false, "permission denied");
                 return;
