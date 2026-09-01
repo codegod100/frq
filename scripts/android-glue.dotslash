@@ -1,6 +1,6 @@
 #!/usr/bin/env dotslash
 
-// The NativeActivity glue and the ABI's headers, from jolt-native's v0.1.0
+// The NativeActivity glue and the ABI's headers, from jolt-native's v0.1.2
 // release.
 //
 // jolt_main.c is what libvidya's android_main dlopens: it boots Chez over the
@@ -15,50 +15,50 @@
   "name": "android-glue",
   "platforms": {
     "linux-x86_64": {
-      "size": 6796,
+      "size": 6812,
       "hash": "sha256",
-      "digest": "7f4c179d72a3660ce8e80c3cf52a788ea33d7ef97d6f624310e61e7f4f98851b",
+      "digest": "4b46a31d119ad2a5c4c9125f3e146dc67d49b571afc60298d8755cd38f06de62",
       "format": "tar.gz",
       "path": "jolt-native-android-glue/android/jolt_main.c",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/16b1a3ea32dac6737fc21aec701d7b0c/jolt-native-android-glue-v0.1.1.tar.gz"
+          "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-glue-v0.1.2.tar.gz"
         }
       ]
     },
     "linux-aarch64": {
-      "size": 6796,
+      "size": 6812,
       "hash": "sha256",
-      "digest": "7f4c179d72a3660ce8e80c3cf52a788ea33d7ef97d6f624310e61e7f4f98851b",
+      "digest": "4b46a31d119ad2a5c4c9125f3e146dc67d49b571afc60298d8755cd38f06de62",
       "format": "tar.gz",
       "path": "jolt-native-android-glue/android/jolt_main.c",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/16b1a3ea32dac6737fc21aec701d7b0c/jolt-native-android-glue-v0.1.1.tar.gz"
+          "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-glue-v0.1.2.tar.gz"
         }
       ]
     },
     "macos-x86_64": {
-      "size": 6796,
+      "size": 6812,
       "hash": "sha256",
-      "digest": "7f4c179d72a3660ce8e80c3cf52a788ea33d7ef97d6f624310e61e7f4f98851b",
+      "digest": "4b46a31d119ad2a5c4c9125f3e146dc67d49b571afc60298d8755cd38f06de62",
       "format": "tar.gz",
       "path": "jolt-native-android-glue/android/jolt_main.c",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/16b1a3ea32dac6737fc21aec701d7b0c/jolt-native-android-glue-v0.1.1.tar.gz"
+          "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-glue-v0.1.2.tar.gz"
         }
       ]
     },
     "macos-aarch64": {
-      "size": 6796,
+      "size": 6812,
       "hash": "sha256",
-      "digest": "7f4c179d72a3660ce8e80c3cf52a788ea33d7ef97d6f624310e61e7f4f98851b",
+      "digest": "4b46a31d119ad2a5c4c9125f3e146dc67d49b571afc60298d8755cd38f06de62",
       "format": "tar.gz",
       "path": "jolt-native-android-glue/android/jolt_main.c",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/16b1a3ea32dac6737fc21aec701d7b0c/jolt-native-android-glue-v0.1.1.tar.gz"
+          "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-glue-v0.1.2.tar.gz"
         }
       ]
     }
