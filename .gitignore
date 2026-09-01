@@ -13,6 +13,7 @@
 /.jolt-native/
 
 # Tool caches.
+/.cpcache/
 /.jolt/
 /.lsp/
 /.clj-kondo/
