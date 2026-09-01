@@ -13,7 +13,7 @@ checkout := parent_directory(`git rev-parse --path-format=absolute --git-common-
 # gets a clone of the gitlab repo under .jolt-native, pinned to the same commit
 # deps.edn takes glimmer-vidya from.
 jolt_native_url := "https://gitlab.com/nandithebull/jolt-native.git"
-jolt_native_sha := "70072e8e48ad396caeab6f6bd18b999cf449ec8f"
+jolt_native_sha := "c71fc595f031aaa5cb461735af1865146f7b42ec"
 jolt_native := `
     checkout="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
     if [ -d "$checkout/../jolt-native" ]; then

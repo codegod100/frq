@@ -329,6 +329,24 @@
                :size pill-size
                :on-click #(s/reply-to! m)}]])
 
+(defn- reactor-card
+  "Who is on a reaction, beside the pointer resting on it.
+
+  The pill carries a number, and a number is the one thing about a reaction
+  nobody wants: who it was is what a room is read for. Names, one to a line,
+  with your own said as \"you\" — you are the one name in the list you cannot
+  learn anything from."
+  [emoji nicks]
+  [:vbox {:spacing 4}
+   [:hbox {:spacing 6}
+    [:reaction {:key :glyph :emoji emoji :size pill-size}]
+    [:dim-label {:label (str (count nicks)
+                             (if (= 1 (count nicks)) " reaction" " reactions"))}]]
+   [:vbox {:key :who :spacing 2}
+    (for [nick (sort nicks)]
+      [:label {:key nick
+               :label (if (= nick @s/form-nick) "you" nick)}])]])
+
 (defn- reaction-row
   "What people have put on a message, under it.
 
@@ -340,12 +358,23 @@
   (let [reactions (:reactions m)]
     [:hbox {:key :pills :spacing 4}
      (for [emoji (sort (keys reactions))]
-       [:reaction {:key emoji
-                   :emoji emoji
-                   :size pill-size
-                   :count (count (get reactions emoji))
-                   :mine (s/my-reaction? m emoji)
-                   :on-click #(s/toggle-reaction! channel m emoji)}])]))
+       [:reaction (cond-> {:key emoji
+                           :emoji emoji
+                           :size pill-size
+                           :count (count (get reactions emoji))
+                           :mine (s/my-reaction? m emoji)
+                           :on-click #(s/toggle-reaction! channel m emoji)}
+                    ;; Where there is a pointer to ask with, resting on a pill
+                    ;; says who put it there. On a phone the pill is a button
+                    ;; and nothing more: there is no hover to answer.
+                    (platform/desktop?)
+                    (assoc :on-hover #(s/hover-reaction! (:id m) emoji)
+                           :on-unhover #(s/unhover-reaction! (:id m) emoji)))
+        ;; Only the hovered pill carries a card: the panel is painted from
+        ;; whatever children the node has, and a channel's worth of unseen
+        ;; lists is a tree nobody looks at.
+        (when (and (platform/desktop?) (s/hovering-reaction? (:id m) emoji))
+          [reactor-card emoji (get reactions emoji)])])]))
 
 (def ^:private picker-columns
   "Emoji to a row, at the picker's own size. Narrow enough that the grid fits a
