@@ -6,26 +6,26 @@
 DIST = {
     "android-glue": {
         "linux-aarch64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/16d2fe6e8df490940ca0a2a18ba4c092/jolt-native-android-glue-v0.1.0.tar.gz",
-            "sha256": "8e9c5bae9c9919354430c9d3e888e6c3430d26520f9f429a7d2de2b850481133",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-glue-v0.1.2.tar.gz",
+            "sha256": "4b46a31d119ad2a5c4c9125f3e146dc67d49b571afc60298d8755cd38f06de62",
             "strip_prefix": "jolt-native-android-glue",
             "type": "tar.gz"
         },
         "linux-x86_64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/16d2fe6e8df490940ca0a2a18ba4c092/jolt-native-android-glue-v0.1.0.tar.gz",
-            "sha256": "8e9c5bae9c9919354430c9d3e888e6c3430d26520f9f429a7d2de2b850481133",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-glue-v0.1.2.tar.gz",
+            "sha256": "4b46a31d119ad2a5c4c9125f3e146dc67d49b571afc60298d8755cd38f06de62",
             "strip_prefix": "jolt-native-android-glue",
             "type": "tar.gz"
         },
         "macos-aarch64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/16d2fe6e8df490940ca0a2a18ba4c092/jolt-native-android-glue-v0.1.0.tar.gz",
-            "sha256": "8e9c5bae9c9919354430c9d3e888e6c3430d26520f9f429a7d2de2b850481133",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-glue-v0.1.2.tar.gz",
+            "sha256": "4b46a31d119ad2a5c4c9125f3e146dc67d49b571afc60298d8755cd38f06de62",
             "strip_prefix": "jolt-native-android-glue",
             "type": "tar.gz"
         },
         "macos-x86_64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/16d2fe6e8df490940ca0a2a18ba4c092/jolt-native-android-glue-v0.1.0.tar.gz",
-            "sha256": "8e9c5bae9c9919354430c9d3e888e6c3430d26520f9f429a7d2de2b850481133",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-glue-v0.1.2.tar.gz",
+            "sha256": "4b46a31d119ad2a5c4c9125f3e146dc67d49b571afc60298d8755cd38f06de62",
             "strip_prefix": "jolt-native-android-glue",
             "type": "tar.gz"
         }
@@ -58,52 +58,52 @@ DIST = {
     },
     "glimmer-vidya": {
         "linux-aarch64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz",
-            "sha256": "3842a5981c0656eb14915aead80814286040c24e83732d5e69d4f4470308fbf5",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-glimmer-vidya-v0.1.2.tar.gz",
+            "sha256": "1e544ef9c354e56bbfe280fee72e79e4a8bd6c746fe51a779e0afebb4465917d",
             "strip_prefix": "glimmer-vidya",
             "type": "tar.gz"
         },
         "linux-x86_64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz",
-            "sha256": "3842a5981c0656eb14915aead80814286040c24e83732d5e69d4f4470308fbf5",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-glimmer-vidya-v0.1.2.tar.gz",
+            "sha256": "1e544ef9c354e56bbfe280fee72e79e4a8bd6c746fe51a779e0afebb4465917d",
             "strip_prefix": "glimmer-vidya",
             "type": "tar.gz"
         },
         "macos-aarch64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz",
-            "sha256": "3842a5981c0656eb14915aead80814286040c24e83732d5e69d4f4470308fbf5",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-glimmer-vidya-v0.1.2.tar.gz",
+            "sha256": "1e544ef9c354e56bbfe280fee72e79e4a8bd6c746fe51a779e0afebb4465917d",
             "strip_prefix": "glimmer-vidya",
             "type": "tar.gz"
         },
         "macos-x86_64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz",
-            "sha256": "3842a5981c0656eb14915aead80814286040c24e83732d5e69d4f4470308fbf5",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-glimmer-vidya-v0.1.2.tar.gz",
+            "sha256": "1e544ef9c354e56bbfe280fee72e79e4a8bd6c746fe51a779e0afebb4465917d",
             "strip_prefix": "glimmer-vidya",
             "type": "tar.gz"
         }
     },
     "libvidya-android": {
         "linux-aarch64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/29c7b1aacb97cd0e1aea7f430a6fa225/jolt-native-android-arm64-v0.1.0.tar.gz",
-            "sha256": "bb85c57ea263b9bfe113927c6f6b0c8c6414b97056bcb0281b8444187616a233",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-arm64-v0.1.2.tar.gz",
+            "sha256": "fd57b1681b4e720f578faeacd1b2abd862ba3fe8929b8fb8f3110d74b6b6eb9d",
             "strip_prefix": "",
             "type": "tar.gz"
         },
         "linux-x86_64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/29c7b1aacb97cd0e1aea7f430a6fa225/jolt-native-android-arm64-v0.1.0.tar.gz",
-            "sha256": "bb85c57ea263b9bfe113927c6f6b0c8c6414b97056bcb0281b8444187616a233",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-arm64-v0.1.2.tar.gz",
+            "sha256": "fd57b1681b4e720f578faeacd1b2abd862ba3fe8929b8fb8f3110d74b6b6eb9d",
             "strip_prefix": "",
             "type": "tar.gz"
         },
         "macos-aarch64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/29c7b1aacb97cd0e1aea7f430a6fa225/jolt-native-android-arm64-v0.1.0.tar.gz",
-            "sha256": "bb85c57ea263b9bfe113927c6f6b0c8c6414b97056bcb0281b8444187616a233",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-arm64-v0.1.2.tar.gz",
+            "sha256": "fd57b1681b4e720f578faeacd1b2abd862ba3fe8929b8fb8f3110d74b6b6eb9d",
             "strip_prefix": "",
             "type": "tar.gz"
         },
         "macos-x86_64": {
-            "url": "https://gitlab.com/-/project/85910092/uploads/29c7b1aacb97cd0e1aea7f430a6fa225/jolt-native-android-arm64-v0.1.0.tar.gz",
-            "sha256": "bb85c57ea263b9bfe113927c6f6b0c8c6414b97056bcb0281b8444187616a233",
+            "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.2/downloads/jolt-native-android-arm64-v0.1.2.tar.gz",
+            "sha256": "fd57b1681b4e720f578faeacd1b2abd862ba3fe8929b8fb8f3110d74b6b6eb9d",
             "strip_prefix": "",
             "type": "tar.gz"
         }
