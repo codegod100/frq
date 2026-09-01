@@ -198,8 +198,34 @@
      (swap! channels
             (fn [m]
               (let [m (ensure-channel m channel)
-                    viewing? (and (chat-visible?) (= channel @current))]
-                (-> m
+                    viewing? (and (chat-visible?) (= channel @current))
+                    ;; The server hands the same message over more than once: a
+                    ;; JOIN replays the backlog, the CHATHISTORY we ask for
+                    ;; replays it again, and a line can have arrived live before
+                    ;; either. The msgid is the message's identity and it
+                    ;; survives every revision, so holding the copy we have is
+                    ;; what keeps a rejoin from doubling the buffer — and what
+                    ;; keeps a replayed *pre-edit* row from landing under a line
+                    ;; already showing the current text.
+                    seen? (and id (some #(= id (:id %))
+                                        (get-in m [channel :messages])))]
+                (cond
+                  ;; The copy we already hold is the pre-edit one, and this is
+                  ;; the server's collapsed row saying so. Same message, later
+                  ;; word: take the text rather than the arrival order.
+                  (and seen? edited?)
+                  (assoc-in m [channel :messages]
+                            (mapv (fn [msg]
+                                    (if (= id (:id msg))
+                                      (assoc msg :text text :edited? true
+                                             :images (media/image-urls text))
+                                      msg))
+                                  (get-in m [channel :messages])))
+
+                  seen? m
+
+                  :else
+                  (-> m
                     (update-in [channel :messages] conj
                                {:from from :text text :system? (= "*" from)
                                 :actor who
@@ -215,7 +241,8 @@
                                 :edited? (boolean edited?)
                                 ;; emoji -> the nicks who put it there
                                 :reactions (or reactions {})})
-                    (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))))
+                      (update-in [channel :unread]
+                                 (if viewing? (constantly 0) inc))))))))))
 
 (defn open-channel!
   "Show a buffer. A channel we are not in is joined on the way — a row can
