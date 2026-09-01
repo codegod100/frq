@@ -2,16 +2,13 @@
 #
 # Every step the old build-apk script ran in sequence is a target here, so a change
 # to one screen rebuilds the boot image and repackages, and touches neither the
-# Rust nor the Java. The two native halves come from jolt-native — libvidya out
-# of its buck2 graph, the glue compiled by the NDK its scripts/ pin — and the
-# rest is this repo's.
+# Rust nor the Java. The two native halves and the glue come out of jolt-native's
+# release, fetched by digest through scripts/*.dotslash; the rest is this repo's.
+# Nothing here is built out of a jolt-native checkout, and none is needed.
 #
 # The machine-specific paths are read from .buckconfig.local, which the `buck`
 # recipe in the justfile writes. Nothing here is found by looking around the
 # machine; if a path is missing the recipe says which.
-load(":defs.bzl", "glue", "libjoltmoq", "libvidya")
-
-_JOLT_NATIVE = read_root_config("frq", "jolt_native", "")
 _ANDROID_HOME = read_root_config("frq", "android_home", "")
 _CHEZ = read_root_config("frq", "chez_android", "")
 _OPENSSL = read_root_config("frq", "openssl_android", "")
@@ -21,24 +18,22 @@ _TOOLS = _ANDROID_HOME + "/build-tools/36.0.0"
 _ANDROID_JAR = _ANDROID_HOME + "/platforms/android-36/android.jar"
 # `$(...)` in a genrule cmd is a buck macro, not the shell's substitution, so
 # everything this file runs at command time uses backticks.
-# This repo's own, not the other checkout's: an APK build needs a clang and an
-# llvm-objcopy whether or not jolt-native is on the machine. Both resolve the
-# NDK through scripts/android-ndk.dotslash, downloading it once.
+# This repo's own: an APK build needs a clang and an llvm-objcopy, and neither
+# is jolt-native's to supply. Both resolve the NDK through
+# scripts/android-ndk.dotslash, downloading it once.
 _NDK_BIN = "ndk=`$(location //scripts:android-ndk-bin)`"
 _CC = "$(location //scripts:android-cc)"
 
 # An absolute path for $OUT, so a command may cd without losing it. buck has
 # already made the parent directory. Spelled out step by step because backticks
 # do not nest.
-# Empty when a checkout answers for it, so the script's own lookup wins.
 # The archive's top directory is what strip_prefix took off, so `src` is
 # directly inside it. Absolute, because the script is handed this and does its
 # own directory changing.
-_GLIMMER_VIDYA = "" if read_root_config("frq", "libvidya", "pinned") == "checkout" else \
-                 "GLIMMER_VIDYA=`realpath $(location toolchains//dist:glimmer-vidya)/src` "
+_GLIMMER_VIDYA = "GLIMMER_VIDYA=`realpath $(location toolchains//dist:glimmer-vidya)/src` "
 
-# jolt_main.c and the ABI's headers, as targets — see defs.bzl for which of
-# the two sources answers, and why neither may be a bare path.
+# jolt_main.c and the ABI's headers, as targets rather than bare paths — see
+# the rules below.
 _GLUE_C = "`realpath $(location :glue-c)`"
 _GLUE_INCLUDE = "`realpath $(location :glue-include)`"
 
@@ -57,23 +52,43 @@ export_file(
 )
 
 # --- the UI half ------------------------------------------------------------
-# Two ways in, and both make the library's bytes an input rather than a
-# command buck would cache forever:
-#
-#   pinned    the .so out of jolt-native's release, fetched by digest. What a
-#             build gets by default, and what makes an APK buildable with no
-#             jolt-native checkout and no NDK anywhere on the machine.
-#   checkout  the .so a sibling jolt-native just built, staged into this cell
-#             by the `buck` recipe. Anyone working on both repos at once
-#             builds what they are editing.
-#
-# The recipe decides which, by whether that checkout exists, and says so here.
-libvidya(name = "libvidya")
+# The .so out of jolt-native's release, fetched by digest — which is what makes
+# an APK buildable with no jolt-native checkout and no NDK anywhere on the
+# machine. A genrule rather than a path, so the library's bytes are an input to
+# what reads them: an action that shelled out to build it would have nothing to
+# invalidate on and would serve the same stale object forever.
+genrule(
+    name = "libvidya",
+    out = "libvidya.so",
+    cmd = "cp $(location toolchains//dist:libvidya-android)/libvidya.so \"$OUT\"",
+)
 
-# The media plane, on the same terms and from the same release.
-libjoltmoq(name = "libjoltmoq")
+# The media plane, out of the same archive. Necessarily the same release:
+# libjoltapp links both, and pairing one release's media plane with another's
+# UI is a combination nothing has tested.
+genrule(
+    name = "libjoltmoq",
+    out = "libjoltmoq.so",
+    cmd = "cp $(location toolchains//dist:libjoltmoq-android)/libjoltmoq.so \"$OUT\"",
+)
 
-glue(c_name = "glue-c", include_name = "glue-include")
+# jolt_main.c and the ABI's headers, from the glue archive of the same release.
+# Targets rather than paths for the reason above — an input is the only thing
+# buck can notice a change in.
+genrule(
+    name = "glue-c",
+    out = "jolt_main.c",
+    cmd = "cp $(location toolchains//dist:android-glue)/android/jolt_main.c \"$OUT\"",
+)
+
+# A directory of headers rather than a filegroup: a filegroup keeps each file
+# at its own path inside the output, so `-I` would have to name the staging
+# directory again.
+genrule(
+    name = "glue-include",
+    out = "include",
+    cmd = "cp -r $(location toolchains//dist:android-glue)/include \"$OUT\"",
+)
 
 # The C++ runtime, out of the same NDK the glue is compiled with.
 #
@@ -96,8 +111,8 @@ genrule(
 # are an input so that editing one rebuilds this; the compile itself reads them
 # through the deps.edn the script writes.
 # The sources here are frq's own. The other two roots the image is compiled
-# from — glimmer, out of the jolt cache, and glimmer-vidya, out of jolt-native
-# — are outside this cell, and so are Chez's cross boot files and the pinned
+# from — glimmer and glimmer-vidya, both out of the jolt cache — are outside
+# this cell, and so are Chez's cross boot files and the pinned
 # jolt itself. None of them can be an input, so the `buck` recipe hashes them
 # and writes the digest below; naming it in the command is what puts them in
 # this action's identity.
@@ -112,9 +127,9 @@ genrule(
     cmd = "# sources outside this cell: " + read_root_config("frq", "boot_stamp", "unknown") + "\n" +
           "DOTSLASH=$(location toolchains//dist:dotslash)/dotslash " +
           "JOLT_MANIFEST=$(location //scripts:jolt) " +
-          # The one source root the script cannot find for itself when there
-          # is no jolt-native checkout. An input, so a new release recompiles
-          # the image.
+          # The one source root the script cannot find for itself: the jolt
+          # cache is not an action input, and this is. A new release recompiles
+          # the image because of it.
           _GLIMMER_VIDYA +
           "$(location :build-jolt-boot.bb) \"$OUT\" >&2",
 )

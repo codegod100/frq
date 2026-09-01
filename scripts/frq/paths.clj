@@ -21,24 +21,18 @@
 
 (defn env [k default] (or (not-empty (System/getenv k)) default))
 
-;; The checkout this tree belongs to, which in a git worktree is not this tree:
-;; the scripts sit under .claude/worktrees/<name>, so "../jolt-native" from
-;; here is nothing at all. --git-common-dir is the one thing that answers the
-;; same in a worktree as in the checkout it came from.
-(defn checkout [root]
-  (str (fs/parent (out "git" "-C" (str root)
-                       "rev-parse" "--path-format=absolute" "--git-common-dir"))))
-
-;; jolt-native holds both native halves. A sibling checkout wins, so anyone
-;; working on the two repos together builds what they are editing; everyone
-;; else gets the clone `just lib` leaves under .jolt-native.
-(defn jolt-native [root]
-  (or (env "JOLT_NATIVE" nil)
-      (let [c (checkout root)
-            sibling (fs/path (fs/parent c) "jolt-native")]
-        (if (fs/directory? sibling)
-          (str (fs/canonicalize sibling))
-          (str (fs/path c ".jolt-native"))))))
+;; An archive pinned in scripts/*.dotslash, resolved to the file its manifest
+;; names. DotSlash downloads it once, verifies the digest and caches it, so
+;; every script here asks the same question of the same pin and a second
+;; jolt-native checkout is never part of the answer.
+;;
+;; DOTSLASH names the fetcher for a caller that has one but has not got it on
+;; PATH — buck sets it, because the fetcher is an input to those actions.
+(defn dist [root name]
+  (let [manifest (fs/path root "scripts" (str name ".dotslash"))]
+    (when-not (fs/exists? manifest)
+      (die (str "no DotSlash manifest: " manifest)))
+    (out (env "DOTSLASH" "dotslash") "--" "fetch" manifest)))
 
 ;; The sha deps.edn pins for a git url, so a bump there reaches the boot image.
 ;; Read as data rather than grepped: it is Clojure, and so is this.

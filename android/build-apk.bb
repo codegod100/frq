@@ -5,21 +5,24 @@ exec "$(dirname "$0")/../scripts/bb" "$0" "$@"
 
 ;; Glue the two halves of the frq Android app into an APK.
 ;;
-;;   libvidya.so    the C ABI on Rust/egui, cross-compiled by buck2, and the
+;;   libvidya.so    the C ABI on Rust/egui, out of the pinned release, and the
 ;;                  NativeActivity's own library (it holds android-activity's
 ;;                  glue, so it owns the event loop)
+;;   libjoltmoq.so  the AV media plane — MoQ over QUIC, Opus, H.264, Camera2
 ;;   libjoltapp.so  jolt-native's android/jolt_main.c plus frq's Jolt boot
 ;;                  image, dlopened by the above
-;;   classes.dex    one Java class, and only because a picture chooser answers
-;;                  through onActivityResult and a NativeActivity has nowhere
-;;                  to deliver that
+;;   libc++_shared.so  the NDK's C++ runtime, which libjoltmoq names
+;;   classes.dex    two Java classes: a picture chooser answers through
+;;                  onActivityResult and a NativeActivity has nowhere to
+;;                  deliver that, and Camera2 has no C API worth the name
 ;;   libssl.so      OpenSSL, because the platform's own is not ours to load: an
 ;;   libcrypto.so   app's linker namespace refuses /system/lib64/libssl.so, and
 ;;                  without one there is no TLS at all on the phone
 ;;
-;; Neither half is built here beyond that last link: the UI library comes from
-;; jolt-native's `just ffi-android` and the boot image from build-jolt-boot.bb.
-;; Both native pieces are jolt-native's — only the boot image is frq's.
+;; Neither half is built here beyond that last link: the UI library and the glue
+;; come out of jolt-native's release, fetched by digest through the DotSlash
+;; pins in scripts/, and the boot image from build-jolt-boot.bb. Both native
+;; pieces are jolt-native's — only the boot image is frq's.
 ;;
 ;;   build-apk.bb [build|install|run|log]
 (require '[babashka.classpath :as cp])
@@ -30,13 +33,6 @@ exec "$(dirname "$0")/../scripts/bb" "$0" "$@"
 
 (def root (str (fs/canonicalize (fs/path (fs/parent *file*) ".."))))
 (def action (or (first *command-line-args*) "build"))
-
-;; Where jolt-native is, answered the way the justfile answers it: a sibling
-;; checkout wins, and otherwise it is the clone `just lib` leaves under
-;; .jolt-native.
-(def jolt-native (paths/jolt-native root))
-(when-not (fs/directory? jolt-native)
-  (paths/die (str "no jolt-native at " jolt-native " — run `just lib` to clone it")))
 
 (def android-home (paths/env "ANDROID_HOME" (str (fs/path (fs/home) ".local" "share" "android-sdk"))))
 (def ndk-home (paths/env "ANDROID_NDK_HOME" (str (fs/path (fs/home) ".local" "share" "android-ndk-r29"))))
@@ -62,12 +58,17 @@ exec "$(dirname "$0")/../scripts/bb" "$0" "$@"
                        (fs/path openssl "libssl.so") (fs/path openssl "libcrypto.so")])
 
 ;; --- the UI half -----------------------------------------------------------
-;; buck2 fetches its own NDK for this, from the pin in jolt-native's
-;; scripts/android-ndk.dotslash, so the toolchain above is the only one that
-;; has to be installed by hand.
-(p/shell {:dir jolt-native :out *err*} "just" "ffi-android")
-(def vidya-so (fs/path jolt-native "build" "android" "arm64-v8a" "libvidya.so"))
-(paths/require-paths! "library" [vidya-so])
+;; The release's own object, and the glue beside it, both by digest: this build
+;; compiles no Rust and needs no jolt-native checkout, exactly as the graph in
+;; android/BUCK needs none.
+(def vidya-so (paths/dist root "libvidya-android"))
+;; The media plane, out of the same archive. The glue registers its symbols and
+;; includes its header, so this is not optional beside that jolt_main.c: link
+;; without it and --no-undefined says so.
+(def joltmoq-so (paths/dist root "libjoltmoq-android"))
+(def glue-c (paths/dist root "android-glue"))
+(def glue-include (fs/path (fs/parent (fs/parent glue-c)) "include"))
+(paths/require-paths! "library" [vidya-so joltmoq-so glue-c glue-include])
 
 ;; --- the Jolt half ---------------------------------------------------------
 (p/shell (str (fs/path root "android" "build-jolt-boot.bb")) (str jolt-build))
@@ -81,19 +82,24 @@ exec "$(dirname "$0")/../scripts/bb" "$0" "$@"
          "jolt.boot" "jolt_boot.o")
 
 ;; --- the Java half ---------------------------------------------------------
-;; One class: the photo chooser's result has to land somewhere, and native code
-;; is not somewhere. d8 turns it into the classes.dex the runtime loads.
+;; Two classes: the photo chooser's result has to land somewhere and native
+;; code is not somewhere, and Camera2 has no C API worth the name. d8 turns
+;; them into the classes.dex the runtime loads.
 (def java-build (fs/path build "java"))
 (fs/delete-tree java-build)
 (fs/create-dirs (fs/path java-build "classes"))
 ;; android.jar on the class path is where every android.* type comes from; the
-;; JDK's own java.* is what is left, and this class uses nothing of it that
+;; JDK's own java.* is what is left, and neither class uses anything of it that
 ;; Android does not have. (`-bootclasspath` would be the stricter way to say
 ;; that, and javac refuses it for a release this recent.)
-(p/shell "javac" "--release" "17"
-         "--class-path" (str android-jar)
-         "-d" (str (fs/path java-build "classes"))
-         (str (fs/path root "android" "java" "uk" "nandi" "frq" "FrqActivity.java")))
+;;
+;; Every class under android/java, the way android/BUCK globs them: naming one
+;; here left CameraCapture out of the dex, and libjoltmoq looks that class up
+;; by name over JNI the moment a call starts the camera.
+(apply p/shell "javac" "--release" "17"
+       "--class-path" (str android-jar)
+       "-d" (str (fs/path java-build "classes"))
+       (map str (fs/glob (fs/path root "android" "java") "**.java")))
 (apply p/shell (str (fs/path tools "d8")) "--min-api" api "--output" (str java-build)
        (map str (fs/glob (fs/path java-build "classes") "**.class")))
 
@@ -101,6 +107,13 @@ exec "$(dirname "$0")/../scripts/bb" "$0" "$@"
 (fs/create-dirs arm-lib)
 (fs/copy (fs/path java-build "classes.dex") (fs/path stage "classes.dex"))
 (fs/copy vidya-so (fs/path arm-lib "libvidya.so"))
+(fs/copy joltmoq-so (fs/path arm-lib "libjoltmoq.so"))
+;; openh264 is C++ and asks to be linked against libc++_shared.so by name, so
+;; libjoltmoq carries it as a DT_NEEDED and the APK has to carry the object —
+;; an app's linker namespace will not hand out the platform's own.
+(fs/copy (fs/path ndk-bin ".." "sysroot" "usr" "lib" "aarch64-linux-android"
+                  "libc++_shared.so")
+         (fs/path arm-lib "libc++_shared.so"))
 ;; jolt.mvn-http dlopens these by name at first use; beside the app's own
 ;; libraries is where an app's namespace will answer for that name.
 (doseq [lib ["libssl.so" "libcrypto.so"]]
@@ -108,14 +121,14 @@ exec "$(dirname "$0")/../scripts/bb" "$0" "$@"
 
 (p/shell clang "-shared" "-fPIC" "-O2"
          "-o" (str (fs/path arm-lib "libjoltapp.so"))
-         (str (fs/path jolt-native "android" "jolt_main.c"))
+         (str glue-c)
          (str (fs/path jolt-build "jolt_boot.o"))
          (str "-I" jolt-build)
-         (str "-I" (fs/path jolt-native "crates" "jolt-vidya" "include"))
+         (str "-I" glue-include)
          (str "-L" arm-lib)
          (str (fs/path chez "tarm64le" "boot" "tarm64le" "libkernel.a"))
          (str (fs/path chez "lz4" "lib" "liblz4.a"))
-         "-lvidya" "-landroid" "-llog" "-lz" "-ldl" "-lm"
+         "-lvidya" "-ljoltmoq" "-landroid" "-llog" "-lz" "-ldl" "-lm"
          "-Wl,--no-undefined")
 
 ;; --- the APK ---------------------------------------------------------------
@@ -133,7 +146,8 @@ exec "$(dirname "$0")/../scripts/bb" "$0" "$@"
          "--version-name" "0.1.0")
 ;; Stored, not deflated: the loader maps these straight out of the APK.
 (p/shell {:dir (str stage)} "zip" "-q" "-0" (str unaligned)
-         "lib/arm64-v8a/libvidya.so" "lib/arm64-v8a/libjoltapp.so"
+         "lib/arm64-v8a/libvidya.so" "lib/arm64-v8a/libjoltmoq.so"
+         "lib/arm64-v8a/libc++_shared.so" "lib/arm64-v8a/libjoltapp.so"
          "lib/arm64-v8a/libssl.so" "lib/arm64-v8a/libcrypto.so")
 ;; The dex is read by the runtime rather than mapped, so it may as well deflate.
 (p/shell {:dir (str stage)} "zip" "-q" (str unaligned) "classes.dex")

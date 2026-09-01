@@ -20,6 +20,10 @@ buck *args:
 apk action="build":
     scripts/apk.bb {{action}}
 
+# Every jolt-native pin — manifests, deps.edn, the buck table — at a release.
+bump tag="":
+    scripts/bump-jolt-native.bb {{tag}}
+
 # The archives scripts/*.dotslash pins, as the table buck reads.
 sync-dist:
     scripts/dotslash-to-buck

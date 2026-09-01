@@ -41,16 +41,19 @@ just lib
 just run
 ```
 
-`just lib` builds [jolt-native](https://gitlab.com/nandithebull/jolt-native),
-cloning it into `.jolt-native` at the pinned commit unless you already have a
-sibling checkout, which wins. That repo is where every shared object this
-client loads comes from: `libvidya`, the retained-tree ABI glimmer paints
-through, and `libjoltmoq`, the AV media plane. They come out of one directory,
-and `just run` puts that one directory on the loader path.
+`just lib` fetches both shared objects this client loads —
+[jolt-native](https://gitlab.com/nandithebull/jolt-native)'s `libvidya`, the
+retained-tree ABI glimmer paints through, and `libjoltmoq`, the AV media plane
+— out of that project's release, by the digests in `scripts/*.dotslash`, and
+links them into `build/lib`. Nothing is compiled: no Rust toolchain, and no
+jolt-native checkout beside this one. It needs `patchelf`, and only to name
+libasound in `libjoltmoq.so`, which v0.1.3 does not — see the comment in
+`scripts/lib.bb`; that goes away with the release that links it. `just bump` moves every pin to the
+latest release at once, and `just bump v0.1.2` to a named one.
 
-`just run` is `jolt -M:frq` with `LD_LIBRARY_PATH` pointed at the built
-library. It connects to `irc.freeq.at:6697` over TLS and joins `#test`. Untick
-TLS on the connect screen (or point it at `127.0.0.1`) for a local server's
+`just run` is `jolt -M:frq` with `LD_LIBRARY_PATH` pointed at `build/lib`. It
+connects to `irc.freeq.at:6697` over TLS and joins `#test`. Untick TLS on the
+connect screen (or point it at `127.0.0.1`) for a local server's
 plain listener:
 
 ```bash
@@ -91,18 +94,19 @@ A refused sign-in is reported and the connection carries on as a guest.
 
 ## Android
 
-An APK with two shared libraries and no Java: `libvidya.so` (vidya's Rust/egui
-C ABI, which owns the event loop as the NativeActivity's own library) and
-`libjoltapp.so` (frq compiled to a Chez boot image). Both native halves come
-from the vidya checkout; only the boot image is frq's.
+An APK whose native halves come from jolt-native's release and whose Jolt half
+is frq's: `libvidya.so` (the Rust/egui C ABI, which owns the event loop as the
+NativeActivity's own library), `libjoltmoq.so` (the media plane) and
+`libjoltapp.so` (frq compiled to a Chez boot image, linked against both).
 
 ```bash
 ./android/build-apk.bb run      # build, install, launch on a connected device
 ./android/build-apk.bb log      # logcat, filtered
 ```
 
-Needs what vidya's Android build needs — SDK, NDK r29, and a cross-built Chez
-in `~/.cache/vidya-chez-android`.
+Needs an SDK and a cross-built Chez in `~/.cache/vidya-chez-android`; the NDK
+comes down through `scripts/android-ndk.dotslash`. `just apk` builds the same
+APK as a buck2 graph, which is the incremental way in.
 
 TLS does not work there: jolt reaches OpenSSL through the dynamic loader, and
 Android has no public `libssl` to load. The connect screen falls back to the
