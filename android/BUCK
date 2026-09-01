@@ -1,6 +1,6 @@
 # The APK, as a graph rather than a script.
 #
-# Every step the old build-apk.sh ran in sequence is a target here, so a change
+# Every step the old build-apk script ran in sequence is a target here, so a change
 # to one screen rebuilds the boot image and repackages, and touches neither the
 # Rust nor the Java. The two native halves come from jolt-native — libvidya out
 # of its buck2 graph, the glue compiled by the NDK its scripts/ pin — and the
@@ -48,8 +48,11 @@ _ABS_OUT = 'd=`dirname "$OUT"` && b=`basename "$OUT"` && d=`cd "$d" && pwd` && o
 # buck's own scratch space is not this.
 _TMP = 'tmp=`mktemp -d`'
 
+# A babashka script, run in place: it loads scripts/frq/paths.clj beside it and
+# resolves its own interpreter through scripts/bb, the DotSlash pin. Referenced
+# rather than copied for exactly that reason — the tree around it is part of it.
 export_file(
-    name = "build-jolt-boot.sh",
+    name = "build-jolt-boot.bb",
     mode = "reference",
 )
 
@@ -94,7 +97,7 @@ genrule(
           # is no jolt-native checkout. An input, so a new release recompiles
           # the image.
           _GLIMMER_VIDYA +
-          "$(location :build-jolt-boot.sh) \"$OUT\" >&2",
+          "$(location :build-jolt-boot.bb) \"$OUT\" >&2",
 )
 
 # The image travels as a blob in an object file's data section; the

@@ -1,23 +1,32 @@
 #!/bin/sh
-# Print the directory holding the NDK's clang and LLVM binutils.
-#
-# android-cc needs one of those binaries and an APK build needs others —
-# llvm-objcopy, for the boot image blob — so the lookup is here rather than
-# duplicated at each caller. ANDROID_NDK_HOME wins if it is set; otherwise the
-# pin in android-ndk.dotslash beside this script answers, downloading once.
-set -e
-dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+#_(
+exec "$(dirname "$0")/bb" "$0" "$@"
+)
 
-ndk=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
-if [ -n "$ndk" ]; then
-    for host in linux-x86_64 darwin-x86_64; do
-        if [ -d "$ndk/toolchains/llvm/prebuilt/$host/bin" ]; then
-            echo "$ndk/toolchains/llvm/prebuilt/$host/bin"
-            exit 0
-        fi
-    done
-    echo "scripts/android-ndk-bin: no llvm prebuilt under $ndk" >&2
-    exit 1
-fi
+;; Print the directory holding the NDK's clang and LLVM binutils.
+;;
+;; android-cc needs one of those binaries and an APK build needs others —
+;; llvm-objcopy, for the boot image blob — so the lookup is here rather than
+;; duplicated at each caller. ANDROID_NDK_HOME wins if it is set; otherwise the
+;; pin in android-ndk.dotslash beside this script answers, downloading once.
+(require '[babashka.fs :as fs]
+         '[babashka.process :as p]
+         '[clojure.string :as str])
 
-dirname -- "$(dotslash -- fetch "$dir/android-ndk.dotslash")"
+(def here (fs/parent (fs/canonicalize *file*)))
+(def ndk (or (not-empty (str (System/getenv "ANDROID_NDK_HOME")))
+             (not-empty (str (System/getenv "ANDROID_NDK_ROOT")))))
+
+(if ndk
+  (if-let [bin (->> ["linux-x86_64" "darwin-x86_64"]
+                    (map #(fs/path ndk "toolchains" "llvm" "prebuilt" % "bin"))
+                    (filter fs/directory?)
+                    first)]
+    (println (str bin))
+    (binding [*out* *err*]
+      (println (str "scripts/android-ndk-bin: no llvm prebuilt under " ndk))
+      (System/exit 1)))
+  (println (str (fs/parent
+                 (str/trim (:out (p/shell {:out :string}
+                                          "dotslash" "--" "fetch"
+                                          (str (fs/path here "android-ndk.dotslash")))))))))
