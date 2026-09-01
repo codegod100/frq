@@ -1,23 +1,26 @@
 #!/usr/bin/env dotslash
 
-// libvidya for the phone, from jolt-native's v0.1.3 release.
+// The AV media plane for the phone, from jolt-native's v0.1.3 release.
 //
-// arm64, API 28, built by NDK r29 through jolt-native's buck2 toolchain. The
-// same object `just ffi-android` produces there, pinned so that building the
-// APK needs neither that checkout nor an NDK.
+// The same tarball libvidya-android names, and deliberately so: the two objects
+// are built together and only make sense together — libjoltapp links both, and
+// a libjoltmoq from one release beside a libvidya from another is a pairing
+// nothing has tested. Same digest, different file out of it.
 //
-// A sibling jolt-native checkout still wins over this: see the `buck` recipe
-// in the justfile. Anyone working on both repos at once builds what they are
-// editing; everyone else gets these bytes.
+// Before v0.1.3 there was no such object at all: the media plane was V4L2 and
+// PipeWire, which a phone has neither of. The camera is Camera2 over JNI now
+// and the microphone is cpal's AAudio host.
+//
+// A sibling jolt-native checkout still wins over this, the same as libvidya.
 {
-  "name": "libvidya-android",
+  "name": "libjoltmoq-android",
   "platforms": {
     "linux-x86_64": {
       "size": 14150473,
       "hash": "sha256",
       "digest": "4519745bae6db9a791a71b38a26478879e246166802b0a48dbf7d45e4d45a108",
       "format": "tar.gz",
-      "path": "libvidya.so",
+      "path": "libjoltmoq.so",
       "providers": [
         {
           "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-android-arm64-v0.1.3.tar.gz"
@@ -29,7 +32,7 @@
       "hash": "sha256",
       "digest": "4519745bae6db9a791a71b38a26478879e246166802b0a48dbf7d45e4d45a108",
       "format": "tar.gz",
-      "path": "libvidya.so",
+      "path": "libjoltmoq.so",
       "providers": [
         {
           "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-android-arm64-v0.1.3.tar.gz"
@@ -41,7 +44,7 @@
       "hash": "sha256",
       "digest": "4519745bae6db9a791a71b38a26478879e246166802b0a48dbf7d45e4d45a108",
       "format": "tar.gz",
-      "path": "libvidya.so",
+      "path": "libjoltmoq.so",
       "providers": [
         {
           "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-android-arm64-v0.1.3.tar.gz"
@@ -53,7 +56,7 @@
       "hash": "sha256",
       "digest": "4519745bae6db9a791a71b38a26478879e246166802b0a48dbf7d45e4d45a108",
       "format": "tar.gz",
-      "path": "libvidya.so",
+      "path": "libjoltmoq.so",
       "providers": [
         {
           "url": "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-android-arm64-v0.1.3.tar.gz"

@@ -35,6 +35,9 @@ exec "$(dirname "$0")/bb" "$0" "$@"
    ;; jolt-native's release, so the APK's UI half and the Jolt side of the
    ;; tree ABI are fetched rather than built out of a second checkout.
    "libvidya-android"
+   ;; The media plane, out of the same tarball as libvidya — see its manifest
+   ;; for why the two are pinned together rather than independently.
+   "libjoltmoq-android"
    "glimmer-vidya"
    "android-glue"])
 

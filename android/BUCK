@@ -70,10 +70,8 @@ export_file(
 # The recipe decides which, by whether that checkout exists, and says so here.
 libvidya(name = "libvidya")
 
-# The media plane, on the same terms — see the macro for why it can be absent.
-# `_MOQ` is False for a pinned build, and every use of it below falls back to
-# the APK this repo shipped before the media plane crossed.
-_MOQ = libjoltmoq(name = "libjoltmoq")
+# The media plane, on the same terms and from the same release.
+libjoltmoq(name = "libjoltmoq")
 
 glue(c_name = "glue-c", include_name = "glue-include")
 
@@ -146,7 +144,7 @@ genrule(
     out = "libjoltapp.so",
     cmd = _ABS_OUT + " && lib=`mktemp -d` && " +
           "cp $(location :libvidya) \"$lib/libvidya.so\" && " +
-          ("cp $(location :libjoltmoq) \"$lib/libjoltmoq.so\" && " if _MOQ else "") +
+          "cp $(location :libjoltmoq) \"$lib/libjoltmoq.so\" && " +
           _CC + " -shared -fPIC -O2 -o \"$out\" " +
           _GLUE_C + " " +
           "$(location :jolt-boot-obj) " +
@@ -155,8 +153,7 @@ genrule(
           "-L\"$lib\" " +
           _CHEZ + "/tarm64le/boot/tarm64le/libkernel.a " +
           _CHEZ + "/lz4/lib/liblz4.a " +
-          "-lvidya " + ("-ljoltmoq " if _MOQ else "") +
-          "-landroid -llog -lz -ldl -lm -Wl,--no-undefined && " +
+          "-lvidya -ljoltmoq -landroid -llog -lz -ldl -lm -Wl,--no-undefined && " +
           "rm -rf \"$lib\"",
 )
 
@@ -166,10 +163,6 @@ genrule(
 # opens the camera in Java and pushes NV12 planes down to libjoltmoq over JNI.
 # android.jar on the class path is where every android.* type comes from; the
 # JDK's own java.* is what is left.
-#
-# CameraCapture is compiled whether or not the media plane is packaged. It is a
-# few kilobytes of dex, and a class nothing loads costs nothing; keeping it out
-# of the `_MOQ` branch keeps the branch to the two things that actually differ.
 genrule(
     name = "classes-dex",
     out = "classes.dex",
@@ -195,15 +188,15 @@ genrule(
           "mkdir -p \"$stage/lib/arm64-v8a\" && " +
           "cp $(location :libvidya) \"$stage/lib/arm64-v8a/libvidya.so\" && " +
           "cp $(location :libjoltapp) \"$stage/lib/arm64-v8a/libjoltapp.so\" && " +
-          ("cp $(location :libjoltmoq) \"$stage/lib/arm64-v8a/libjoltmoq.so\" && " if _MOQ else "") +
-          ("cp $(location :libcxx) \"$stage/lib/arm64-v8a/libc++_shared.so\" && " if _MOQ else "") +
+          "cp $(location :libjoltmoq) \"$stage/lib/arm64-v8a/libjoltmoq.so\" && " +
+          "cp $(location :libcxx) \"$stage/lib/arm64-v8a/libc++_shared.so\" && " +
           "cp " + _OPENSSL + "/libssl.so " + _OPENSSL + "/libcrypto.so \"$stage/lib/arm64-v8a/\" && " +
           "cp $(location :classes-dex) \"$stage/classes.dex\" && " +
           _TOOLS + "/aapt2 link -o \"$out\" -I " + _ANDROID_JAR + " " +
           "--manifest $SRCS --min-sdk-version " + _API + " --target-sdk-version 36 " +
           "--version-code 1 --version-name 0.1.0 >&2 && " +
           "( cd \"$stage\" && zip -q -0 \"$out\" lib/arm64-v8a/libvidya.so " +
-          ("lib/arm64-v8a/libjoltmoq.so lib/arm64-v8a/libc++_shared.so " if _MOQ else "") +
+          "lib/arm64-v8a/libjoltmoq.so lib/arm64-v8a/libc++_shared.so " +
           "lib/arm64-v8a/libjoltapp.so lib/arm64-v8a/libssl.so lib/arm64-v8a/libcrypto.so && " +
           "zip -q \"$out\" classes.dex ) && rm -rf \"$stage\"",
 )
