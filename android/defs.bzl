@@ -27,6 +27,28 @@ def libvidya(name):
             cmd = "cp $(location toolchains//dist:libvidya-android)/libvidya.so \"$OUT\"",
         )
 
+def libjoltmoq(name):
+    """The Android libjoltmoq, or nothing.
+
+    The media plane crosses to the phone now, but only out of a sibling
+    jolt-native checkout: the pinned v0.1.1 release predates it and carries no
+    such object. Returns True when the APK should package it.
+
+    The two halves cannot disagree, and do not: the pinned glue is the same
+    v0.1.1 and never mentions joltmoq either, so a pinned APK is consistently
+    without a media plane rather than half-wired. Delete the branch — and make
+    the caller unconditional — once jolt-native cuts a release carrying
+    libjoltmoq.so and scripts/libjoltmoq-android.dotslash pins it.
+    """
+    if native.read_root_config("frq", "libvidya", "pinned") != "checkout":
+        return False
+    native.export_file(
+        name = name,
+        src = "prebuilt/arm64-v8a/libjoltmoq.so",
+        mode = "reference",
+    )
+    return True
+
 def glue(c_name, include_name):
     """jolt_main.c and the ABI's headers, from wherever libvidya came from.
 

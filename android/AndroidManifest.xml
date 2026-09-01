@@ -14,7 +14,22 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!--
+      The call. Both are runtime permissions and neither is granted by being
+      asked for here; CameraCapture checks CAMERA before it opens anything and
+      reports "permission denied" back to the media plane rather than throwing.
+      Until this activity has Java to raise a dialog with, they are granted from
+      Settings (or `adb shell pm grant`), the same as the storage reads above.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <!--
+      Not required: a call without a camera is audio-only and still a call, and
+      required="true" would hide the app from tablets that have no camera.
+    -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!--
       Not the Fullscreen theme below: under it the window owns the whole

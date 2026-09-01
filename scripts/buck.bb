@@ -40,6 +40,10 @@ exec "$(dirname "$0")/bb" "$0" "$@"
       (fs/copy (fs/path jolt-native "build" "android" "arm64-v8a" "libvidya.so")
                (fs/path prebuilt "arm64-v8a" "libvidya.so")
                {:replace-existing true})
+      ;; The media plane, staged the same way. `just ffi-android` builds both.
+      (fs/copy (fs/path jolt-native "build" "android" "arm64-v8a" "libjoltmoq.so")
+               (fs/path prebuilt "arm64-v8a" "libjoltmoq.so")
+               {:replace-existing true})
       ;; The glue travels with it, for the same reason: editing jolt_main.c
       ;; should relink libjoltapp, and it cannot if buck only knows a path.
       (fs/create-dirs (fs/path prebuilt "glue" "android"))
@@ -47,7 +51,10 @@ exec "$(dirname "$0")/bb" "$0" "$@"
       (fs/copy (fs/path jolt-native "android" "jolt_main.c")
                (fs/path prebuilt "glue" "android" "jolt_main.c")
                {:replace-existing true})
-      (doseq [h (fs/glob (fs/path jolt-native "crates" "jolt-vidya" "include") "*.h")]
+      ;; Both ABIs' headers: jolt_main.c includes joltmoq.h now, for the
+      ;; symbols it registers and for joltmoq_android_init.
+      (doseq [dir ["jolt-vidya" "jolt-moq"]
+              h (fs/glob (fs/path jolt-native "crates" dir "include") "*.h")]
         (fs/copy h (fs/path prebuilt "glue" "include" (fs/file-name h))
                  {:replace-existing true}))
       "checkout")
