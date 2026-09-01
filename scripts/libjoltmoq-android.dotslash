@@ -11,7 +11,7 @@
 // PipeWire, which a phone has neither of. The camera is Camera2 over JNI now
 // and the microphone is cpal's AAudio host.
 //
-// A sibling jolt-native checkout still wins over this, the same as libvidya.
+// The only answer for it, the same as libvidya.
 {
   "name": "libjoltmoq-android",
   "platforms": {

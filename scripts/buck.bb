@@ -15,7 +15,6 @@ exec "$(dirname "$0")/bb" "$0" "$@"
          '[babashka.process :as p])
 
 (def root (str (fs/canonicalize (fs/path (fs/parent *file*) ".."))))
-(def jolt-native (paths/jolt-native root))
 (def android-home (paths/env "ANDROID_HOME" (str (fs/path (fs/home) ".local" "share" "android-sdk"))))
 (def chez (paths/env "CHEZ_ANDROID" (str (fs/path (fs/home) ".cache" "vidya-chez-android"))))
 (def openssl (paths/env "OPENSSL_ANDROID" (str (fs/path (fs/home) ".cache" "frq-openssl-android" "lib"))))
@@ -26,52 +25,17 @@ exec "$(dirname "$0")/bb" "$0" "$@"
                        (fs/path chez "boot" "tarm64le" "scheme.boot")
                        (fs/path openssl "libssl.so")])
 
-;; A jolt-native checkout wins over the pinned release, so that anyone working
-;; on both repos at once builds what they are editing. It is staged into this
-;; tree because a buck2 cell cannot reach outside its own root, and an action
-;; that shelled out to the other project would have nothing to invalidate on.
-;; With no checkout the release answers instead, fetched by digest — see
-;; toolchains/dist and scripts/libvidya-android.dotslash.
-(def libvidya
-  (if (fs/directory? (fs/path jolt-native "crates"))
-    (let [prebuilt (fs/path root "android" "prebuilt")]
-      (p/shell {:dir jolt-native :out :string} "just" "ffi-android")
-      (fs/create-dirs (fs/path prebuilt "arm64-v8a"))
-      (fs/copy (fs/path jolt-native "build" "android" "arm64-v8a" "libvidya.so")
-               (fs/path prebuilt "arm64-v8a" "libvidya.so")
-               {:replace-existing true})
-      ;; The media plane, staged the same way. `just ffi-android` builds both.
-      (fs/copy (fs/path jolt-native "build" "android" "arm64-v8a" "libjoltmoq.so")
-               (fs/path prebuilt "arm64-v8a" "libjoltmoq.so")
-               {:replace-existing true})
-      ;; The glue travels with it, for the same reason: editing jolt_main.c
-      ;; should relink libjoltapp, and it cannot if buck only knows a path.
-      (fs/create-dirs (fs/path prebuilt "glue" "android"))
-      (fs/create-dirs (fs/path prebuilt "glue" "include"))
-      (fs/copy (fs/path jolt-native "android" "jolt_main.c")
-               (fs/path prebuilt "glue" "android" "jolt_main.c")
-               {:replace-existing true})
-      ;; Both ABIs' headers: jolt_main.c includes joltmoq.h now, for the
-      ;; symbols it registers and for joltmoq_android_init.
-      (doseq [dir ["jolt-vidya" "jolt-moq"]
-              h (fs/glob (fs/path jolt-native "crates" dir "include") "*.h")]
-        (fs/copy h (fs/path prebuilt "glue" "include" (fs/file-name h))
-                 {:replace-existing true}))
-      "checkout")
-    "pinned"))
-
-;; The boot image's other source roots are outside this cell too; hash them
-;; here so the digest reaches the action. See android/BUCK.
+;; The boot image is compiled from source roots outside this cell — glimmer and
+;; glimmer-vidya, out of the jolt cache — which cannot be action inputs. Hash
+;; them here so the digest reaches the action instead. See android/BUCK.
 (def boot-stamp
   (paths/out (str (fs/path root "android" "build-jolt-boot.bb")) "--stamp"))
 
 (spit (str (fs/path root ".buckconfig.local"))
       (str "[frq]\n"
-           "  jolt_native = " jolt-native "\n"
            "  android_home = " android-home "\n"
            "  chez_android = " chez "\n"
            "  openssl_android = " openssl "\n"
-           "  libvidya = " libvidya "\n"
            "  boot_stamp = " boot-stamp "\n"))
 
 (System/exit
