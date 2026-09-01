@@ -71,6 +71,11 @@ buck *args:
         mkdir -p android/prebuilt/arm64-v8a
         cp "{{jolt_native}}/build/android/arm64-v8a/libvidya.so" \
             android/prebuilt/arm64-v8a/libvidya.so
+        # The glue travels with it, for the same reason: editing jolt_main.c
+        # should relink libjoltapp, and it cannot if buck only knows a path.
+        mkdir -p android/prebuilt/glue/android android/prebuilt/glue/include
+        cp "{{jolt_native}}/android/jolt_main.c" android/prebuilt/glue/android/
+        cp "{{jolt_native}}"/crates/jolt-vidya/include/*.h android/prebuilt/glue/include/
     fi
     # The boot image's other source roots are outside this cell too; hash them
     # here so the digest reaches the action. See android/BUCK.

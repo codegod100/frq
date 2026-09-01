@@ -9,7 +9,7 @@
 # The machine-specific paths are read from .buckconfig.local, which the `buck`
 # recipe in the justfile writes. Nothing here is found by looking around the
 # machine; if a path is missing the recipe says which.
-load(":defs.bzl", "libvidya")
+load(":defs.bzl", "glue", "libvidya")
 
 _JOLT_NATIVE = read_root_config("frq", "jolt_native", "")
 _ANDROID_HOME = read_root_config("frq", "android_home", "")
@@ -37,11 +37,10 @@ _CC = "$(location //scripts:android-cc)"
 _GLIMMER_VIDYA = "" if read_root_config("frq", "libvidya", "pinned") == "checkout" else \
                  "GLIMMER_VIDYA=`realpath $(location toolchains//dist:glimmer-vidya)/src` "
 
-# jolt_main.c and the ABI's headers. A sibling checkout wins here too, so that
-# editing the glue and the library together works; otherwise the release.
-_GLUE = _JOLT_NATIVE if read_root_config("frq", "libvidya", "pinned") == "checkout" else None
-_GLUE_C = (_GLUE + "/android/jolt_main.c") if _GLUE else "`realpath $(location toolchains//dist:android-glue)/android/jolt_main.c`"
-_GLUE_INCLUDE = (_GLUE + "/crates/jolt-vidya/include") if _GLUE else "`realpath $(location toolchains//dist:android-glue)/include`"
+# jolt_main.c and the ABI's headers, as targets — see defs.bzl for which of
+# the two sources answers, and why neither may be a bare path.
+_GLUE_C = "`realpath $(location :glue-c)`"
+_GLUE_INCLUDE = "`realpath $(location :glue-include)`"
 
 _ABS_OUT = 'd=`dirname "$OUT"` && b=`basename "$OUT"` && d=`cd "$d" && pwd` && out="$d/$b"'
 
@@ -67,6 +66,8 @@ export_file(
 #
 # The recipe decides which, by whether that checkout exists, and says so here.
 libvidya(name = "libvidya")
+
+glue(c_name = "glue-c", include_name = "glue-include")
 
 # --- the Jolt half ----------------------------------------------------------
 # The boot image: frq's Scheme, cross-compiled to arm64 by Chez. The sources
