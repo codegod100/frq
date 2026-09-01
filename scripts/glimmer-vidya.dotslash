@@ -1,6 +1,6 @@
 #!/usr/bin/env dotslash
 
-// The Jolt side that binds the tree ABI, from jolt-native's v0.1.0 release.
+// The Jolt side that binds the tree ABI, from jolt-native's v0.1.1 release.
 //
 // deps.edn takes this as a git dependency, and jolt resolves it into its own
 // cache. The boot image cannot: a cross compile has no dependency resolution,
@@ -18,7 +18,7 @@
       "path": "glimmer-vidya/deps.edn",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz"
+          "url": "https://gitlab.com/-/project/85910092/uploads/626e11a573676ef0441eb53d8d60306e/jolt-native-glimmer-vidya-v0.1.1.tar.gz"
         }
       ]
     },
@@ -30,7 +30,7 @@
       "path": "glimmer-vidya/deps.edn",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz"
+          "url": "https://gitlab.com/-/project/85910092/uploads/626e11a573676ef0441eb53d8d60306e/jolt-native-glimmer-vidya-v0.1.1.tar.gz"
         }
       ]
     },
@@ -42,7 +42,7 @@
       "path": "glimmer-vidya/deps.edn",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz"
+          "url": "https://gitlab.com/-/project/85910092/uploads/626e11a573676ef0441eb53d8d60306e/jolt-native-glimmer-vidya-v0.1.1.tar.gz"
         }
       ]
     },
@@ -54,7 +54,7 @@
       "path": "glimmer-vidya/deps.edn",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/3448c1fde6a113a5578335ac54811d0f/jolt-native-glimmer-vidya-v0.1.0.tar.gz"
+          "url": "https://gitlab.com/-/project/85910092/uploads/626e11a573676ef0441eb53d8d60306e/jolt-native-glimmer-vidya-v0.1.1.tar.gz"
         }
       ]
     }

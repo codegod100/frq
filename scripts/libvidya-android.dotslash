@@ -1,6 +1,6 @@
 #!/usr/bin/env dotslash
 
-// libvidya for the phone, from jolt-native's v0.1.0 release.
+// libvidya for the phone, from jolt-native's v0.1.1 release.
 //
 // arm64, API 28, built by NDK r29 through jolt-native's buck2 toolchain. The
 // same object `just ffi-android` produces there, pinned so that building the
@@ -20,7 +20,7 @@
       "path": "libvidya.so",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/29c7b1aacb97cd0e1aea7f430a6fa225/jolt-native-android-arm64-v0.1.0.tar.gz"
+          "url": "https://gitlab.com/-/project/85910092/uploads/a7264f20582e6d42d45b17fe626ba471/jolt-native-android-arm64-v0.1.1.tar.gz"
         }
       ]
     },
@@ -32,7 +32,7 @@
       "path": "libvidya.so",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/29c7b1aacb97cd0e1aea7f430a6fa225/jolt-native-android-arm64-v0.1.0.tar.gz"
+          "url": "https://gitlab.com/-/project/85910092/uploads/a7264f20582e6d42d45b17fe626ba471/jolt-native-android-arm64-v0.1.1.tar.gz"
         }
       ]
     },
@@ -44,7 +44,7 @@
       "path": "libvidya.so",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/29c7b1aacb97cd0e1aea7f430a6fa225/jolt-native-android-arm64-v0.1.0.tar.gz"
+          "url": "https://gitlab.com/-/project/85910092/uploads/a7264f20582e6d42d45b17fe626ba471/jolt-native-android-arm64-v0.1.1.tar.gz"
         }
       ]
     },
@@ -56,7 +56,7 @@
       "path": "libvidya.so",
       "providers": [
         {
-          "url": "https://gitlab.com/-/project/85910092/uploads/29c7b1aacb97cd0e1aea7f430a6fa225/jolt-native-android-arm64-v0.1.0.tar.gz"
+          "url": "https://gitlab.com/-/project/85910092/uploads/a7264f20582e6d42d45b17fe626ba471/jolt-native-android-arm64-v0.1.1.tar.gz"
         }
       ]
     }
