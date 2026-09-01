@@ -75,6 +75,11 @@
 (defn reply-to! [m] (reset! replying-to (select-keys m [:id :from :text])))
 (defn cancel-reply! [] (reset! replying-to nil))
 
+;; The message the draft is a rewrite of, as `{:channel :id}`, or nil when the
+;; box is being used for something new. Only the id is kept: what is being
+;; rewritten is in the box, and the line on screen is the thing it will replace.
+(defonce editing (atom nil))
+
 ;; The message the emoji picker is choosing for, as `{:channel :id}`, or nil
 ;; when it is closed. The picker is a panel over the compose bar rather than a
 ;; screen: what is being reacted to has to stay in sight.
@@ -182,7 +187,7 @@
   and `:reply-to` is the one it answers. `:reactions` is what people have put
   on it already, which on a replayed backlog the server hands over in full."
   ([channel from text] (push-message! channel from text {}))
-  ([channel from text {:keys [at did id reply-to reactions]}]
+  ([channel from text {:keys [at did id reply-to reactions edited?]}]
    (let [at (or at (clock/now-ms))
          who (avatars/actor did from)]
      (doseq [url (media/image-urls text)]
@@ -203,6 +208,11 @@
                                 ;; `:id` is what a reply points at, and
                                 ;; `:reply-to` is what this one points at.
                                 :id id :reply-to reply-to
+                                ;; The sender has since rewritten this line.
+                                ;; Replay says so with a tag rather than by
+                                ;; sending the revision, so a message can
+                                ;; arrive already edited.
+                                :edited? (boolean edited?)
                                 ;; emoji -> the nicks who put it there
                                 :reactions (or reactions {})})
                     (update-in [channel :unread] (if viewing? (constantly 0) inc)))))))))
@@ -220,6 +230,11 @@
   ;; A picker belongs to the message it was opened on; carrying it into another
   ;; buffer would offer to react to something that is no longer on screen.
   (reset! reacting nil)
+  ;; And an edit belongs to a line in the buffer being left: carried across, the
+  ;; next Send would rewrite a message nobody in this room can see.
+  (when (and @editing (not= name (:channel @editing)))
+    (reset! editing nil)
+    (reset! draft ""))
   (swap! channels #(-> (ensure-channel % name)
                        (assoc-in [name :unread] 0)
                        (assoc-in [name :accessed] (swap! access-tick inc))))
@@ -280,6 +295,52 @@
                                    msg))
                                msgs))
                m)))))
+
+(defn edit-message!
+  "Rewrite a message in place, and say so. `msgid` names the line as it was
+  first sent: a message keeps the id it was born with across every revision,
+  which is what keeps its reactions, replies and pins attached to it.
+
+  Only the sender may rewrite their own line, so an edit whose nick is not the
+  one on the message is dropped — the server checks authorship too, and a
+  client that believed the wire alone would let a hostile relay put words in
+  somebody's mouth.
+
+  Answers what became of it: `:applied`, `:refused` for one that was not the
+  sender's to make, or `:absent` when no line here has that id — an edit of
+  something older than the backlog we asked for, which is the one case the
+  caller shows as a line of its own rather than losing what it says."
+  [channel msgid from text]
+  (if-not (and channel msgid)
+    :absent
+    (let [found? (atom nil)]
+      (swap! channels
+             (fn [m]
+               (if-let [msgs (get-in m [channel :messages])]
+                 (assoc-in m [channel :messages]
+                           (mapv (fn [msg]
+                                   (if (= msgid (:id msg))
+                                     (if (= (str/lower-case (or (:from msg) ""))
+                                            (str/lower-case (or from "")))
+                                       (do (reset! found? :applied)
+                                           (assoc msg
+                                                  :text text
+                                                  :images (media/image-urls text)
+                                                  :edited? true))
+                                       ;; Somebody else's line. The server
+                                       ;; refuses this too, so it is either a
+                                       ;; peer talking to us directly or one
+                                       ;; lying — and neither gets to put words
+                                       ;; under a name that is not theirs.
+                                       (do (reset! found? :refused) msg))
+                                     msg))
+                                 msgs))
+                 m)))
+      ;; The revision may link a picture the original did not.
+      (when (= :applied @found?)
+        (doseq [url (media/image-urls text)]
+          (media/fetch! url #(swap! media-tick inc))))
+      (or @found? :absent))))
 
 ;; --- who is in the room ------------------------------------------------------
 ;; A channel's `:users` is nick -> mode prefix ("@", "+", or ""). The list is
@@ -489,18 +550,41 @@
                       buffer (cond
                                (str/starts-with? (or target "") "#") target
                                (= from @form-nick) target
-                               :else from)]
-                  (push-message! buffer from text
-                                 {:at at
-                                  :did (:account msg)
-                                  :id (irc/tag-value tags "msgid")
-                                  ;; The server canonicalises +draft/reply to
-                                  ;; +reply; a client that sent the draft name
-                                  ;; may still reach us before it does.
-                                  :reply-to (or (irc/tag-value tags "+reply")
-                                                (irc/tag-value tags "+draft/reply"))
-                                  :reactions (parse-reactions
-                                              (irc/tag-value tags "+freeq.at/reactions"))}))
+                               :else from)
+                      ;; What this message rewrites, when it is a rewrite. The
+                      ;; server canonicalises the name to `+draft/edit`.
+                      edit-of (irc/tag-value tags "+draft/edit")
+                      ;; And what the server says about a line it has already
+                      ;; collapsed: replay sends one row per message, carrying
+                      ;; the current text and no `+draft/edit` to hint that it
+                      ;; is not the original. This tag is the only trace.
+                      replayed-edit? (= "1" (irc/tag-value tags "+freeq.at/edited"))]
+                  (if edit-of
+                    ;; A revision is not a new line: it replaces the one it
+                    ;; names, under that line's own id — never the revision's
+                    ;; wire msgid, which nothing else refers to.
+                    (when (= :absent (edit-message! buffer edit-of from text))
+                      ;; The original is outside the backlog we hold, so show
+                      ;; the current text rather than dropping what was said.
+                      (push-message! buffer from text
+                                     {:at at
+                                      :did (:account msg)
+                                      :id edit-of
+                                      :edited? true
+                                      :reply-to (or (irc/tag-value tags "+reply")
+                                                    (irc/tag-value tags "+draft/reply"))}))
+                    (push-message! buffer from text
+                                   {:at at
+                                    :did (:account msg)
+                                    :id (irc/tag-value tags "msgid")
+                                    :edited? replayed-edit?
+                                    ;; The server canonicalises +draft/reply to
+                                    ;; +reply; a client that sent the draft
+                                    ;; name may still reach us before it does.
+                                    :reply-to (or (irc/tag-value tags "+reply")
+                                                  (irc/tag-value tags "+draft/reply"))
+                                    :reactions (parse-reactions
+                                                (irc/tag-value tags "+freeq.at/reactions"))})))
       ;; A message that is only tags. A reaction is the one this client reads:
       ;; `+react` puts an emoji on the message `+reply` names, and the server's
       ;; own `+freeq.at/unreact` takes it off again.
@@ -604,6 +688,12 @@
         ;; belongs. The banner is for what stops the whole app — a failed
         ;; connection or a refused sign-in.
         (when-not ch (reset! error (str "Cannot join: " why))))
+      ;; What the server refused and why, in the reader's words. An edit or a
+      ;; reaction it will not take is otherwise silent: the line on screen
+      ;; simply never changes, which reads as the app having lost it.
+      "FAIL" (let [[what _code] params]
+               (reset! error (str (or what "Request") " refused — "
+                                  (or (last params) "no reason given"))))
       "903" (reset! status (str "Signed in as " (:handle @session)))
       ("904" "905" "906") (do (reset! session nil)
                               ;; The broker token may still be good — but a
@@ -1052,6 +1142,48 @@
         (discard-file! copy)
         (reset! error (str "Could not read that picture: " (or (ex-message e) e)))))))
 
+(defn- dm-peer-did
+  "The DID of whoever this DM buffer is with, from the last thing they said.
+  nil for a channel, and for a conversation where nobody with a DID has spoken
+  — a signature over a DM needs both sides named, and there is nothing to name."
+  [channel]
+  (when-not (str/starts-with? (or channel "") "#")
+    (->> (get-in @channels [channel :messages])
+         (remove #(= @form-nick (:from %)))
+         (keep :did)
+         last)))
+
+(defn mine?
+  "Whether we are the one who said this. Nick against nick, which is what the
+  server itself falls back to for an account with no DID — and an edit it would
+  refuse is one not worth offering."
+  [m]
+  (and (not (:system? m))
+       (seq (or (:from m) ""))
+       (= (str/lower-case (:from m))
+          (str/lower-case (or @form-nick "")))))
+
+(defn start-edit!
+  "Put a message back in the box to be rewritten.
+
+  The old text is the starting point rather than an empty line: an edit is
+  usually a word, and retyping the sentence around it is not what was asked
+  for. Whatever was half-typed is dropped — a draft and an edit are two things
+  to say, and the box holds one."
+  [channel m]
+  (when (and (:id m) (mine? m))
+    (reset! replying-to nil)
+    (reset! editing {:channel channel :id (:id m)})
+    (reset! draft (or (:text m) ""))))
+
+(defn cancel-edit!
+  "Leave the message as it was said. The box empties with it: what is in it is
+  a copy of the line on screen, and leaving that behind would look like a draft
+  the reader wrote."
+  []
+  (reset! editing nil)
+  (reset! draft ""))
+
 (defn send-draft!
   "Send the draft, with whatever picture is attached to it.
 
@@ -1068,10 +1200,28 @@
   (let [text (str/trim @draft)
         target @current
         reply-to @replying-to
+        edit @editing
         {:keys [url status path] :as att} @attachment]
     (cond
       (not target) nil
       (= :uploading status) (reset! error "The picture is still uploading.")
+      ;; A rewrite replaces what was said, and what was said is a line of text:
+      ;; there is no wire form for adding a picture to a message already sent,
+      ;; so the attachment is held back rather than silently dropped.
+      (and edit att) (reset! error "Finish the edit before sending a picture.")
+      (and edit (str/blank? text)) nil
+      edit
+      (do (when-let [c @conn]
+            (irc/edit! c (:channel edit) (:id edit) text
+                       (dm-peer-did (:channel edit))))
+          ;; Same reason as a new message: the server's echo is the copy that
+          ;; every other client sees, and folding this one in as well would
+          ;; rewrite the line twice. Without echo-message nothing comes back,
+          ;; so the rewrite has to be applied here or it never shows.
+          (when-not (some-> @conn (irc/cap-acked? "echo-message"))
+            (edit-message! (:channel edit) (:id edit) @form-nick text))
+          (reset! editing nil)
+          (reset! draft ""))
       (and (str/blank? text) (not url)) nil
       :else
       (let [line (str/trim (str text (when url (str " " url))))]
@@ -1131,17 +1281,6 @@
                    vec)
       group (vec (filter (fn [[_ _ g]] (= g group)) emoji/catalog))
       :else (mapv (fn [glyph] [glyph glyph nil]) emoji/popular))))
-
-(defn- dm-peer-did
-  "The DID of whoever this DM buffer is with, from the last thing they said.
-  nil for a channel, and for a conversation where nobody with a DID has spoken
-  — a signature over a DM needs both sides named, and there is nothing to name."
-  [channel]
-  (when-not (str/starts-with? (or channel "") "#")
-    (->> (get-in @channels [channel :messages])
-         (remove #(= @form-nick (:from %)))
-         (keep :did)
-         last)))
 
 (defn my-reaction?
   "Whether this nick is already on that emoji — which is what makes a second

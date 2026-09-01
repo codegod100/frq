@@ -317,17 +317,30 @@
   press to react and what appears once you have look like one family.
 
   A row laid out from the right lays its first child furthest right, so
-  reacting comes first in the source and this reads ↩️ then 🙂 on screen."
+  reacting comes first in the source and this reads ✏️ then ↩️ then 🙂 on
+  screen — where there is a pencil at all. Only our own lines carry one: the
+  server refuses an edit of somebody else's, and a chip that always fails is a
+  chip that lies about what can be done.
+
+  The pencil is a chip beside the other two rather than a box holding one: a
+  wrapper is laid out as a child in its own right, which put the pencil on the
+  row at a remove from the pair it belongs with. It keys itself, so the line
+  that has no pencil is a row of two chips and not a row with a hole in it."
   [channel m]
-  [:hbox {:key :actions :align :end :spacing 4}
-   [:reaction {:key :react
-               :emoji "🙂"
-               :size pill-size
-               :on-click #(s/open-picker! channel m)}]
-   [:reaction {:key :reply
-               :emoji "↩️"
-               :size pill-size
-               :on-click #(s/reply-to! m)}]])
+  (into [:hbox {:key :actions :align :end :spacing 4}
+         [:reaction {:key :react
+                     :emoji "🙂"
+                     :size pill-size
+                     :on-click #(s/open-picker! channel m)}]
+         [:reaction {:key :reply
+                     :emoji "↩️"
+                     :size pill-size
+                     :on-click #(s/reply-to! m)}]]
+        (when (s/mine? m)
+          [[:reaction {:key :edit
+                       :emoji "✏️"
+                       :size pill-size
+                       :on-click #(s/start-edit! channel m)}]])))
 
 (defn- reactor-card
   "Who is on a reaction, beside the pointer resting on it.
@@ -556,6 +569,10 @@
           [:label {:label (:from m)}]
           (when-let [at (:at m)]
             [:dim-label {:label (clock/clock-time at)}])
+          ;; Beside the clock, because it is the same kind of fact about the
+          ;; line: what is on screen is not what was first said.
+          (when (:edited? m)
+            [:dim-label {:label "(edited)"}])
           ;; And the two things you can do to the message, at the far end of
           ;; its heading: a nested row laid out from the right takes what is
           ;; left of the width and puts the chips against the edge of it, so
@@ -1050,6 +1067,14 @@
         [:hbox {:spacing 8}
          [:dim-label {:label (str "↩ " (:from target) ": " (summarise target 36))}]
          [:button {:label "✕" :on-click s/cancel-reply!}]])]
+     ;; And, in the same place, that the box holds a rewrite rather than
+     ;; something new: the text in it is a copy of a line already on screen,
+     ;; and without this Send would look like it was about to say it twice.
+     [:vbox {:key :editing}
+      (when @s/editing
+        [:hbox {:spacing 8}
+         [:dim-label {:label "✏️ Editing your message"}]
+         [:button {:label "✕" :on-click s/cancel-edit!}]])]
      ;; The pasted picture, above the line it will go out with. Shown rather
      ;; than written into the draft: what is being sent is a picture, and a URL
      ;; dropped into the entry would be an unreadable line of text sitting in
@@ -1071,10 +1096,11 @@
      ;; window and centring costs nothing.
      ;; Equal air above and below, so the row sits on the middle of the strip
      ;; between the separator and the bottom edge rather than flat against it.
-     ;; Above it is three of the column's gaps: one after the separator and one
-     ;; for each of the empty wrappers — the reply banner and the attachment,
-     ;; which cost a gap apiece whether or not they have anything in them. This
-     ;; margin plus the window's own is what answers them underneath.
+     ;; Above it is four of the column's gaps: one after the separator and one
+     ;; for each of the empty wrappers — the reply banner, the edit banner and
+     ;; the attachment, which cost a gap apiece whether or not they have
+     ;; anything in them. This margin plus the window's own is what answers
+     ;; them underneath.
      [:hbox {:spacing 8 :align :center :margin-bottom 12}
       ;; narrow enough that Send keeps its place on a phone-width row
       ;; A picture is pasted where everything else is typed: Ctrl+V. The field

@@ -203,6 +203,49 @@
                                          (str "dm:" peer-did "," our-did))
     :else nil))
 
+(def ^:private hex-digits "0123456789abcdef")
+
+(defn- body-hash
+  "How a document names the text it covers: `sha256:` and the hash in lower-case
+  hex. The signature is over the hash rather than the words, so a message of any
+  length signs the same amount."
+  [text]
+  (str "sha256:"
+       (apply str
+              (for [b (sha256 (.getBytes (or text "") "UTF-8"))
+                    :let [v (bit-and (int b) 0xff)]
+                    c [(nth hex-digits (bit-shift-right v 4))
+                       (nth hex-digits (bit-and v 0xf))]]
+                c))))
+
+(defn edit-tags
+  "The tags that make a rewrite acceptable: the id this edit is minted under
+  and a signature over what it says.
+
+  An edit is a *message* document rather than a mutation one — it carries a
+  body — so the fields are the message's own: who, which id, where, the hash
+  of the new text, and `edit` naming the message being replaced. The server
+  rebuilds this from what arrives and refuses an edit whose signature does not
+  verify, or (from an account) one that carries none at all.
+
+  Empty when this connection has no key: a guest signs nothing, and the server
+  asks a guest for nothing."
+  [target root-msgid text reply-to peer-did]
+  (let [{:keys [did]} @signer]
+    (or (when did
+          (when-let [venue (signing-target target did peer-did)]
+            (let [id (event-id)
+                  fields (cond-> {"body" (body-hash text)
+                                  "edit" root-msgid
+                                  "from" did
+                                  "msgid" id
+                                  "target" venue}
+                           (seq (or reply-to "")) (assoc "reply" reply-to))]
+              (when-let [sig (sign-bytes (canonical fields))]
+                {"+freeq.at/eventid" id
+                 "+freeq.at/sig" sig}))))
+        {})))
+
 (defn mutation-tags
   "The two tags that make a mutation acceptable: the event id and the signature
   over it. Empty when this connection has no key — a guest signs nothing, and
