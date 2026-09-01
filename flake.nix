@@ -65,9 +65,16 @@
       url = "github:nix-community/nixGL";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Wraps a closure into a single self-extracting file. Only the `appimage`
+    # output evaluates it.
+    nix-appimage = {
+      url = "github:ralismark/nix-appimage";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, chez-src, jolt-android-src, nixgl }:
+  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, chez-src, jolt-android-src, nixgl, nix-appimage }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = f:
@@ -274,6 +281,13 @@
           inherit native frq;
           jolt = joltRuntime;
           default = frq;
+
+          # frq and everything it loads, squashed into one runnable file for
+          # hosts without Nix. The whole closure rides along — Mesa included,
+          # which is not waste: off NixOS the launcher goes through nixGL, and
+          # nixGL needs a store Mesa to put the host's driver in front of.
+          appimage =
+            nix-appimage.bundlers.${pkgs.stdenv.hostPlatform.system}.default frq;
         }
         # An APK is built by a linux-x86_64 NDK and a linux-x86_64 jolt, and
         # Google ships no other; on aarch64 the Android outputs are simply
