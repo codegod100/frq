@@ -496,6 +496,36 @@
         (= :failed (:status pr)) [:dim-label {:label "No Bluesky profile found"}])]
      [:dim-label {:label "Click for the full profile"}]]))
 
+(defn- preview-height
+  "How tall a picture in the conversation may be.
+
+  Against the window rather than a fixed 260: on a phone-sized window a
+  preview that tall is the whole screen, and on a laptop one it is a stamp of
+  something worth looking at.
+
+  Four fifths of the window, because the pictures that arrive here are mostly
+  phone screenshots — 1080x2400, whose height is what binds, and any smaller
+  share draws them as a strip too narrow to read a word of. A picture is what
+  the message is; the line above it is enough context to place it, and the
+  scroll is how the rest is reached.
+
+  Clamped at both ends, and falling back to the old fixed height until the
+  first poll has landed: a preview is a preview either way, and the lightbox
+  is what full size is for."
+  []
+  (let [h @s/window-height]
+    (if (pos? h) (min 900 (max 240 (long (* 0.8 h)))) 260)))
+
+(defn- preview-width
+  "How wide a picture in the conversation may be.
+
+  The height alone leaves a wide, short picture to take the column and push
+  the words around it; this holds it inside the conversation the same way.
+  Fitted, never stretched — `:image` scales to whichever bound it meets first."
+  []
+  (let [w @s/window-width]
+    (if (pos? w) (min 900 (max 240 (long (* 0.95 w)))) 320)))
+
 (defn message-row
   "One message: who said it, when, what you can do to it, and the words.
 
@@ -618,7 +648,8 @@
              (when-let [path (media/path-when-ready url)]
                [:image {:key url
                       :src path
-                      :max-height 260
+                      :max-height (preview-height)
+                      :max-width (preview-width)
                       :on-click #(reset! s/lightbox {:path path :url url})}]))))]
       ;; Reactions go last, under whatever the message turned out to be: a
       ;; line with a picture on it is the picture, and pills between the words
@@ -1256,9 +1287,16 @@
   ;; delivered: the backend reports a size by writing it onto the window node,
   ;; and only what a component derefs re-renders — so the layout follows a drag
   ;; of the window's edge without every frame touching the tree.
-  (vidya/every! 200 #(let [w (vidya/window-width)]
+  ;;
+  ;; The height comes off the same tick, from `screen-size` rather than a
+  ;; second call: it is the window's content size, and the pictures in the
+  ;; conversation are sized against it.
+  (vidya/every! 200 #(let [w (vidya/window-width)
+                           h (long (second (vidya/screen-size)))]
                        (when (not= w @s/window-width)
-                         (reset! s/window-width w))))
+                         (reset! s/window-width w))
+                       (when (not= h @s/window-height)
+                         (reset! s/window-height h))))
   ;; The nick in the window title, so a second window of this client is told
   ;; apart from the first by the one thing that differs — and so the answer to
   ;; "who am I here?" is on screen without opening Settings.

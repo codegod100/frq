@@ -108,6 +108,12 @@
 ;; list and the conversation are both on screen instead of taking turns.
 (defonce window-width (atom 0))
 
+;; The window's content height, polled beside the width and for the same
+;; reason. What it is for is the pictures in the conversation: a preview sized
+;; against the window is a picture on a laptop and a thumbnail on a phone,
+;; where one fixed height is only ever right on one of them.
+(defonce window-height (atom 0))
+
 ;; Where the second pane starts paying for itself. Below this a 300pt list
 ;; beside a conversation leaves the messages narrower than the phone layout
 ;; they were written for.
