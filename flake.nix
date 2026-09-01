@@ -34,6 +34,26 @@
       flake = false;
     };
 
+    # Chez itself, because the APK needs a cross target nixpkgs does not
+    # build: frq's Scheme is compiled to an arm64 boot image, and that wants
+    # Chez's own `tarm64le` workarea — boot files, xpatch and libkernel.a.
+    # The version is the one the hand-built tree under ~/.cache used, and the
+    # submodules are not optional (zuo builds it, lz4 and zlib link into it).
+    # The fork jolt's own Android pin names, built here rather than fetched as
+    # a release binary: upstream reads the socket address out of `struct
+    # addrinfo` at glibc's offset, which on Bionic is `ai_canonname`, so an APK
+    # built with upstream cannot open a TLS connection at all. Only the boot
+    # image uses it; the desktop package still builds jolt-src.
+    jolt-android-src = {
+      url = "git+https://gitlab.com/nandithebull/jolt?rev=2b80d68d1f7a31ba92b208b3957e5fb555617ada&submodules=1";
+      flake = false;
+    };
+
+    chez-src = {
+      url = "git+https://github.com/cisco/ChezScheme?ref=refs/tags/v10.4.1&submodules=1";
+      flake = false;
+    };
+
     # The sha deps.edn pins, on the fork with the reconciler fixes.
     glimmer = {
       url = "git+https://gitlab.com/nandithebull/glimmer?rev=399df371c790d690fb6e4560c3d4d7f838502857";
@@ -47,7 +67,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, nixgl }:
+  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, chez-src, jolt-android-src, nixgl }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = f:
@@ -115,10 +135,13 @@
           };
 
           # Jolt itself: Clojure on Chez, built the way its own flake builds it.
-          joltRuntime = pkgs.stdenv.mkDerivation {
+          # A function, because there are two of them — upstream for the
+          # desktop, and the Bionic-addrinfo fork for the boot image the APK
+          # carries. Nothing else about the build differs.
+          joltFrom = src: pkgs.stdenv.mkDerivation {
             pname = "jolt";
             version = "dev";
-            src = jolt-src;
+            inherit src;
 
             strictDeps = true;
             nativeBuildInputs = with pkgs; [ chez makeWrapper pkg-config xxd ];
@@ -149,6 +172,9 @@
                 --set-default SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
             '';
           };
+
+          joltRuntime = joltFrom jolt-src;
+          joltAndroid = joltFrom jolt-android-src;
 
           # glimmer-vidya lives inside the jolt-native checkout, and its own
           # deps.edn asks for glimmer by git — the top-level override below
@@ -208,11 +234,46 @@
               mkdir -p "$out/bin"
               ln -s ${frqScript} "$out/bin/frq"
             '';
+          # --- Android ------------------------------------------------------
+          # The SDK and the NDK are Google's, which means unfree and a licence
+          # to accept — so this is its own import of nixpkgs rather than the
+          # `legacyPackages` everything above uses. Confined to the Android
+          # outputs: `nix build` of frq itself never evaluates it.
+          #
+          # The NDK here is r29, which is the version scripts/android-ndk.dotslash
+          # pins and the one the pinned libvidya was built with.
+          androidPkgs = import nixpkgs {
+            inherit (pkgs.stdenv.hostPlatform) system;
+            config = {
+              allowUnfree = true;
+              android_sdk.accept_license = true;
+            };
+          };
+
+          androidComposition = androidPkgs.androidenv.composeAndroidPackages {
+            buildToolsVersions = [ "36.0.0" ];
+            platformVersions = [ "36" ];
+            includeNDK = true;
+          };
+
+          android = import ./nix/android.nix {
+            inherit pkgs self chez-src jolt-native glimmer joltAndroid;
+            inherit (pkgs) lib;
+            androidSdk = androidComposition.androidsdk;
+            ndk = androidComposition.ndk-bundle;
+          };
         in
         {
           inherit native frq;
           jolt = joltRuntime;
           default = frq;
+        }
+        # An APK is built by a linux-x86_64 NDK and a linux-x86_64 jolt, and
+        # Google ships no other; on aarch64 the Android outputs are simply
+        # absent rather than present and broken.
+        // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+          inherit (android) apk chezAndroid joltBoot libjoltapp;
+          apk-unsigned = android.apk-unsigned;
         });
 
       apps = forEachSystem (pkgs: {

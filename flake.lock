@@ -1,5 +1,24 @@
 {
   "nodes": {
+    "chez-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1778520543,
+        "narHash": "sha256-/AQbCbjfIpZjgQJB2E1QXSOfcTGF24xfBDOyZDUWtO0=",
+        "ref": "refs/tags/v10.4.1",
+        "rev": "e95a7efbafa2cf3bd5343ea542e6bc909a7ab2c4",
+        "revCount": 2525,
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/cisco/ChezScheme"
+      },
+      "original": {
+        "ref": "refs/tags/v10.4.1",
+        "submodules": true,
+        "type": "git",
+        "url": "https://github.com/cisco/ChezScheme"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -33,6 +52,25 @@
         "rev": "399df371c790d690fb6e4560c3d4d7f838502857",
         "type": "git",
         "url": "https://gitlab.com/nandithebull/glimmer"
+      }
+    },
+    "jolt-android-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788137223,
+        "narHash": "sha256-VeHi864PEtZoHRNA7ms9uaJb6+7nHvDyRXqLLPQ1tao=",
+        "ref": "refs/heads/main",
+        "rev": "2b80d68d1f7a31ba92b208b3957e5fb555617ada",
+        "revCount": 2742,
+        "submodules": true,
+        "type": "git",
+        "url": "https://gitlab.com/nandithebull/jolt"
+      },
+      "original": {
+        "rev": "2b80d68d1f7a31ba92b208b3957e5fb555617ada",
+        "submodules": true,
+        "type": "git",
+        "url": "https://gitlab.com/nandithebull/jolt"
       }
     },
     "jolt-native": {
@@ -108,7 +146,9 @@
     },
     "root": {
       "inputs": {
+        "chez-src": "chez-src",
         "glimmer": "glimmer",
+        "jolt-android-src": "jolt-android-src",
         "jolt-native": "jolt-native",
         "jolt-src": "jolt-src",
         "nixgl": "nixgl",
