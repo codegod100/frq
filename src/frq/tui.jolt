@@ -13,6 +13,12 @@
   title, a window width, a picture chooser — and with no window open every one
   of those is inert, which is the behaviour those calls already have to have.
 
+  It is the client, not a preview of it: `frq.app/start!` is what a launch
+  does, and this hands it the terminal's timers instead of the window's. The
+  saved sign-in is restored and connects itself, the rooms this client has been
+  in come back, and `#test` is joined on arrival — the same session as the
+  window, painted somewhere else.
+
   Two ways to run it:
 
     jolt -M:tui                 the real terminal, until Ctrl-Q
@@ -20,7 +26,10 @@
 
   The headless one is `tui_headless` — the same layout and the same painting
   with the writer taken off the end — and is what a screenshot in a bug report
-  or a CI check should be."
+  or a CI check should be. It is also the one that has nothing to show: a
+  screenshot taken a moment after launch is of a client that has not finished
+  connecting, so `--demo` fills a buffer of its own rather than waiting on a
+  server for one."
   (:require [clojure.string :as str]
             [frq.app :as app]
             [frq.state :as s]
@@ -38,13 +47,13 @@
 (def ^:private points-per-cell 8)
 
 (defn- seed!
-  "Put a conversation on screen for a client that is not connected to anything.
+  "Put a conversation on screen without a server behind it — `--demo`.
 
-  A terminal session started for a look at the layout has no server behind it,
-  and an empty buffer says nothing about how the buffer looks. These go in
-  through `push-message!` rather than into the atom directly, so what is drawn
-  is a real buffer — timestamps, day headings, the actor lookup, reply chips
-  and reactions all included."
+  A screenshot is taken before a connection has been made, and an empty buffer
+  says nothing about how a buffer looks. These go in through `push-message!`
+  rather than into the atom directly, so what is drawn is a real buffer:
+  timestamps, day headings, the actor lookup, reply chips and reactions all
+  included."
   []
   (let [now (System/currentTimeMillis)
         minute 60000]
@@ -83,41 +92,62 @@
     (reset! s/window-height (* rows points-per-cell 2)))
   nil)
 
+(defn- start!
+  "The launch, with the terminal's timers in place of the window's.
+
+  No title and no media plane: a terminal has no title bar to write a nick
+  into, and a call paints frames into a texture there is no texture for here.
+  Everything else — the saved settings, the rooms, the sign-in that connects
+  itself — is the same startup the window runs."
+  []
+  (app/start! {:after! tui/after!
+               :every! tui/every!
+               :title! nil
+               :av? false
+               :measure! narrow!}))
+
 (defn- run-headless!
   "Mount the app in a session of `cols` by `rows` with no terminal, let it
   settle, and print what was painted."
-  [cols rows]
+  [cols rows demo? wait]
   ;; The size has to be known before the first render, or the layout reads the
   ;; zero it was left at. A timer runs on the loop thread, which is where
   ;; screen-size may be asked — and the first one fires before the first paint.
-  (tui/after! 0 narrow!)
-  (tui/after! 120 (fn []
+  (tui/after! 0 (fn []
+                  (narrow!)
+                  (start!)
+                  (when demo? (seed!))))
+  ;; Long enough for whatever the screenshot is of. A client that restores a
+  ;; sign-in spends the first seconds connecting, so the default is a picture
+  ;; of the connect screen and `--wait=` is how you ask for one of the room.
+  (tui/after! wait (fn []
                     (println (tui/screen-str))
                     (tui/quit!)))
   (ui/run app/app :headless [cols rows] :points-per-cell points-per-cell))
 
-(defn- run-terminal! []
-  (tui/after! 0 narrow!)
-  ;; The terminal is resized by dragging its edge, and only a poll notices:
-  ;; the backend reports a size, and only what a component derefs re-renders.
-  (tui/every! 200 narrow!)
+(defn- run-terminal! [demo?]
+  ;; On the loop thread, and before the first paint: `start!` sets timers of
+  ;; its own, and a timer added from anywhere else is a node touched from the
+  ;; wrong thread waiting to happen.
+  (tui/after! 0 (fn []
+                  (narrow!)
+                  (start!)
+                  (when demo? (seed!))))
   (ui/run app/app :mouse true :points-per-cell points-per-cell))
 
 (defn -main [& args]
   (let [args (set args)
         headless? (contains? args "--headless")
-        cols (if-let [n (first (keep #(when (str/starts-with? % "--cols=")
-                                        (subs % 7))
-                                     args))]
-               (Integer/parseInt n)
-               100)
-        rows (if-let [n (first (keep #(when (str/starts-with? % "--rows=")
-                                        (subs % 7))
-                                     args))]
-               (Integer/parseInt n)
-               36)]
-    (s/restore-prefs!)
-    (seed!)
+        demo? (contains? args "--demo")
+        num (fn [flag default]
+              (if-let [n (first (keep #(when (str/starts-with? % flag)
+                                         (subs % (count flag)))
+                                      args))]
+                (Integer/parseInt n)
+                default))
+        cols (num "--cols=" 100)
+        rows (num "--rows=" 36)
+        wait (num "--wait=" 400)]
     (if headless?
-      (run-headless! cols rows)
-      (run-terminal!))))
+      (run-headless! cols rows demo? wait)
+      (run-terminal! demo?))))

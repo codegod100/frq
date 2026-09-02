@@ -65,33 +65,45 @@ cargo run --release --bin freeq-server        # in the freeq checkout
 The screens are hiccup over glimmer's reconciler, and the reconciler does not
 know what is under it — so the same tree paints into a terminal through
 jolt-native's `libjolttui`, which exports libvidya's retained-tree ABI over a
-grid of cells instead of a GPU window. `src/frq/tui.jolt` is the whole of what
-that costs on this side: it requires `glimmer-tui.core` after `frq.app`, so the
-backend installed last is the terminal, and seeds a `#tui` buffer so a session
-started for a look at the layout has a conversation in it.
+grid of cells instead of a GPU window.
+
+It is the client, not a preview of it. `frq.app/start!` is what a launch does —
+the saved settings, the rooms this client has been in, the sign-in that
+connects itself — and `src/frq/tui.jolt` hands it the terminal's timers instead
+of the window's. Nothing in `frq.app` changed.
 
 ```bash
-just tui                                  # the terminal, until Ctrl-Q
+nix run .#tui                             # or: just tui
 just tui --headless --cols=90 --rows=60   # one screenshot on stdout
+just tui --headless --demo                # a buffer of its own, no server
+just tui --headless --wait=9000           # long enough to have connected
 ```
 
 The headless one is `tui_headless` — the same layout and the same painting with
 the writer taken off the end — which is what a screenshot in a bug report or a
-CI check should be.
+CI check should be. It paints once and prints, so `--wait=` is how long the
+client is given first: the default is a picture of the connect screen, because
+that is where a client is a moment after launch, and `--demo` fills a `#tui`
+buffer for a screenshot that is not waiting on a server at all.
 
-Two things are unpinned here, because the terminal backend is not in a
-jolt-native release yet: `libjolttui.so` comes out of a jolt-native checkout's
-target directory (`JOLT_NATIVE=…`, or beside this tree), and `glimmer-tui` is
-resolved from the same checkout. Both become pins like every other when it
-ships.
+Logs go to stderr, which in a terminal session is the screen frq is painting.
+Send them somewhere: `nix run .#tui 2>/tmp/frq.log`.
 
-What a terminal has not got, frq does without: pictures, avatars, the lightbox
-and calls draw nothing. And frq's spacing is written in points, for a window —
-`scripts/tui.bb` hands the backend `:points-per-cell 8` so those numbers land
-in cells, but `below-messages` in `src/frq/app.jolt` is point *arithmetic*
-rather than a point *length*, and a scale cannot fix it: it reserves about
-thirteen rows more than the compose bar needs, so the bottom of the backlog is
-pushed out of the list.
+What a terminal has not got, frq does without: pictures, avatars and the
+lightbox draw nothing, and calls are off — the media plane paints frames into
+a texture, and there is no texture here. And frq's spacing is written in
+points, for a window — the backend is handed `:points-per-cell 8` so those
+numbers land in cells, but `below-messages` in `src/frq/app.jolt` is point
+*arithmetic* rather than a point *length*, and a scale cannot fix it: it
+reserves about thirteen rows more than the compose bar needs, so the bottom of
+the backlog is pushed out of the list.
+
+Two things are unpinned, because the terminal backend is not in a jolt-native
+release yet: `libjolttui.so` comes out of a jolt-native checkout's target
+directory (`JOLT_NATIVE=…`, or beside this tree) for `just tui`, and the flake
+carries a second `jolt-native-tui` input at the rev that has it — its own input
+rather than a bump, so the window half stays on the release the rest of the
+tree names. Both become one pin when it ships.
 
 ## Signing in
 

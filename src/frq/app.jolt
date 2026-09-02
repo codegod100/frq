@@ -1297,8 +1297,25 @@
             :settings [:vbox {:key :screen-settings} [settings-screen]]
             [:vbox {:key :screen-chats} [chats-screen]])))
 
-(defn -main [& _]
-  ;; Before the window: the settings, the rooms this client has been in, and a
+(defn start!
+  "Everything a launch does before the loop starts, for whichever backend is
+  about to run it.
+
+  This used to be the first half of `-main`, and a second entry point copied it
+  — which is how frq.tui came up on a client that had restored nothing, was
+  signed into nothing and was connected to nothing: an empty buffer with nobody
+  in it, which reads as a broken screen rather than as a client that was never
+  told to start.
+
+  The timers are handed in because they belong to the backend: `after!` and
+  `every!` are how anything gets onto the loop thread, and the terminal has its
+  own pair. So are the two things only a window has — `title!` renames one, and
+  `measure!` reports its size — and either may be nil where there is none.
+
+  `av?` is the media plane. It wants a window: a call paints frames into a
+  texture, and there is no texture in a terminal."
+  [{:keys [after! every! title! measure! av?] :or {av? true}}]
+  ;; Before the loop: the settings, the rooms this client has been in, and a
   ;; saved sign-in deciding which mode the connect screen opens in and what it
   ;; says.
   (s/restore-prefs!)
@@ -1307,51 +1324,62 @@
     ;; And then it connects on its own. A remembered account has already said
     ;; what it wants; making it say so again at every launch is a click that
     ;; carries no information. It is a timer rather than a call here so the
-    ;; window is up first — the connect screen with its status is what the
+    ;; screen is up first — the connect screen with its status is what the
     ;; user should be looking at while this happens, and if it fails, the
     ;; error lands somewhere visible.
-    (vidya/after! 150 s/connect!))
-  ;; Calls arrive rather than being asked for, so the media plane is drained
-  ;; every frame whether or not one is up — the drain costs a single integer
-  ;; read when it is not. It has to be a timer: `frame-rgba!` and everything
-  ;; else that touches a node belongs to the loop thread, and this is glimmer's
-  ;; way of getting onto it.
-  (av/init-logging!)
-  ;; Who to tell when a call ends under us rather than at our asking. Set here
-  ;; rather than in frq.av because sending a TAGMSG needs the connection, and
-  ;; that belongs to the state layer.
-  (reset! av/on-dropped s/announce-leave!)
-  (vidya/after! 0 av/install-pump!)
-  ;; The window's width, into a ratom, a few times a second. Polled rather than
+    (after! 150 s/connect!))
+  (when av?
+    ;; Calls arrive rather than being asked for, so the media plane is drained
+    ;; every frame whether or not one is up — the drain costs a single integer
+    ;; read when it is not. It has to be a timer: `frame-rgba!` and everything
+    ;; else that touches a node belongs to the loop thread, and this is
+    ;; glimmer's way of getting onto it.
+    (av/init-logging!)
+    ;; Who to tell when a call ends under us rather than at our asking. Set
+    ;; here rather than in frq.av because sending a TAGMSG needs the
+    ;; connection, and that belongs to the state layer.
+    (reset! av/on-dropped s/announce-leave!)
+    (after! 0 av/install-pump!))
+  ;; The surface's size, into a ratom, a few times a second. Polled rather than
   ;; delivered: the backend reports a size by writing it onto the window node,
   ;; and only what a component derefs re-renders — so the layout follows a drag
-  ;; of the window's edge without every frame touching the tree.
-  ;;
-  ;; The height comes off the same tick, from `screen-size` rather than a
-  ;; second call: it is the window's content size, and the pictures in the
-  ;; conversation are sized against it.
-  (vidya/every! 200 #(let [w (vidya/window-width)
-                           h (long (second (vidya/screen-size)))]
-                       (when (not= w @s/window-width)
-                         (reset! s/window-width w))
-                       (when (not= h @s/window-height)
-                         (reset! s/window-height h))))
+  ;; of the edge without every frame touching the tree.
+  (when measure!
+    (measure!)
+    (every! 200 measure!))
   ;; The nick in the window title, so a second window of this client is told
   ;; apart from the first by the one thing that differs — and so the answer to
   ;; "who am I here?" is on screen without opening Settings.
   ;;
-  ;; Polled, like the width above and for the same reason: the title belongs to
+  ;; Polled, like the size above and for the same reason: the title belongs to
   ;; the window rather than to the tree, so no render puts it there, and the
   ;; nick is only settled once a connection has been made. Twice a second is
   ;; far more often than a nick changes, and a string compare is what a tick
   ;; costs when it has not.
   ;; Seeded with the title `run` opens the window under, so the first tick of
   ;; a launch that has nobody signed in yet sets nothing.
-  (let [shown (atom "frq")]
-    (vidya/every! 500 #(let [title (if (and (s/connected?) (seq @s/form-nick))
-                                     (str "frq — " @s/form-nick)
-                                     "frq")]
-                         (when (not= title @shown)
-                           (reset! shown title)
-                           (vidya/set-title! title)))))
+  (when title!
+    (let [shown (atom "frq")]
+      (every! 500 #(let [title (if (and (s/connected?) (seq @s/form-nick))
+                                 (str "frq — " @s/form-nick)
+                                 "frq")]
+                     (when (not= title @shown)
+                       (reset! shown title)
+                       (title! title))))))
+  nil)
+
+(defn -main [& _]
+  (start! {:after! vidya/after!
+           :every! vidya/every!
+           :title! vidya/set-title!
+           ;; The height comes off the same tick, from `screen-size` rather
+           ;; than a second call: it is the window's content size, and the
+           ;; pictures in the conversation are sized against it.
+           :measure! (fn []
+                       (let [w (vidya/window-width)
+                             h (long (second (vidya/screen-size)))]
+                         (when (not= w @s/window-width)
+                           (reset! s/window-width w))
+                         (when (not= h @s/window-height)
+                           (reset! s/window-height h))))})
   (ui/run app :title "frq" :width 520 :height 860))
