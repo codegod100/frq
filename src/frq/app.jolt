@@ -194,39 +194,40 @@
     ;; and the split view's 900: the list is full-bleed there now, which is
     ;; what the conversation beside it has always been.
     [:vbox {:spacing 8 :margin 12}
-     ;; Your nick in the title, where "Chats" alone said nothing you did not
-     ;; already know. It is what every channel calls you and what your own
-     ;; lines are signed with, and the only other place it showed was Settings.
-     [:title {:label (if (s/connected?) (str "Chats as " @s/form-nick) "Chats")}]
-     [error-note]
-     ;; Join and search are the same shape — a channel box with a button
-     ;; beside it — so they read as one control block rather than a titled
-     ;; card and a stray row: same card, same widths, same gap. The screen
-     ;; title already says what the box is for, which is what the "Join
-     ;; channel" header was doing.
-     [:card {}
-      [:vbox {:spacing 8}
-       [:hbox {:spacing 8}
-        ;; Both kinds of conversation through one box: `#room` joins a
-        ;; channel, `@nick` opens a message to a person.
-        [:entry {:text @s/join-input
-                 :width-request (control-entry-width)
-                 :placeholder "#channel or @nick"
-                 :on-change #(reset! s/join-input %)
-                 :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
-        [:button {:label (if (str/starts-with? @s/join-input "@") "Message" "Join")
-                  :kind :primary
-                  :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]
-       ;; The clear button only shows while there is something to clear: an
-       ;; empty box has nothing to undo, and a dead button beside it reads as
-       ;; one that stopped working.
-       [:hbox {:spacing 8}
-        [:entry {:text @s/search
-                 :width-request (control-entry-width)
-                 :placeholder "Search channels"
-                 :on-change #(reset! s/search %)}]
-        (when (seq @s/search)
-          [:button {:label "✕" :on-click #(reset! s/search "")}])]]]
+     [:vbox {:key :head :spacing 8}
+       ;; Your nick in the title, where "Chats" alone said nothing you did not
+      ;; already know. It is what every channel calls you and what your own
+      ;; lines are signed with, and the only other place it showed was Settings.
+      [:title {:label (if (s/connected?) (str "Chats as " @s/form-nick) "Chats")}]
+      [error-note]
+      ;; Join and search are the same shape — a channel box with a button
+      ;; beside it — so they read as one control block rather than a titled
+      ;; card and a stray row: same card, same widths, same gap. The screen
+      ;; title already says what the box is for, which is what the "Join
+      ;; channel" header was doing.
+      [:card {}
+       [:vbox {:spacing 8}
+        [:hbox {:spacing 8}
+         ;; Both kinds of conversation through one box: `#room` joins a
+         ;; channel, `@nick` opens a message to a person.
+         [:entry {:text @s/join-input
+                  :width-request (control-entry-width)
+                  :placeholder "#channel or @nick"
+                  :on-change #(reset! s/join-input %)
+                  :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
+         [:button {:label (if (str/starts-with? @s/join-input "@") "Message" "Join")
+                   :kind :primary
+                   :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]
+        ;; The clear button only shows while there is something to clear: an
+        ;; empty box has nothing to undo, and a dead button beside it reads as
+        ;; one that stopped working.
+        [:hbox {:spacing 8}
+         [:entry {:text @s/search
+                  :width-request (control-entry-width)
+                  :placeholder "Search channels"
+                  :on-change #(reset! s/search %)}]
+         (when (seq @s/search)
+           [:button {:label "✕" :on-click #(reset! s/search "")}])]]]]
      ;; `:fill-height` so the scroll inside is handed the rest of the window
      ;; rather than the one card it starts out holding, and `:reserve` to keep
      ;; the tabs' strip out of what it may take.
@@ -237,8 +238,9 @@
        (if (seq buffers)
          (for [b buffers] [conversation-row b])
          [:card {} [:dim-label {:label "No conversations yet — join a channel."}]])]]
-     [:separator {}]
-     [tab-bar]]))
+     [:vbox {:key :foot :spacing 8}
+      [:separator {}]
+      [tab-bar]]]))
 
 ;; ---------------------------------------------------------------- chat
 
@@ -1273,21 +1275,32 @@
 ;; ---------------------------------------------------------------- shell
 
 (defn app []
+  ;; Every branch in its own keyed wrapper, and every key different.
+  ;;
+  ;; Without them the screens are all one position in the tree, and moving
+  ;; between two of them is a diff of one screen's children against another's:
+  ;; the reconciler matches what it can by position and patches the rest, which
+  ;; leaves nodes from the screen you left standing in the one you arrived at —
+  ;; the chats screen's join box turning up under its tab bar, an error box
+  ;; from the conversation you were in a moment ago. A key that changes with
+  ;; the screen makes the swap a swap: the old tree comes out whole and the new
+  ;; one goes in whole.
   (cond
-    @s/lightbox [lightbox-screen]
-    @profile/viewing [profile-screen]
-    @s/image-picker [image-picker-screen]
+    @s/lightbox [:vbox {:key :screen-lightbox} [lightbox-screen]]
+    @profile/viewing [:vbox {:key :screen-profile} [profile-screen]]
+    @s/image-picker [:vbox {:key :screen-picker} [image-picker-screen]]
     ;; Wide enough for both, and on one of the two screens that are halves of
     ;; the same thing: the list and the conversation it opens. Discover and
     ;; settings stay whole screens — they are somewhere else, not the other
     ;; half of here.
-    (and (s/wide?) (contains? #{:chats :chat} @s/screen)) [split-screen]
+    (and (s/wide?) (contains? #{:chats :chat} @s/screen))
+    [:vbox {:key :screen-split} [split-screen]]
     :else (case @s/screen
-            :connect [connect-screen]
-            :chat [chat-screen]
-            :discover [discover-screen]
-            :settings [settings-screen]
-            [chats-screen])))
+            :connect [:vbox {:key :screen-connect} [connect-screen]]
+            :chat [:vbox {:key :screen-chat} [chat-screen]]
+            :discover [:vbox {:key :screen-discover} [discover-screen]]
+            :settings [:vbox {:key :screen-settings} [settings-screen]]
+            [:vbox {:key :screen-chats} [chats-screen]])))
 
 (defn -main [& _]
   ;; Before the window: the settings, the rooms this client has been in, and a
