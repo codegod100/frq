@@ -315,6 +315,12 @@
           jolt = joltRuntime;
           default = frq;
 
+          # The interpreter scripts/ is written in, named here so that
+          # scripts/bb can build it. Nothing else in this flake uses it: it is
+          # an output because a shell script cannot ask for `nixpkgs#babashka`
+          # at the version this tree pins, and `.#bb` is exactly that.
+          bb = pkgs.babashka;
+
           # frq and everything it loads, squashed into one runnable file for
           # hosts without Nix. The whole closure rides along — Mesa included,
           # which is not waste: off NixOS the launcher goes through nixGL, and
@@ -366,8 +372,10 @@
 
             # jolt, because the runtime frq is run by should be the flake's
             # too. nixGL for the same reason the launcher reaches for it — see
-            # frqScript.
-            packages = [ jolt (nixGLFor pkgs) ];
+            # frqScript. babashka because scripts/bb prefers one on PATH, and
+            # inside here that should be this one rather than a second copy
+            # built through `.#bb`.
+            packages = [ jolt pkgs.babashka (nixGLFor pkgs) ];
 
             # Read by scripts/run.bb rather than baked into a wrapper: the frq
             # source `just run` runs is the working tree, so the launcher has

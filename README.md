@@ -41,6 +41,11 @@ just lib
 just run
 ```
 
+The scripts under `scripts/` are babashka, reached through `scripts/bb`: a bb
+on `PATH` if there is one — the dev shell puts one there — and otherwise the
+flake's `.#bb`, built once and kept under `build/`. Nothing has to be installed
+for that but Nix.
+
 `just lib` fetches both shared objects this client loads —
 [jolt-native](https://gitlab.com/nandithebull/jolt-native)'s `libvidya`, the
 retained-tree ABI glimmer paints through, and `libjoltmoq`, the AV media plane

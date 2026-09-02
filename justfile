@@ -1,6 +1,7 @@
 # Every recipe here is one line, because the work is in scripts/ — babashka
-# scripts, run through the pin in scripts/bb. A recipe body is a shell script
-# nobody can run on its own; a script in scripts/ is a script.
+# scripts, run through scripts/bb, which finds a bb the way this tree finds
+# everything else. A recipe body is a shell script nobody can run on its own;
+# a script in scripts/ is a script.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 

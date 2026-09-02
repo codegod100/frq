@@ -1,65 +1,50 @@
-#!/usr/bin/env dotslash
+#!/bin/sh
+# babashka, which the scripts here are written in.
+#
+# A build script wants the things a shell is bad at — reading deps.edn, hashing
+# a file set, holding a path in a variable without quoting it three times — and
+# Clojure is already the language this repo is written in.
+#
+# This used to be a DotSlash manifest, pinning a release of babashka the way
+# the native libraries are pinned. It is the flake's now, for the reason the
+# flake exists: a bb from `nixpkgs` is one this tree already names a version
+# of, so a checkout needs nix and nothing else. DotSlash still answers for the
+# desktop libraries — those are jolt-native's releases, which no nixpkgs has —
+# but nothing has to be installed to reach *them* any more either, because the
+# script that fetches them starts here.
+#
+# Three answers, in order:
+#
+#   bb on PATH      the dev shell puts one there, and so does a machine that
+#                   has its own; either is what the caller meant
+#   the flake       built once and kept alive by the symlink under build/,
+#                   which is a gc root as well as a cache
+#   the container   nix is not on every host this runs on — see CLAUDE.md —
+#                   so a host without one re-enters this script where nix is,
+#                   which is where the scripts want to be anyway
+set -e
 
-// babashka, which the scripts here are written in.
-//
-// A build script wants the things a shell is bad at — reading deps.edn,
-// hashing a file set, holding a path in a variable without quoting it three
-// times — and Clojure is already the language this repo is written in. Pinned
-// like every other tool, so the script a person runs at a terminal is the one
-// buck runs in an action.
-//
-// The static Linux builds, because a build machine's glibc is not ours to
-// assume; macOS has no static option and does not need one.
-{
-  "name": "bb",
-  "platforms": {
-    "linux-x86_64": {
-      "size": 26177709,
-      "hash": "sha256",
-      "digest": "eb3edd128276f0b6fbdefcb18dc7d42652a95ea409a81b34f08e36b8ac3cbc3c",
-      "format": "tar.gz",
-      "path": "bb",
-      "providers": [
-        {
-          "url": "https://github.com/babashka/babashka/releases/download/v1.13.220/babashka-1.13.220-linux-amd64-static.tar.gz"
-        }
-      ]
-    },
-    "linux-aarch64": {
-      "size": 28271754,
-      "hash": "sha256",
-      "digest": "0efd6ef36b93ea2f0ae6ebf9d1bcd1a66167c2f41c17e990659aa067654437e8",
-      "format": "tar.gz",
-      "path": "bb",
-      "providers": [
-        {
-          "url": "https://github.com/babashka/babashka/releases/download/v1.13.220/babashka-1.13.220-linux-aarch64-static.tar.gz"
-        }
-      ]
-    },
-    "macos-x86_64": {
-      "size": 26050398,
-      "hash": "sha256",
-      "digest": "ebbfdf159e8d5ee8b7015b15c6558b2039fe76478de893cf317c8c50805340de",
-      "format": "tar.gz",
-      "path": "bb",
-      "providers": [
-        {
-          "url": "https://github.com/babashka/babashka/releases/download/v1.13.220/babashka-1.13.220-macos-amd64.tar.gz"
-        }
-      ]
-    },
-    "macos-aarch64": {
-      "size": 26548984,
-      "hash": "sha256",
-      "digest": "f7d18c3ab11bb4ad0e32a45c1ae40ae25911d5fa06ba4ded07cb90b8af158077",
-      "format": "tar.gz",
-      "path": "bb",
-      "providers": [
-        {
-          "url": "https://github.com/babashka/babashka/releases/download/v1.13.220/babashka-1.13.220-macos-aarch64.tar.gz"
-        }
-      ]
-    }
-  }
-}
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+if command -v bb >/dev/null 2>&1; then
+    exec bb "$@"
+fi
+
+link="$root/build/bb"
+
+if command -v nix >/dev/null 2>&1; then
+    # --out-link rather than --no-link: the path has to survive a gc, and the
+    # symlink is what roots it. Rebuilt only when it is gone or dangling, so
+    # the usual case is one readlink.
+    [ -x "$link/bin/bb" ] || nix build "$root#bb" --out-link "$link" >&2
+    exec "$link/bin/bb" "$@"
+fi
+
+if [ -n "$FRQ_BB_REENTERED" ]; then
+    echo "scripts/bb: no bb and no nix, inside the container too." >&2
+    echo "Install babashka, or put a nix on this machine." >&2
+    exit 1
+fi
+
+exec distrobox enter arch -- bash -lc \
+    "cd $root && FRQ_BB_REENTERED=1 exec scripts/bb \"\$@\"" -- "$@"
