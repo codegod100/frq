@@ -100,13 +100,17 @@ NativeActivity's own library), `libjoltmoq.so` (the media plane) and
 `libjoltapp.so` (frq compiled to a Chez boot image, linked against both).
 
 ```bash
-./android/build-apk.bb run      # build, install, launch on a connected device
-./android/build-apk.bb log      # logcat, filtered
+just apk run                    # build, install, launch on a connected device
+just apk log                    # logcat, filtered
 ```
 
-Needs an SDK and a cross-built Chez in `~/.cache/vidya-chez-android`; the NDK
-comes down through `scripts/android-ndk.dotslash`. `just apk` builds the same
-APK as a buck2 graph, which is the incremental way in.
+Needs nothing on the machine but Nix and an `adb`: the build is
+[`nix/android.nix`](nix/android.nix), and the SDK, the NDK, the arm64 Chez
+cross target and the OpenSSL the app carries are all built or fetched there.
+`nix build .#apk` is the same thing without adb; on a machine with a remote
+builder, hand it the store rather than a `builders` entry —
+`FRQ_NIX_STORE=ssh-ng://eu.nixbuild.net just apk`, and see the header of
+`nix/android.nix` for why.
 
 TLS does not work there: jolt reaches OpenSSL through the dynamic loader, and
 Android has no public `libssl` to load. The connect screen falls back to the

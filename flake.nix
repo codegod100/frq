@@ -274,8 +274,8 @@
           # `legacyPackages` everything above uses. Confined to the Android
           # outputs: `nix build` of frq itself never evaluates it.
           #
-          # The NDK here is r29, which is the version scripts/android-ndk.dotslash
-          # pins and the one the pinned libvidya was built with.
+          # The NDK here is r29, which is the one the pinned libvidya was
+          # built with.
           androidPkgs = import nixpkgs {
             inherit (pkgs.stdenv.hostPlatform) system;
             config = {

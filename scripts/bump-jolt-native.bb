@@ -9,16 +9,23 @@ exec "$(dirname "$0")/bb" "$0" "$@"
 ;;     scripts/bump-jolt-native.bb v0.1.3     # a named one
 ;;
 ;; A jolt-native bump is four facts in three places: the tag, the URL, the size
-;; and the digest of each archive in scripts/*.dotslash, the release's commit in
-;; deps.edn, and the table buck reads, which is generated from the first. Done
-;; by hand it is a lot of copying between a browser and a sha256sum, and the
-;; failure mode is a manifest that still says v0.1.2 while its digest is v0.1.3's
-;; — which DotSlash catches, but only on the machine that next fetches it.
+;; and the digest of each archive in scripts/*.dotslash, the same URL and digest
+;; for the Android archives in nix/android.nix, and the release's commit in
+;; deps.edn. Done by hand it is a lot of copying between a browser and a
+;; sha256sum, and the failure mode is a pin that still says v0.1.2 while its
+;; digest is v0.1.3's — which DotSlash catches, but only on the machine that
+;; next fetches it, and which fetchurl catches at build time and no sooner.
+;;
+;; The two places exist because the two builds fetch differently and neither can
+;; read the other's pin: `just lib` and a released-halves run resolve DotSlash
+;; manifests, and the APK is a nix derivation, whose inputs have to be fetchurl.
+;; The digests are the same bytes either way — DotSlash's `digest` is over the
+;; archive, which is what fetchurl hashes too.
 ;;
 ;; So: ask GitLab what the release holds, fetch each archive once, weigh it,
-;; write the manifests back, put the release's commit in deps.edn — which is
-;; what jolt resolves glimmer-vidya from, and so what the boot image compiles
-;; against — and re-run dotslash-to-buck.
+;; write the manifests and nix/android.nix back, and put the release's commit in
+;; deps.edn — which is what jolt resolves glimmer-vidya from, and so what the
+;; boot image compiles against.
 ;;
 ;; Nothing here decides whether the new release is a good idea. It only makes
 ;; the tree say one version instead of two.
@@ -126,6 +133,37 @@ exec "$(dirname "$0")/bb" "$0" "$@"
     (spit (str file) (str head (json/generate-string (assoc json "platforms" updated) {:pretty pretty}) "\n"))
     (println (str "  " (fs/file-name file)))))
 
+;; nix/android.nix fetches two of the same archives as `pkgs.fetchurl`, because
+;; a derivation cannot resolve a DotSlash manifest: the fetch is the input, and
+;; an input has to be a fixed-output derivation with the digest written down.
+;; Rewritten as text for the same reason deps.edn is — the file is mostly the
+;; comments explaining each step, and there is no round-tripping Nix as data
+;; here anyway.
+;;
+;; Every fetchurl whose url points at the repo, whatever it is called: a third
+;; archive appearing in android.nix should move with the other two rather than
+;; be remembered about.
+(defn bump-nix! [tmp tag]
+  (let [file (fs/path root "nix" "android.nix")
+        text (slurp (str file))
+        ;; url and sha256 as one match, so the pair moves together. Anything
+        ;; between them — a comment, another attribute — would not match, and
+        ;; not matching is the safe direction: it leaves the pin alone and says
+        ;; nothing was written.
+        pattern (re-pattern (str "(url\\s*=\\s*\")(" (java.util.regex.Pattern/quote repo)
+                                 "[^\"]*)(\";\\s*\n\\s*sha256\\s*=\\s*\")([^\"]*)(\")"))
+        seen (atom [])
+        updated (str/replace text pattern
+                             (fn [[_ head url mid _ tail]]
+                               (let [new-url (retag url (tag-of url) tag)
+                                     {:keys [digest]} (weigh tmp new-url)]
+                                 (swap! seen conj (last (str/split new-url #"/")))
+                                 (str head new-url mid digest tail))))]
+    (when (empty? @seen)
+      (paths/die (str "no fetchurl in " file " points at " repo)))
+    (spit (str file) updated)
+    (doseq [name @seen] (println (str "  nix/android.nix " name)))))
+
 ;; deps.edn takes glimmer-vidya as a git dependency, and the boot image is
 ;; compiled from the source root jolt resolves that to. Replaced as text rather
 ;; than round-tripped as EDN: the file is mostly comments explaining why each
@@ -152,7 +190,7 @@ exec "$(dirname "$0")/bb" "$0" "$@"
   (try
     (doseq [m files] (rewrite m tmp tag))
     (finally (fs/delete-tree tmp)))
+  (bump-nix! tmp tag)
   (bump-deps! commit)
-  (p/shell (str (fs/path here "dotslash-to-buck")))
   (println (str "\nNow: git diff, then `just lib` and `just apk` — the pins are "
                 "written, nothing is built.")))

@@ -9,8 +9,9 @@ exec "$(dirname "$0")/bb" "$0" "$@"
 ;; plane. They come out of one archive because they are built together, and
 ;; they land in build/lib because a loader wants one directory. `just run` does
 ;; not come through here — running a change to jolt-native means building it,
-;; which is what the dev shell is for — so this is the released half: what the
-;; APK and the buck2 build take, and what a run of the last release takes.
+;; which is what the dev shell is for — so this is the released half: the same
+;; bytes the APK takes through nix/android.nix, and what a run of the last
+;; release takes.
 ;;
 ;; Nothing is compiled here. The pinned bytes are the bytes: this repo used to
 ;; clone jolt-native and cargo-build it, which meant a Rust toolchain, a build

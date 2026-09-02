@@ -22,8 +22,8 @@ exec "$(dirname "$0")/bb" "$0" "$@"
 ;;
 ;; And deliberately not the scripts/*.dotslash pins either, which is what this
 ;; used to do. Those name a release; a change to jolt-native is by definition
-;; not in one yet. `just lib` still fetches them — the APK and the buck2 build
-;; take the released bytes — but a run does not.
+;; not in one yet. `just lib` still fetches them, and the APK takes the same
+;; released bytes through nix/android.nix — but a run does not.
 (require '[babashka.classpath :as cp])
 (cp/add-classpath (str (babashka.fs/parent *file*)))
 (require '[frq.paths :as paths]
@@ -45,18 +45,13 @@ exec "$(dirname "$0")/bb" "$0" "$@"
 ;; a remote builder has likely built already. FRQ_MAX_JOBS is the way out on a
 ;; machine with no builder configured: FRQ_MAX_JOBS=auto.
 (when-not (System/getenv "JOLT_NATIVE_LIB")
-  (let [args ["nix" "develop" root "--max-jobs" (paths/env "FRQ_MAX_JOBS" "0")
-              "--command" self]
-        ;; nix is not on every host this runs on: on the machine this was
-        ;; written for it lives in an Arch distrobox, at the same path — which
-        ;; is why the container is entered rather than the tree copied into it.
-        ;; See CLAUDE.md.
-        cmd (if (fs/which "nix")
-              (concat args *command-line-args*)
-              (concat ["distrobox" "enter" "arch" "--" "bash" "-lc"
-                       (str "cd " root " && exec " (str/join " " args) " \"$@\"")
-                       "--"]
-                      *command-line-args*))]
+  ;; Getting to a nix on a host that may not have one is paths/nix's problem,
+  ;; and scripts/apk.bb has the same one.
+  (let [cmd (paths/nix root
+                       ["nix" "develop" root
+                        "--max-jobs" (paths/env "FRQ_MAX_JOBS" "0")
+                        "--command" self]
+                       *command-line-args*)]
     (System/exit (:exit @(apply p/process {:inherit true :dir root} cmd)))))
 
 ;; The Jolt halves that have to match those objects. glimmer-vidya lives inside

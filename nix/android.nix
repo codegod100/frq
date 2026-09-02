@@ -1,13 +1,15 @@
-# The APK, as derivations rather than as a buck2 graph.
+# The APK, as derivations.
 #
-# android/BUCK builds the same things, and does it better for a person at
-# a terminal: it is incremental, and it fetches jolt-native's release by digest
-# rather than rebuilding the world. Nothing here replaces that. What this adds
-# is the other build — from nothing, on a
-# machine with no Android SDK, no NDK, no hand-built Chez cross target and no
-# ~/.cache at all:
+# The only APK build there is: this replaced a buck2 graph and the script
+# before it, both of which named an Android SDK, an NDK, a hand-built Chez
+# cross target and an OpenSSL by absolute path and stopped when one was
+# missing. Every one of those is built or fetched here instead, so this works
+# from nothing on a machine with none of them and no ~/.cache at all:
 #
 #   nix build .#apk
+#
+# `just apk` is the same build with the store path handed to adb afterwards;
+# see scripts/apk.bb.
 #
 # On a machine with a remote builder configured, prefer
 #
@@ -20,9 +22,9 @@
 # whole graph stays there, only .drv files go up, and the builder fetches
 # Google's zip over its own link.
 #
-# Every path .buckconfig.local answers for is answered here by the store
-# instead. The steps are in the same order and do the same work; where a
-# genrule read `read_root_config`, a derivation takes an argument.
+# The steps are the ones the graph before it ran, in the same order; where a
+# genrule read a path out of `read_root_config`, a derivation takes an
+# argument.
 { pkgs, lib, self, chez-src, jolt-native, glimmer, joltAndroid, androidSdk, ndk }:
 
 let
@@ -45,9 +47,12 @@ let
   ndkBin = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/bin";
   cc = "${ndkBin}/aarch64-linux-android${apiLevel}-clang";
 
-  # What comes out of jolt-native's releases, by the digests scripts/*.dotslash
-  # pin. Same bytes buck fetches; DotSlash's `digest` is over the archive,
-  # which is what fetchurl hashes too.
+  # What comes out of jolt-native's releases. These two pins are the Android
+  # half of what `just bump` moves — the desktop half stays in
+  # scripts/*.dotslash, and the tag written here is the one written there, so
+  # a phone and a laptop run the same release. Do not edit them by hand:
+  # bump-jolt-native.bb fetches each archive, weighs it, and writes both the
+  # url and the digest below.
   #
   # One archive, two libraries: libvidya (the retained-tree UI) and libjoltmoq
   # (the AV media plane). They are built together and only make sense together
@@ -170,10 +175,10 @@ let
   xpatch = "${chezAndroid}/xc-tarm64le/s/xpatch";
 
   # --- the Jolt half --------------------------------------------------------
-  # frq's Scheme, cross-compiled to an arm64 boot image. android/build-jolt-boot.bb
-  # does this by hand-writing a deps.edn of :paths and then driving Chez; so
-  # does this, for the same reason — there is no dependency resolution inside a
-  # cross compile, so every source root deps.edn would have resolved is named.
+  # frq's Scheme, cross-compiled to an arm64 boot image. The deps.edn below is
+  # written out by hand rather than resolved: there is no dependency resolution
+  # inside a cross compile, so every source root deps.edn would have resolved is
+  # named as a :path instead.
   #
   # The jolt that runs it is the fork, not upstream and not the one the desktop
   # package builds: upstream reads the socket address out of `struct addrinfo`
@@ -374,7 +379,8 @@ let
 
   # Aligned and signed with a debug key. The key is generated here rather than
   # read from ~/.android, which is the one place this build is deliberately
-  # not the buck one: a keystore outside the store would make the output
+  # not what the builds before it did: a keystore outside the store would make
+  # the output
   # depend on the machine, and a release key has no business in the store at
   # all. So this output is installable and not reproducible — keytool stamps
   # the certificate with the time — and anything meant for a store should be
