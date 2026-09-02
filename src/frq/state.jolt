@@ -146,6 +146,27 @@
 (defonce access-tick (atom 0))
 (defonce search (atom ""))
 
+;; Comings and goings, hidden or not. A quiet room reads better with them —
+;; they are how you notice someone arriving — and a busy one drowns in them,
+;; so it is the reader's call. Only other people's: your own "Joined #chan" is
+;; the answer to something you just did.
+(defonce hide-join-part? (atom false))
+
+(defn- save-prefs! []
+  (future (store/save-prefs! (assoc (store/load-prefs)
+                                    :hide-join-part? @hide-join-part?))))
+
+(defn toggle-hide-join-part! []
+  (swap! hide-join-part? not)
+  (save-prefs!))
+
+(defn restore-prefs!
+  "Bring back the saved settings at startup."
+  []
+  (let [prefs (store/load-prefs)]
+    (reset! hide-join-part? (boolean (:hide-join-part? prefs)))
+    prefs))
+
 (defn connected? [] (some? @conn))
 
 (declare channel-order request-names!)
@@ -656,7 +677,8 @@
                    ;; already there is just a second line of noise.
                    (when fresh? (push-message! ch "*" (str "Joined " ch))))
                  (do (add-user! ch from)
-                     (push-message! ch "*" (str from " joined")))))
+                     (when-not @hide-join-part?
+                       (push-message! ch "*" (str from " joined"))))))
       ;; NAMES, a line at a time. The channel is the parameter that names one:
       ;; the reply is `<us> <symbol> <channel> :<names>`, and a server that
       ;; leaves the symbol out shifts everything before the list along by one.
@@ -679,7 +701,8 @@
                                         (assoc-in [ch :joining?] false)
                                         (assoc-in [ch :users] {})))
                  (do (remove-user! ch from)
-                     (push-message! ch "*" (str from " left")))))
+                     (when-not @hide-join-part?
+                       (push-message! ch "*" (str from " left"))))))
       "KICK" (let [[ch who] params]
                (if (= who @form-nick)
                  (swap! channels #(-> % (assoc-in [ch :joined?] false)
@@ -691,8 +714,9 @@
       ;; buffer the person was listed in — and said out loud only where they
       ;; were, which is what keeps a stranger's rename out of a quiet room.
       "QUIT" (let [rooms (keep (fn [[k v]] (when (get (:users v) from) k)) @channels)]
-               (doseq [ch rooms]
-                 (push-message! ch "*" (str from " quit")))
+               (when-not @hide-join-part?
+                 (doseq [ch rooms]
+                   (push-message! ch "*" (str from " quit"))))
                (remove-user-everywhere! from))
       "NICK" (let [new-nick (last params)
                    rooms (keep (fn [[k v]] (when (get (:users v) from) k)) @channels)]

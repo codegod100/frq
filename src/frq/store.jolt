@@ -71,3 +71,29 @@
       (host/delete-file! (session-file)))
     true
     (catch Exception _ false)))
+
+(defn prefs-file [] (str (config-dir) "/prefs.edn"))
+
+(defn load-prefs
+  "The user's settings, or an empty map. Like the channel list beside it these
+  are names and flags rather than secrets, so it is an ordinary file — and one
+  that will not parse is treated as absent rather than as an error worth
+  stopping the launch for."
+  []
+  (let [path (prefs-file)]
+    (or (when (host/file-exists? path)
+          (try
+            (let [m (edn/read-string (slurp path))]
+              (when (map? m) m))
+            (catch Exception _ nil)))
+        {})))
+
+(defn save-prefs!
+  "Write the settings map whole. There are few enough of them that merging is
+  the caller's job, and a partial write would silently drop the rest."
+  [prefs]
+  (try
+    (host/mkdirs! (config-dir))
+    (spit (prefs-file) (pr-str prefs))
+    true
+    (catch Exception _ false)))

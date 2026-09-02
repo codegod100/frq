@@ -1235,6 +1235,12 @@
        [:button {:label "Back to connect"
                  :on-click #(reset! s/screen :connect)}])]]
    [:card {}
+    [:title-2 {:label "Messages"}]
+    [:checkbutton {:label "Hide join/part messages"
+                   :active @s/hide-join-part?
+                   :on-toggled s/toggle-hide-join-part!}]
+    [:dim-label {:label "Hides other people arriving, leaving and quitting. The people panel still follows who is here."}]]
+   [:card {}
     [:title-2 {:label "frq"}]
     [:dim-label {:label "freeq client in jolt — glimmer components on the Vidya/egui backend."}]
     [:button {:label "Quit" :on-click vidya/quit!}]]
@@ -1261,8 +1267,10 @@
             [chats-screen])))
 
 (defn -main [& _]
-  ;; Before the window: the rooms this client has been in, and a saved sign-in
-  ;; deciding which mode the connect screen opens in and what it says.
+  ;; Before the window: the settings, the rooms this client has been in, and a
+  ;; saved sign-in deciding which mode the connect screen opens in and what it
+  ;; says.
+  (s/restore-prefs!)
   (s/restore-channels!)
   (when (s/restore-session!)
     ;; And then it connects on its own. A remembered account has already said
