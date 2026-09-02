@@ -29,8 +29,15 @@
       flake = false;
     };
 
+    # v0.1.3, which is the rev deps.edn and the scripts/*.dotslash pins both
+    # name. Pinned, and pinned to that: this input carries both halves of
+    # glimmer-vidya — libvidya, and the Jolt side that binds it — so an
+    # unpinned `main` is a build whose native half is free to sit at a
+    # different commit from the tree that talks to it. It did, and what the
+    # drift cost was silence: the Jolt half sent a reaction pill's hover card
+    # to a libvidya with no handler for one, and the pill said nothing.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=fd0e21a6c5d745ff9d134f92f909665454a7a1c9";
       flake = false;
     };
 
