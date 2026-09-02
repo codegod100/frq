@@ -162,19 +162,6 @@
 
 (def ^:private sidebar-width 320)
 
-(defn- control-entry-width
-  "How wide the join and search boxes ask to be.
-
-  A fixed 380 is right on a window that holds the list alone, and too wide for
-  the list as a split view's left column: the row it sits on is only
-  `sidebar-width` across, and an entry that asks for more than remains pushes
-  the button beside it onto a row of its own — Join under the box rather than
-  next to it. Beside the entry go the button and the gap, and around the row
-  the card's and the page's padding, so the column's share is what is left of
-  the sidebar after those."
-  []
-  (if (s/wide?) (- sidebar-width 130) 380))
-
 (defn- below-list []
   ;; What the strip under the list needs, counted: the gap after the list, the
   ;; separator, the gap under it, the tab bar's row of buttons and the margin
@@ -207,27 +194,35 @@
       ;; channel" header was doing.
       [:card {}
        [:vbox {:spacing 8}
-        [:hbox {:spacing 8}
+        ;; Button first and `:align :end`, so the row is laid out from its
+        ;; right edge: the button is placed against that edge and the box takes
+        ;; what is left. An entry asks for whatever remains where it stands, so
+        ;; a box placed first takes the row and pushes the button onto a line of
+        ;; its own — Join under the box rather than beside it — and a box given
+        ;; a fixed width only holds that off until the window is narrower than
+        ;; the number. Laid out from the right the box is the part that gives,
+        ;; at every width, in the frame the drag happens rather than the one
+        ;; after the window is next measured.
+        [:hbox {:spacing 8 :align :end}
+         [:button {:label (if (str/starts-with? @s/join-input "@") "Message" "Join")
+                   :kind :primary
+                   :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
          ;; Both kinds of conversation through one box: `#room` joins a
          ;; channel, `@nick` opens a message to a person.
          [:entry {:text @s/join-input
-                  :width-request (control-entry-width)
                   :placeholder "#channel or @nick"
                   :on-change #(reset! s/join-input %)
-                  :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]
-         [:button {:label (if (str/starts-with? @s/join-input "@") "Message" "Join")
-                   :kind :primary
-                   :on-click #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]
+                  :on-activate #(do (s/join! @s/join-input) (reset! s/join-input ""))}]]
         ;; The clear button only shows while there is something to clear: an
         ;; empty box has nothing to undo, and a dead button beside it reads as
-        ;; one that stopped working.
-        [:hbox {:spacing 8}
-         [:entry {:text @s/search
-                  :width-request (control-entry-width)
-                  :placeholder "Search channels"
-                  :on-change #(reset! s/search %)}]
+        ;; one that stopped working. It leads the row for the same reason the
+        ;; Join button does, and the box gives up the width it takes.
+        [:hbox {:spacing 8 :align :end}
          (when (seq @s/search)
-           [:button {:label "✕" :on-click #(reset! s/search "")}])]]]]
+           [:button {:label "✕" :on-click #(reset! s/search "")}])
+         [:entry {:text @s/search
+                  :placeholder "Search channels"
+                  :on-change #(reset! s/search %)}]]]]]
      ;; `:fill-height` so the scroll inside is handed the rest of the window
      ;; rather than the one card it starts out holding, and `:reserve` to keep
      ;; the tabs' strip out of what it may take.
