@@ -3,49 +3,41 @@
 exec "$(dirname "$0")/bb" "$0" "$@"
 )
 
-;; The app.
+;; The app, from this working tree.
 ;;
 ;;   run.bb [args...]
 ;;
-;; `nix run .#frq`, which is the whole build: the native libraries, the jolt
-;; runtime, the dependency graph, and a launcher that puts nixGL in front off
-;; NixOS so the window opens. Nothing here needs `just lib` first.
+;; Everything but the source is pinned: jolt comes from scripts/jolt.dotslash
+;; and the two native libraries from scripts/lib*.dotslash, fetched by digest
+;; and linked into build/lib, which is the one directory the loader is pointed
+;; at. `just lib` is done here rather than asked for — the pins say what those
+;; bytes are, so there is nothing for a person to decide before running.
 ;;
-;; Nix is not on every host that has this checkout — on the developer's it
-;; lives in the Arch distrobox — so a host without it is not an error, it is
-;; the same command run one layer in. The worktree path is the same inside the
-;; container as outside, which is what lets the `cd` be this path verbatim.
-(require '[babashka.classpath :as cp])
-(cp/add-classpath (str (babashka.fs/parent *file*)))
-(require '[frq.paths :as paths]
-         '[babashka.fs :as fs]
-         '[babashka.process :as p]
-         '[clojure.string :as str])
+;; Deliberately not `nix run .#frq`. That builds the flake's own copy of the
+;; source, which is the tree as git has it — so an edit that has not been
+;; committed, or has been committed on a branch the command was not pointed at,
+;; runs as whatever was there before, silently. A run that is meant to answer
+;; "does my change work" has to be the files on disk.
+(require '[babashka.fs :as fs]
+         '[babashka.process :as p])
 
 (def root (str (fs/canonicalize (fs/path (fs/parent *file*) ".."))))
-(def box (paths/env "FRQ_DISTROBOX" "arch"))
+(def lib (str (fs/path root "build" "lib")))
 
-(defn quote-arg
-  "One argument, safe for a shell that will read the whole line as a string."
-  [s]
-  (str "'" (str/replace (str s) "'" "'\\''") "'"))
+;; The pinned jolt — scripts/jolt is a DotSlash script, so running it is
+;; fetching it. Off linux-x86_64 the pin has no asset and the fallback is
+;; whatever `jolt` is on PATH, which is what that manifest says to do.
+(def jolt
+  (let [pin (fs/path root "scripts" "jolt")]
+    (if (and (fs/exists? pin) (fs/which "dotslash")) (str pin) "jolt")))
 
-;; `--` and then the args: everything past it is the app's, not nix's.
-(def nix-args
-  (concat ["nix" "run" ".#frq"]
-          (when (seq *command-line-args*) (cons "--" *command-line-args*))))
-
-(def command
-  (if (fs/which "nix")
-    (cons {:dir root} nix-args)
-    (do
-      (when-not (fs/which "distrobox")
-        (paths/die "no nix and no distrobox — install nix, or set FRQ_DISTROBOX"
-                   "to a container that has it."))
-      [{} "distrobox" "enter" box "--"
-       "bash" "-lc" (str "cd " (quote-arg root) " && "
-                         (str/join " " (map quote-arg nix-args)))])))
+(p/shell (str (fs/path root "scripts" "lib.bb")))
 
 (System/exit
- (:exit @(apply p/process (assoc (first command) :inherit true)
-                (rest command))))
+ (:exit @(apply p/process
+                {:inherit true
+                 :dir root
+                 :extra-env {"LD_LIBRARY_PATH"
+                             (str lib (when-let [p (System/getenv "LD_LIBRARY_PATH")]
+                                        (str ":" p)))}}
+                jolt "-M:frq" *command-line-args*)))
