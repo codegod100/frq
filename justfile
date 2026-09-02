@@ -8,7 +8,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Both native libraries, cloning jolt-native at the pinned commit if needed.
+# Both native libraries, out of the release pins. `run` builds them instead.
 lib:
     scripts/lib.bb
 
@@ -28,6 +28,6 @@ bump tag="":
 sync-dist:
     scripts/dotslash-to-buck
 
-# The app.
+# The app: this tree's source on the flake's everything-else, in the dev shell.
 run *args:
     scripts/run.bb {{args}}

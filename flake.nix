@@ -86,16 +86,39 @@
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = f:
         nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+
+      # Mesa, despite the name: it covers Intel and AMD alike. The NVIDIA
+      # wrappers are the ones that need --impure (they read the host kernel
+      # module's version), which is why this only ever reaches for Intel.
+      nixGLFor = pkgs: nixgl.packages.${pkgs.stdenv.hostPlatform.system}.nixGLIntel;
+
+      # egui reaches for these with dlopen rather than linking them, so being
+      # in the cdylib's buildInputs is not enough — whatever starts frq has to
+      # put them on the loader path itself. Without libX11 here, vidya reports
+      # "X11 unavailable", falls back to Wayland, and winit refuses to build a
+      # second event loop after the failed first one.
+      #
+      # Out here rather than beside the package that first needed them: the
+      # dev shell starts frq too, on this tree's source rather than the store's
+      # copy of it, and a second copy of this list is a second chance for the
+      # two ways of running to disagree about what the window needs.
+      runtimeLibsFor = pkgs: with pkgs; [
+        libGL
+        libxkbcommon
+        wayland
+        xorg.libX11
+        xorg.libXcursor
+        xorg.libXi
+        xorg.libXrandr
+        vulkan-loader
+      ];
     in
     {
       packages = forEachSystem (pkgs:
         let
           inherit (pkgs) lib;
 
-          # Mesa, despite the name: it covers Intel and AMD alike. The NVIDIA
-          # wrappers are the ones that need --impure (they read the host kernel
-          # module's version), which is why this only ever reaches for Intel.
-          nixGL = nixgl.packages.${pkgs.stdenv.hostPlatform.system}.nixGLIntel;
+          nixGL = nixGLFor pkgs;
 
           # libvidya (the retained-tree ABI glimmer-vidya binds, on egui) and
           # libjoltmoq (the AV media plane). One workspace, two cdylibs.
@@ -202,21 +225,7 @@
           # answers for both.
           glimmerVidya = "${jolt-native}/jolt/glimmer-vidya";
 
-          # egui reaches for these with dlopen rather than linking them, so
-          # being in the cdylib's buildInputs is not enough — the launcher has
-          # to put them on the loader path itself. Without libX11 here, vidya
-          # reports "X11 unavailable", falls back to Wayland, and winit refuses
-          # to build a second event loop after the failed first one.
-          runtimeLibs = with pkgs; [
-            libGL
-            libxkbcommon
-            wayland
-            xorg.libX11
-            xorg.libXcursor
-            xorg.libXi
-            xorg.libXrandr
-            vulkan-loader
-          ];
+          runtimeLibs = runtimeLibsFor pkgs;
 
           # The project as jolt sees it: source, deps.edn, nothing else.
           frqSource = pkgs.runCommand "frq-source" { } ''
@@ -302,6 +311,57 @@
         // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           inherit (android) apk chezAndroid joltBoot libjoltapp;
           apk-unsigned = android.apk-unsigned;
+        });
+
+      # Where `just run` runs, and — because entering it realises what it
+      # names — what builds the half of frq that is not this working tree.
+      #
+      # The two halves, and the split is the whole point of the shell. The frq
+      # source is the files on disk, uncommitted edits and all. Everything
+      # under it — jolt, glimmer, glimmer-vidya, both native objects — is the
+      # flake's, at the revs flake.lock names, so a run says what it ran
+      # against and both halves of glimmer-vidya move together. That is the
+      # drift the `jolt-native` input's comment is about, and a pin frq can
+      # answer for is worth more here than the convenience of a checkout.
+      #
+      # `native` is the cargo build of that input rather than jolt-native's own
+      # buck2 graph, which is a compromise and not a free one: buck2 is what
+      # its CI runs and what makes its releases, and its cpal has the pipewire
+      # feature this one does not, so device *names* in a call come out as ALSA
+      # PCMs. What it buys is a derivation — one thing nixbuild.net can be
+      # handed. The buck2 build fetches its rustc, zig and every third-party
+      # crate as it goes and writes buck-out into the tree it builds; a sandbox
+      # with no network and a read-only store is the one place it cannot run,
+      # so on a remote builder it is not a slower option but no option at all.
+      #
+      # Nothing here says "nixbuild", though: it is a plain derivation, and
+      # where it gets built is the machine's business. scripts/run.bb asks for
+      # the shell with --max-jobs 0, which is what sends it to the `builders`
+      # entry rather than compiling egui on a laptop.
+      devShells = forEachSystem (pkgs:
+        let
+          inherit (pkgs) lib;
+          inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) jolt native;
+        in
+        {
+          default = pkgs.mkShellNoCC {
+            name = "frq";
+
+            # jolt, because the runtime frq is run by should be the flake's
+            # too. nixGL for the same reason the launcher reaches for it — see
+            # frqScript.
+            packages = [ jolt (nixGLFor pkgs) ];
+
+            # Read by scripts/run.bb rather than baked into a wrapper: the frq
+            # source `just run` runs is the working tree, so the launcher has
+            # to be a script in that tree and the shell has to hand it its
+            # answers. Naming these is also what makes the shell build them.
+            JOLT_NATIVE_LIB = "${native}/lib";
+            GLIMMER_SRC = glimmer;
+            GLIMMER_VIDYA_SRC = "${jolt-native}/jolt/glimmer-vidya";
+            FRQ_LIB_PATH = lib.makeLibraryPath (runtimeLibsFor pkgs);
+            NIXGL = "${nixGLFor pkgs}/bin/nixGLIntel";
+          };
         });
 
       apps = forEachSystem (pkgs: {
