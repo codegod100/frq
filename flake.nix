@@ -41,6 +41,17 @@
       flake = false;
     };
 
+    # The terminal backend, which v0.1.3 has not got: crates/jolt-tui (the tree
+    # ABI over a grid of cells) and jolt/glimmer-tui (the jolt side that binds
+    # it). Its own input rather than a bump of the one above, deliberately —
+    # the window half stays pinned to the release the rest of the tree names,
+    # and only `tui` evaluates this. When the backend ships in a release the
+    # two become one pin again.
+    jolt-native-tui = {
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=3cfee15a9d938584f526f606f853771eaad7f56c";
+      flake = false;
+    };
+
     # Chez itself, because the APK needs a cross target nixpkgs does not
     # build: frq's Scheme is compiled to an arm64 boot image, and that wants
     # Chez's own `tarm64le` workarea — boot files, xpatch and libkernel.a.
@@ -81,7 +92,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, chez-src, jolt-android-src, nixgl, nix-appimage }:
+  outputs = { self, nixpkgs, jolt-src, jolt-native, jolt-native-tui, glimmer, chez-src, jolt-android-src, nixgl, nix-appimage }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = f:
@@ -148,6 +159,44 @@
             '';
           };
 
+          # libjolttui alone, out of the tui input's workspace. One crate
+          # rather than the whole of it: the terminal backend's dependencies
+          # are crossterm and a width table, where libvidya's and libjoltmoq's
+          # are egui, openh264 and v4l — none of which a terminal needs, and
+          # all of which this would otherwise build a second time at a second
+          # rev.
+          nativeTui = pkgs.rustPlatform.buildRustPackage {
+            pname = "jolt-tui";
+            version = "0.1.0";
+            src = jolt-native-tui;
+
+            cargoLock = {
+              lockFile = "${jolt-native-tui}/Cargo.lock";
+              allowBuiltinFetchGit = true;
+            };
+
+            nativeBuildInputs = with pkgs; [ pkg-config cmake rustPlatform.bindgenHook ];
+            buildInputs = with pkgs; [ alsa-lib pipewire openssl libxkbcommon wayland libGL ];
+
+            cargoBuildFlags = [ "-p" "jolt-tui" ];
+
+            # As above: upstream's .cargo/config.toml drives the build through
+            # DotSlash, which a sandbox has no network for.
+            postPatch = ''
+              rm -f .cargo/config.toml
+            '';
+
+            V4L2R_VIDEODEV2_H_PATH = "${pkgs.linuxHeaders}/include";
+            doCheck = false;
+
+            installPhase = ''
+              runHook preInstall
+              mkdir -p "$out/lib"
+              install -m644 target/*/release/libjolttui.so "$out/lib/"
+              runHook postInstall
+            '';
+          };
+
           # Jolt itself: Clojure on Chez, built the way its own flake builds it.
           # A function, because there are two of them — upstream for the
           # desktop, and the Bionic-addrinfo fork for the boot image the APK
@@ -201,6 +250,7 @@
           # deps.edn asks for glimmer by git — the top-level override below
           # answers for both.
           glimmerVidya = "${jolt-native}/jolt/glimmer-vidya";
+          glimmerTui = "${jolt-native-tui}/jolt/glimmer-tui";
 
           # egui reaches for these with dlopen rather than linking them, so
           # being in the cdylib's buildInputs is not enough — the launcher has
@@ -242,6 +292,31 @@
               -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-vidya {:local/root "${glimmerVidya}"}}}' \
               -M:frq "$@"
           '';
+
+          # The same source, the other backend. No GL, no nixGL and no X11 —
+          # a terminal is the one surface that needs nothing from the host but
+          # a terminal, which is the reason this output exists.
+          tuiScript = pkgs.writeShellScript "frq-tui" ''
+            export LD_LIBRARY_PATH="${nativeTui}/lib:${native}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            cd ${frqSource}
+
+            exec ${joltRuntime}/bin/jolt \
+              -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-vidya {:local/root "${glimmerVidya}"} nandi/glimmer-tui {:local/root "${glimmerTui}"}}}' \
+              -m frq.tui "$@"
+          '';
+
+          tui = pkgs.runCommand "frq-tui-0.1.0"
+            {
+              meta = {
+                description = "frq's screens in a terminal";
+                mainProgram = "frq-tui";
+                platforms = systems;
+              };
+            }
+            ''
+              mkdir -p "$out/bin"
+              ln -s ${tuiScript} "$out/bin/frq-tui"
+            '';
 
           frq = pkgs.runCommand "frq-0.1.0"
             {
@@ -286,6 +361,7 @@
         in
         {
           inherit native frq;
+          inherit nativeTui tui;
           jolt = joltRuntime;
           default = frq;
 
@@ -308,6 +384,10 @@
         default = {
           type = "app";
           program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.frq}/bin/frq";
+        };
+        tui = {
+          type = "app";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.tui}/bin/frq-tui";
         };
       });
     };

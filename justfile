@@ -31,3 +31,7 @@ sync-dist:
 # The app.
 run *args:
     scripts/run.bb {{args}}
+
+# The same screens in a terminal. `just tui --headless` prints one screenshot.
+tui *args:
+    scripts/tui.bb {{args}}

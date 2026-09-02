@@ -1,0 +1,123 @@
+(ns frq.tui
+  "frq's own screens, painted into a terminal.
+
+  The components in `frq.app` are hiccup over glimmer's reconciler, and the
+  reconciler does not know what is under it — so the same tree that egui paints
+  as a window goes through `libjolttui` as cells instead. Nothing in `frq.app`
+  changes; this namespace only picks the other backend and gives it a screen.
+
+  Requiring order is the whole trick. `frq.app` pulls in `glimmer-vidya.core`,
+  which installs itself on load; `glimmer-tui.core` is required after it and
+  installs itself in turn, so the backend glimmer renders with is the terminal.
+  The Vidya library is still loaded and frq still calls into it — for a window
+  title, a window width, a picture chooser — and with no window open every one
+  of those is inert, which is the behaviour those calls already have to have.
+
+  Two ways to run it:
+
+    jolt -M:tui                 the real terminal, until Ctrl-Q
+    jolt -M:tui --headless      one screenshot on stdout, no terminal at all
+
+  The headless one is `tui_headless` — the same layout and the same painting
+  with the writer taken off the end — and is what a screenshot in a bug report
+  or a CI check should be."
+  (:require [clojure.string :as str]
+            [frq.app :as app]
+            [frq.state :as s]
+            [glimmer.core :as ui]
+            ;; last, so its install! is the one that stands
+            [glimmer-tui.core :as tui]))
+
+(def ^:private demo-channel "#tui")
+
+;; frq's spacing is written in points, because it was written for a window:
+;; `:margin 12`, `:width-request 260`, a sidebar of 320. A cell is worth about
+;; eight of those across, so that is the divisor the backend is handed — and
+;; the same one `narrow!` multiplies back up, so `wide?` is asked its question
+;; in the units it was written against.
+(def ^:private points-per-cell 8)
+
+(defn- seed!
+  "Put a conversation on screen for a client that is not connected to anything.
+
+  A terminal session started for a look at the layout has no server behind it,
+  and an empty buffer says nothing about how the buffer looks. These go in
+  through `push-message!` rather than into the atom directly, so what is drawn
+  is a real buffer — timestamps, day headings, the actor lookup, reply chips
+  and reactions all included."
+  []
+  (let [now (System/currentTimeMillis)
+        minute 60000]
+    (s/push-message! demo-channel "*" (str "Now talking in " demo-channel)
+                     {:at (- now (* 32 minute))})
+    (s/push-message! demo-channel "nandi" "the tree ABI is the same one libvidya exports"
+                     {:at (- now (* 12 minute)) :id "m1"})
+    (s/push-message! demo-channel "vidya" "so the jolt side picks a window or a terminal and changes nothing else"
+                     {:at (- now (* 11 minute)) :id "m2" :reply-to "m1"
+                      :reactions {"👍" ["nandi"]}})
+    (s/push-message! demo-channel "nandi" "one reconciler, two shared objects"
+                     {:at (- now (* 2 minute)) :id "m3"}))
+  (swap! s/channels assoc-in [demo-channel :joined?] true)
+  (swap! s/channels assoc-in [demo-channel :users]
+         {"nandi" "@" "vidya" "" "you" ""})
+  (reset! s/form-nick "you")
+  (reset! s/status (str "Not connected — " demo-channel " is a demo buffer"))
+  (reset! s/current demo-channel)
+  (reset! s/screen :chat)
+  nil)
+
+(defn- narrow!
+  "Tell the layout how much room it has, in the units it expects.
+
+  `frq.state`'s `wide?` is written against a window's width in points, and the
+  terminal's is in cells — two orders of magnitude smaller, so left alone every
+  session would take the narrow layout by accident rather than on purpose. A
+  cell is about eight points wide and a row about sixteen tall, which is close
+  enough for the one question anything here asks of these numbers."
+  []
+  (let [[cols rows] (tui/screen-size)]
+    (reset! s/window-width (* cols points-per-cell))
+    ;; A row is worth about twice a column: a cell is taller than it is wide,
+    ;; and the heights in frq — a picture's, the space kept for the compose bar
+    ;; — are measured against the window's.
+    (reset! s/window-height (* rows points-per-cell 2)))
+  nil)
+
+(defn- run-headless!
+  "Mount the app in a session of `cols` by `rows` with no terminal, let it
+  settle, and print what was painted."
+  [cols rows]
+  ;; The size has to be known before the first render, or the layout reads the
+  ;; zero it was left at. A timer runs on the loop thread, which is where
+  ;; screen-size may be asked — and the first one fires before the first paint.
+  (tui/after! 0 narrow!)
+  (tui/after! 120 (fn []
+                    (println (tui/screen-str))
+                    (tui/quit!)))
+  (ui/run app/app :headless [cols rows] :points-per-cell points-per-cell))
+
+(defn- run-terminal! []
+  (tui/after! 0 narrow!)
+  ;; The terminal is resized by dragging its edge, and only a poll notices:
+  ;; the backend reports a size, and only what a component derefs re-renders.
+  (tui/every! 200 narrow!)
+  (ui/run app/app :mouse true :points-per-cell points-per-cell))
+
+(defn -main [& args]
+  (let [args (set args)
+        headless? (contains? args "--headless")
+        cols (if-let [n (first (keep #(when (str/starts-with? % "--cols=")
+                                        (subs % 7))
+                                     args))]
+               (Integer/parseInt n)
+               100)
+        rows (if-let [n (first (keep #(when (str/starts-with? % "--rows=")
+                                        (subs % 7))
+                                     args))]
+               (Integer/parseInt n)
+               36)]
+    (s/restore-prefs!)
+    (seed!)
+    (if headless?
+      (run-headless! cols rows)
+      (run-terminal!))))

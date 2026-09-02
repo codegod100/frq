@@ -60,6 +60,39 @@ plain listener:
 cargo run --release --bin freeq-server        # in the freeq checkout
 ```
 
+## In a terminal
+
+The screens are hiccup over glimmer's reconciler, and the reconciler does not
+know what is under it — so the same tree paints into a terminal through
+jolt-native's `libjolttui`, which exports libvidya's retained-tree ABI over a
+grid of cells instead of a GPU window. `src/frq/tui.jolt` is the whole of what
+that costs on this side: it requires `glimmer-tui.core` after `frq.app`, so the
+backend installed last is the terminal, and seeds a `#tui` buffer so a session
+started for a look at the layout has a conversation in it.
+
+```bash
+just tui                                  # the terminal, until Ctrl-Q
+just tui --headless --cols=90 --rows=60   # one screenshot on stdout
+```
+
+The headless one is `tui_headless` — the same layout and the same painting with
+the writer taken off the end — which is what a screenshot in a bug report or a
+CI check should be.
+
+Two things are unpinned here, because the terminal backend is not in a
+jolt-native release yet: `libjolttui.so` comes out of a jolt-native checkout's
+target directory (`JOLT_NATIVE=…`, or beside this tree), and `glimmer-tui` is
+resolved from the same checkout. Both become pins like every other when it
+ships.
+
+What a terminal has not got, frq does without: pictures, avatars, the lightbox
+and calls draw nothing. And frq's spacing is written in points, for a window —
+`scripts/tui.bb` hands the backend `:points-per-cell 8` so those numbers land
+in cells, but `below-messages` in `src/frq/app.jolt` is point *arithmetic*
+rather than a point *length*, and a scale cannot fix it: it reserves about
+thirteen rows more than the compose bar needs, so the bottom of the backlog is
+pushed out of the list.
+
 ## Signing in
 
 Three modes on the connect screen.

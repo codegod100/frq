@@ -34,6 +34,21 @@
                 :darwin ["libjoltmoq.dylib"]
                 :linux ["libjoltmoq.so"]}]
 
- :aliases {:frq {:main-opts ["-m" "frq.app"]}}
+ :aliases {:frq {:main-opts ["-m" "frq.app"]}
 
- :tasks {frq "jolt -M:frq"}}
+           ;; The same screens in a terminal. glimmer-tui is the other backend
+           ;; for the same reconciler — libjolttui's tree ABI is libvidya's
+           ;; with cells under it — so `frq.tui` requires it after `frq.app`
+           ;; and renders the hiccup that is already written.
+           ;;
+           ;; A path rather than a sha because the backend is not in a
+           ;; jolt-native release yet; it wants the checkout beside this one,
+           ;; and `libjolttui.so` on the library path:
+           ;;
+           ;;   just tui
+           :tui {:extra-deps {nandi/glimmer-tui
+                              {:local/root "../jolt-native/jolt/glimmer-tui"}}
+                 :main-opts ["-m" "frq.tui"]}}
+
+ :tasks {frq "jolt -M:frq"
+         tui "jolt -M:tui"}}
