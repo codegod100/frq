@@ -94,7 +94,17 @@
       # Mesa, despite the name: it covers Intel and AMD alike. The NVIDIA
       # wrappers are the ones that need --impure (they read the host kernel
       # module's version), which is why this only ever reaches for Intel.
-      nixGLFor = pkgs: nixgl.packages.${pkgs.stdenv.hostPlatform.system}.nixGLIntel;
+      #
+      # Built from nixGL's default.nix rather than taken from its flake
+      # outputs, for the one argument the flake hardcodes on: `enable32bits`,
+      # which on x86_64 puts a second, i686 copy of mesa, its LLVM, and
+      # intel-media-driver into the wrapper. frq is 64-bit on both halves —
+      # the Rust cdylibs and the Chez runtime — so nothing here ever opens the
+      # 32-bit driver, and carrying it is most of the dev shell's closure.
+      nixGLFor = pkgs: (import nixgl {
+        inherit pkgs;
+        enable32bits = false;
+      }).nixGLIntel;
 
       # egui reaches for these with dlopen rather than linking them, so being
       # in the cdylib's buildInputs is not enough — whatever starts frq has to
@@ -205,7 +215,10 @@
             '';
 
             # jolt.deps shells out to git and unzip, and jolt.mvn-http dlopens
-            # OpenSSL through the JOLT_OPENSSL_LIBDIR seam.
+            # OpenSSL through the JOLT_OPENSSL_LIBDIR seam. gitMinimal rather
+            # than git: all jolt.deps asks for is clone/fetch/rev-parse, and
+            # the full package carries Perl and Python for the subcommands
+            # written in them — a quarter of a gigabyte for git-send-email.
             #
             # TZDIR so a zone *name* resolves wherever this runs: frq.clock
             # hands one to tzset, and glibc then looks for the tzfile under
@@ -214,7 +227,7 @@
             # machine. --set-default, so a TZDIR the user set still wins.
             postFixup = ''
               wrapProgram "$out/bin/jolt" \
-                --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.git pkgs.unzip ]}" \
+                --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.gitMinimal pkgs.unzip ]}" \
                 --set-default JOLT_OPENSSL_LIBDIR "${pkgs.lib.makeLibraryPath [ pkgs.openssl ]}" \
                 --set-default TZDIR "${pkgs.tzdata}/share/zoneinfo" \
                 --set-default SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
