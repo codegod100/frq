@@ -175,9 +175,25 @@
   []
   (if (s/wide?) (- sidebar-width 130) 380))
 
+(defn- below-list []
+  ;; What the strip under the list needs, counted: the gap after the list, the
+  ;; separator, the gap under it, the tab bar's row of buttons and the margin
+  ;; below them. Short by any of it and the tabs go off the bottom edge — which
+  ;; is the thing this layout exists to stop.
+  (+ 8 8 8 34 12))
+
 (defn chats-screen []
   (let [buffers (s/channel-list)]
-    [:page {:max-width 620}
+    ;; Three bands rather than a page: the title and the two boxes at the top,
+    ;; the tabs at the bottom, and the conversations scrolling between them.
+    ;; Everything you act with stays where you last saw it — the same bargain
+    ;; the chat screen makes, where the compose bar holds still under a backlog
+    ;; that moves.
+    ;;
+    ;; What goes with the page is its centring at 620, on a window between that
+    ;; and the split view's 900: the list is full-bleed there now, which is
+    ;; what the conversation beside it has always been.
+    [:vbox {:spacing 8 :margin 12}
      ;; Your nick in the title, where "Chats" alone said nothing you did not
      ;; already know. It is what every channel calls you and what your own
      ;; lines are signed with, and the only other place it showed was Settings.
@@ -211,9 +227,16 @@
                  :on-change #(reset! s/search %)}]
         (when (seq @s/search)
           [:button {:label "✕" :on-click #(reset! s/search "")}])]]]
-     (if (seq buffers)
-       (for [b buffers] [conversation-row b])
-       [:card {} [:dim-label {:label "No conversations yet — join a channel."}]])
+     ;; `:fill-height` so the scroll inside is handed the rest of the window
+     ;; rather than the one card it starts out holding, and `:reserve` to keep
+     ;; the tabs' strip out of what it may take.
+     ;; Named, so it is the same list — and the same scroll position — when the
+     ;; reader comes back from a conversation.
+     [:vbox {:key :list :fill-height true :reserve (below-list)}
+      [:scroll {:scroll-key "chats-list" :orientation :vertical}
+       (if (seq buffers)
+         (for [b buffers] [conversation-row b])
+         [:card {} [:dim-label {:label "No conversations yet — join a channel."}]])]]
      [:separator {}]
      [tab-bar]]))
 
