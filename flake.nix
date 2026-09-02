@@ -43,12 +43,15 @@
 
     # The terminal backend, which v0.1.3 has not got: crates/jolt-tui (the tree
     # ABI over a grid of cells) and jolt/glimmer-tui (the jolt side that binds
-    # it). Its own input rather than a bump of the one above, deliberately —
+    # it). On a branch rather than a tag because the backend is still being
+    # fixed against this client — the last bump was a box that painted its
+    # first child and dropped the rest, which is what the chats list here was
+    # showing. Its own input rather than a bump of the one above, deliberately —
     # the window half stays pinned to the release the rest of the tree names,
     # and only `tui` evaluates this. When the backend ships in a release the
     # two become one pin again.
     jolt-native-tui = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=3cfee15a9d938584f526f606f853771eaad7f56c";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=5acc801872977305e0f29a8dc4aca4ddca240f98";
       flake = false;
     };
 
