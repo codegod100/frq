@@ -162,12 +162,29 @@
 
 (def ^:private sidebar-width 320)
 
+;; How tall a row of chrome is — a button, the compose bar, a line of tabs.
+;;
+;; The two reserves below are counted in points against this: a window's row is
+;; 34 of them, and every gap around it was chosen at that size. A terminal's
+;; row is one cell, and the same count then reserves two or three times the
+;; room the strip under the list actually needs — which costs a message a row,
+;; and a conversation is measured in how many of those fit.
+;;
+;; So the counts stay as they are, written where the reasoning is, and a
+;; backend whose rows are a different height says so here. Nothing else in the
+;; tree needs it: every other number is a length, and a length scales on the
+;; way across.
+(def ^:private window-row 34)
+(defonce chrome-row (atom window-row))
+
+(defn- chrome-scale [] (/ (double @chrome-row) window-row))
+
 (defn- below-list []
   ;; What the strip under the list needs, counted: the gap after the list, the
   ;; separator, the gap under it, the tab bar's row of buttons and the margin
   ;; below them. Short by any of it and the tabs go off the bottom edge — which
   ;; is the thing this layout exists to stop.
-  (+ 8 8 8 34 12))
+  (* (chrome-scale) (+ 8 8 8 34 12)))
 
 (defn chats-screen []
   (let [buffers (s/channel-list)]
@@ -985,9 +1002,10 @@
   ;; any of it and the column runs past the bottom edge, which does not show as
   ;; a list that is too long: it shows as a compose bar sitting flat on the
   ;; bottom of the window with its margin cut off.
-  (+ 140
-     (if @s/replying-to 34 0)
-     (if @s/attachment 76 0)))
+  (* (chrome-scale)
+     (+ 140
+        (if @s/replying-to 34 0)
+        (if @s/attachment 76 0))))
 
 (defn- messages-width
   "How wide the message list may be with the people panel beside it.

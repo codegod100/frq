@@ -51,7 +51,7 @@
     # and only `tui` evaluates this. When the backend ships in a release the
     # two become one pin again.
     jolt-native-tui = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=68910bd024f8012cf0a0248b2c01850714a3ef49";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=c4f56b0a96ecb29336e2cf16c522b794ae62ad3f";
       flake = false;
     };
 

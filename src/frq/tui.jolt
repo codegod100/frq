@@ -46,6 +46,10 @@
 ;; in the units it was written against.
 (def ^:private points-per-cell 8)
 
+;; And down the page a cell is worth about twice that: a character is roughly
+;; twice as tall as it is wide, which is what decides how many messages fit.
+(def ^:private points-per-row (* 2 points-per-cell))
+
 (defn- seed!
   "Put a conversation on screen without a server behind it — `--demo`.
 
@@ -86,10 +90,9 @@
   []
   (let [[cols rows] (tui/screen-size)]
     (reset! s/window-width (* cols points-per-cell))
-    ;; A row is worth about twice a column: a cell is taller than it is wide,
-    ;; and the heights in frq — a picture's, the space kept for the compose bar
-    ;; — are measured against the window's.
-    (reset! s/window-height (* rows points-per-cell 2)))
+    ;; In the same points: the heights in frq — a picture's, the room kept for
+    ;; the compose bar — are measured against the window's.
+    (reset! s/window-height (* rows points-per-row)))
   nil)
 
 (defn- start!
@@ -100,6 +103,10 @@
   Everything else — the saved settings, the rooms, the sign-in that connects
   itself — is the same startup the window runs."
   []
+  ;; A row of chrome here is one cell, not a window's 34 points, so the strip
+  ;; under a scrolling list reserves the three rows it needs rather than the
+  ;; nine the window's count works out to.
+  (reset! app/chrome-row points-per-row)
   (app/start! {:after! tui/after!
                :every! tui/every!
                :title! nil
@@ -109,7 +116,7 @@
 (defn- run-headless!
   "Mount the app in a session of `cols` by `rows` with no terminal, let it
   settle, and print what was painted."
-  [cols rows demo? wait]
+  [cols rows demo? wait dump?]
   ;; The size has to be known before the first render, or the layout reads the
   ;; zero it was left at. A timer runs on the loop thread, which is where
   ;; screen-size may be asked — and the first one fires before the first paint.
@@ -122,8 +129,14 @@
   ;; of the connect screen and `--wait=` is how you ask for one of the room.
   (tui/after! wait (fn []
                     (println (tui/screen-str))
+                    ;; The tree as the library holds it, which is what a report
+                    ;; about a layout is actually about: props after scaling,
+                    ;; and the shape the reconciler left behind.
+                    (when dump? (println (tui/dump-str)))
                     (tui/quit!)))
-  (ui/run app/app :headless [cols rows] :points-per-cell points-per-cell))
+  (ui/run app/app :headless [cols rows]
+          :points-per-cell points-per-cell
+          :points-per-row points-per-row))
 
 (defn- run-terminal! [demo?]
   ;; On the loop thread, and before the first paint: `start!` sets timers of
@@ -133,12 +146,15 @@
                   (narrow!)
                   (start!)
                   (when demo? (seed!))))
-  (ui/run app/app :mouse true :points-per-cell points-per-cell))
+  (ui/run app/app :mouse true
+          :points-per-cell points-per-cell
+          :points-per-row points-per-row))
 
 (defn -main [& args]
   (let [args (set args)
         headless? (contains? args "--headless")
         demo? (contains? args "--demo")
+        dump? (contains? args "--dump")
         num (fn [flag default]
               (if-let [n (first (keep #(when (str/starts-with? % flag)
                                          (subs % (count flag)))
@@ -149,5 +165,5 @@
         rows (num "--rows=" 36)
         wait (num "--wait=" 400)]
     (if headless?
-      (run-headless! cols rows demo? wait)
+      (run-headless! cols rows demo? wait dump?)
       (run-terminal! demo?))))

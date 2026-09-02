@@ -77,6 +77,7 @@ nix run .#tui                             # or: just tui
 just tui --headless --cols=90 --rows=60   # one screenshot on stdout
 just tui --headless --demo                # a buffer of its own, no server
 just tui --headless --wait=9000           # long enough to have connected
+just tui --headless --dump                # and the tree the library holds
 ```
 
 The headless one is `tui_headless` — the same layout and the same painting with
@@ -91,12 +92,18 @@ Send them somewhere: `nix run .#tui 2>/tmp/frq.log`.
 
 What a terminal has not got, frq does without: pictures, avatars and the
 lightbox draw nothing, and calls are off — the media plane paints frames into
-a texture, and there is no texture here. And frq's spacing is written in
-points, for a window — the backend is handed `:points-per-cell 8` so those
-numbers land in cells, but `below-messages` in `src/frq/app.jolt` is point
-*arithmetic* rather than a point *length*, and a scale cannot fix it: it
-reserves about thirteen rows more than the compose bar needs, so the bottom of
-the backlog is pushed out of the list.
+a texture, and there is no texture here.
+
+The spacing is written in points, for a window, and a cell is about eight of
+them across and sixteen down — so the backend is handed both numbers and each
+prop is divided by the axis it measures. A gap of half a cell rounds to
+nothing, which is what `:spacing 8` against a 16-point row is: thirteen
+messages fit where rounding it up left room for two.
+
+The two reserves in `src/frq/app.jolt` are the one thing a scale cannot
+answer, because they are counted in rows of chrome rather than in lengths: a
+window's row is 34 points and a terminal's is one cell. `chrome-row` is where
+that is said, and `frq.tui` sets it.
 
 Two things are unpinned, because the terminal backend is not in a jolt-native
 release yet: `libjolttui.so` comes out of a jolt-native checkout's target
