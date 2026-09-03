@@ -41,7 +41,7 @@
     # drift cost was silence: the Jolt half sent a reaction pill's hover card
     # to a libvidya with no handler for one, and the pill said nothing.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=a9f3673367a8f0d3dd7d6ab1d380484d1df795c1";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=00d32dd6bf0cde9cd73efa265c3057741d82e524";
       flake = false;
     };
 

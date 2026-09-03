@@ -293,10 +293,15 @@
 
   Except for the emoji in it. A label is set in the text font, and that font —
   Ubuntu with a DejaVu subset behind it — has no emoji in it at all, so every
-  one anybody typed was drawn as tofu. A `:reaction` is the one node that
-  draws from the Twemoji pack, which is why a reaction pill has always shown
-  the same glyph a message could not: so the emoji come out of the text and go
-  in as chips, and the words either side stay text.
+  one anybody typed was drawn as tofu. The Twemoji pack has the picture, so
+  the emoji come out of the text and are drawn from the pack, and the words
+  either side stay text.
+
+  `:emoji` and not `:reaction`, though both draw the same picture. A reaction
+  is a tally: it wears a pill, it answers the pointer, and it names the people
+  in it on hover. An emoji in a sentence is a character — so it is drawn bare,
+  and a message that ends in one no longer reads as a message someone has
+  reacted to.
 
   The pieces go in a wrapping row rather than the column the runs themselves
   are stacked in: a row is what puts an emoji *in* a sentence instead of
@@ -308,12 +313,15 @@
     [:link {:key j :label value :on-click #(platform/open-url! value)}]
     (let [pieces (glyphs/runs (str/trim value))]
       (if (glyphs/emoji? pieces)
-        ;; No spacing of its own: the gaps between the words are the spaces
-        ;; the message was typed with, and a chip carries its own margin.
-        [:hbox {:key j :spacing 0}
+        ;; Runs alternate text and picture, so this gap only ever falls either
+        ;; side of an emoji — never between two words, whose spacing is the
+        ;; spaces the message was typed with. A bare glyph carries no margin of
+        ;; its own the way the pill did, and a picture set flush against a word
+        ;; reads as part of it.
+        [:hbox {:key j :spacing 2}
          (map-indexed (fn [k [pkind pvalue]]
                         (if (= :emoji pkind)
-                          [:reaction {:key k :emoji pvalue :size text-emoji-size}]
+                          [:emoji {:key k :emoji pvalue :size text-emoji-size}]
                           (word-node k pvalue system?)))
                       pieces)]
         (word-node j (str/trim value) system?)))))

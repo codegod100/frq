@@ -5,8 +5,9 @@
   UI punctuation, maths-in-prose, box drawing — and no emoji at all. So an
   emoji anybody typed into a message was drawn as tofu: the hollow box a font
   puts up for a codepoint it has no glyph for. The same emoji in a reaction
-  pill drew properly all along, because `:reaction` is the one node that looks
-  a glyph up in the Twemoji pack instead of setting it as text.
+  pill drew properly all along, because a pill looks its glyph up in the
+  Twemoji pack instead of setting it as text — which is what `:emoji` does
+  too, without the pill.
 
   The split therefore has to happen before the text reaches a label, and this
   is where: the message cut into the parts a font can draw and the parts only
@@ -63,7 +64,7 @@
 (defn runs
   "`text` as alternating `[:text s]` and `[:emoji s]` runs, in order.
 
-  An `:emoji` run is one glyph: a chip draws one picture, so two emoji side by
+  An `:emoji` run is one glyph: a node draws one picture, so two emoji side by
   side are two runs and not one."
   [text]
   (let [cps (vec (seq (or text "")))
