@@ -16,7 +16,12 @@
 # Three answers, in order:
 #
 #   bb on PATH      the dev shell puts one there, and so does a machine that
-#                   has its own; either is what the caller meant
+#                   has its own; either is what the caller meant — as long as
+#                   it is babashka. `bb` is also what bazel's own launcher
+#                   calls itself, and a host with one of those ahead of the
+#                   shell's answered every recipe here with "Command
+#                   'scripts/tui.bb' not found. Try 'bb help'", which reads as
+#                   a missing script rather than the wrong program
 #   the flake       built once and kept alive by the symlink under build/,
 #                   which is a gc root as well as a cache
 #   the container   nix is not on every host this runs on — see CLAUDE.md —
@@ -26,7 +31,10 @@ set -e
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-if command -v bb >/dev/null 2>&1; then
+# Asking it who it is, rather than trusting the name: the version line is the
+# cheapest question babashka answers and the one nothing else answers the same
+# way.
+if command -v bb >/dev/null 2>&1 && bb --version 2>/dev/null | grep -qi '^babashka'; then
     exec bb "$@"
 fi
 
