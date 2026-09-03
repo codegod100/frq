@@ -107,6 +107,10 @@
   ;; under a scrolling list reserves the three rows it needs rather than the
   ;; nine the window's count works out to.
   (reset! app/chrome-row points-per-row)
+  ;; And a message here is a name with its words hanging under it, rather than
+  ;; a face with them beside it: there is no picture in a cell, and the initial
+  ;; that stood in for one only pushed every nick in past its own text.
+  (reset! app/terminal? true)
   (app/start! {:after! tui/after!
                :every! tui/every!
                :title! nil

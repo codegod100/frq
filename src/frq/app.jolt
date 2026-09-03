@@ -180,6 +180,46 @@
 
 (defn- chrome-scale [] (/ (double @chrome-row) window-row))
 
+;; Whether the backend under this tree is a terminal, set by `frq.tui` before
+;; the first paint and never again. Two things in a message hang on it, and
+;; both are about a cell grid rather than a canvas: there is no picture to
+;; draw a face with, and a name with nothing to its left is the heading the
+;; text hangs off — the shape a terminal has read messages in for forty years.
+(defonce terminal? (atom false))
+
+(defn- chip-gap
+  "The air between two chips on a row.
+
+  Four points is half a column, which rounds to none: in a window that is the
+  gap a pair of lozenges want, and in a terminal it puts two emoji hard against
+  each other and they read as one wide glyph. A column, where a column is the
+  smallest thing there is."
+  []
+  (if @terminal? 8 4))
+
+(defn- indented
+  "One of a message's columns, held in from the name above it — in a terminal.
+
+  The nick is the heading and the words hang under it, which is the shape a
+  terminal has read a conversation in for forty years; in a window the column
+  of faces already marks that edge, so there is nothing to hold in.
+
+  A cell of its own rather than a margin, because the backend insets a node by
+  `:margin` on all four sides or not at all: there is no left margin in a cell
+  grid, and a uniform one would spend a blank row above every message to buy
+  two columns beside it.
+
+  The spacer asks for its width and no height. A `:size` is a length down the
+  page, and a spacer two cells tall beside an empty column — a message with no
+  picture and no reactions — is two blank rows in the middle of the backlog,
+  which is a message and a half at this size."
+  [k node]
+  (if @terminal?
+    [:hbox {:key k :spacing 0}
+     [:spacer {:key :indent :size 0 :width-request 16}]
+     node]
+    node))
+
 (defn- below-list []
   ;; What the strip under the list needs, counted: the gap after the list, the
   ;; separator, the gap under it, the tab bar's row of buttons and the margin
@@ -408,7 +448,7 @@
   row at a remove from the pair it belongs with. It keys itself, so the line
   that has no pencil is a row of two chips and not a row with a hole in it."
   [channel m]
-  (into [:hbox {:key :actions :align :end :spacing 4}
+  (into [:hbox {:key :actions :align :end :spacing (chip-gap)}
          [:reaction {:key :react
                      :emoji "🙂"
                      :size pill-size
@@ -450,7 +490,7 @@
   Twemoji pack, in colour, where a label gets whatever the text font has."
   [channel m]
   (let [reactions (:reactions m)]
-    [:hbox {:key :pills :spacing 4}
+    [:hbox {:key :pills :spacing (chip-gap)}
      (for [emoji (sort (keys reactions))]
        [:reaction (cond-> {:key emoji
                            :emoji emoji
@@ -634,6 +674,13 @@
             :margin-top 10
             ;; The jump target is what a "go to message" click scrolls to.
             :scroll-here (boolean (and (:id m) (= (:id m) @s/jump-to)))}
+     ;; The gap above, where the margin cannot be one. `:margin-top 10` is
+     ;; most of a row in a window and nothing at all in a terminal — ten points
+     ;; against a row of sixteen, rounded down, because a gap that thin is what
+     ;; it looks like at this size. So the terminal buys the row outright:
+     ;; without it every message in the backlog touches the one above it, and a
+     ;; conversation reads as one paragraph with names scattered through it.
+     (when @terminal? [:spacer {:key :gap :size 16}])
      ;; Likewise a key each: the surface a jump leaves behind is a different
      ;; node from the plain column, not the same node wearing another tag.
      [(if highlit? :card :vbox) {:key (if highlit? :body-card :body-plain)
@@ -661,19 +708,24 @@
           ;; And, where there is a pointer to ask with, resting on the face
           ;; answers before the click does: the card under it is the profile
           ;; screen's first few lines, painted beside the pointer.
-          (let [_ @s/media-tick]
-            [:avatar (cond-> {:label (:from m)
-                              :src (or (avatars/path-when-ready (:actor m)) "")
-                              :size 32
-                              :on-click #(profile/open! (:from m) (:actor m))}
-                       (platform/desktop?)
-                       (assoc :on-hover #(profile/hover! (:from m) (:actor m))
-                              :on-unhover #(profile/unhover! (:from m))))
-             ;; Only the hovered face carries one: a card is painted when its
-             ;; node has children, and the pointer is on one face at a time.
-             (when (and (platform/desktop?)
-                        (= (:from m) (:nick @profile/hovering)))
-               [hover-card (:from m) (:actor m)])])
+          ;; And in a terminal there is no face at all: a cell grid has no
+          ;; picture to put in one, and the initial standing in for it is the
+          ;; first letter of the name printed twice, indenting every nick past
+          ;; the words it heads.
+          (when-not @terminal?
+            (let [_ @s/media-tick]
+              [:avatar (cond-> {:label (:from m)
+                                :src (or (avatars/path-when-ready (:actor m)) "")
+                                :size 32
+                                :on-click #(profile/open! (:from m) (:actor m))}
+                         (platform/desktop?)
+                         (assoc :on-hover #(profile/hover! (:from m) (:actor m))
+                                :on-unhover #(profile/unhover! (:from m))))
+               ;; Only the hovered face carries one: a card is painted when its
+               ;; node has children, and the pointer is on one face at a time.
+               (when (and (platform/desktop?)
+                          (= (:from m) (:nick @profile/hovering)))
+                 [hover-card (:from m) (:actor m)])]))
           ;; The name carries the row, so it is set at body size in the plain
           ;; text colour: dimmed caption made the one thing you scan a column
           ;; for the faintest thing on it.
@@ -700,16 +752,18 @@
       ;; for what follows, and a heading that touches its text is not one.
       ;; The text keeps a column of its own: a wrapping label directly in a
       ;; row wraps against the row.
-      [:vbox {:key :text :spacing 2 :margin-top 4}
-       ;; What this answers, in the column the answer itself is in: the chip
-       ;; is a quote of a line, so it wraps to the width a line has. Outside
-       ;; this column it wrapped to the whole row instead — wider than any
-       ;; message, and out to the window's edge on a narrow screen.
-       [:vbox {:key :reply-chip}
-        (when-let [reply-to (:reply-to m)]
-          [reply-chip @s/current reply-to])]
-       (map-indexed (fn [j run] (run-node j run (:system? m)))
-                    (text-runs (:text m)))]
+      (indented
+       :text
+       [:vbox {:key :text :spacing 2 :margin-top 4}
+        ;; What this answers, in the column the answer itself is in: the chip
+        ;; is a quote of a line, so it wraps to the width a line has. Outside
+        ;; this column it wrapped to the whole row instead — wider than any
+        ;; message, and out to the window's edge on a narrow screen.
+        [:vbox {:key :reply-chip}
+         (when-let [reply-to (:reply-to m)]
+           [reply-chip @s/current reply-to])]
+        (map-indexed (fn [j run] (run-node j run (:system? m)))
+                     (text-runs (:text m)))])
       ;; And the picker, when this is the message it was opened on: under the
       ;; line it is about, where the reader is already looking.
       ;;
@@ -721,25 +775,29 @@
          [emoji-picker])]
       ;; Pictures under the line that linked them. The link stays: it is what a
       ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
-      [:vbox {:key :images :spacing 4}
-       (when (seq (:images m))
-         ;; Reading the tick is what subscribes this row to a fetch finishing.
-         (let [_ @s/media-tick]
-           (for [url (:images m)]
-             (when-let [path (media/path-when-ready url)]
-               [:image {:key url
-                      :src path
-                      :max-height (preview-height)
-                      :max-width (preview-width)
-                      :on-click #(reset! s/lightbox {:path path :url url})}]))))]
+      (indented
+       :images
+       [:vbox {:key :images :spacing 4}
+        (when (seq (:images m))
+          ;; Reading the tick is what subscribes this row to a fetch finishing.
+          (let [_ @s/media-tick]
+            (for [url (:images m)]
+              (when-let [path (media/path-when-ready url)]
+                [:image {:key url
+                         :src path
+                         :max-height (preview-height)
+                         :max-width (preview-width)
+                         :on-click #(reset! s/lightbox {:path path :url url})}]))))])
       ;; Reactions go last, under whatever the message turned out to be: a
       ;; line with a picture on it is the picture, and pills between the words
       ;; and the image they introduce read as reactions to the words alone.
       ;; Nothing moves for a message with no picture — the box above it is
       ;; empty, and the pills still sit under the last line of text.
-      [:vbox {:key :reactions-row :margin-top 6}
-       (when (and (:id m) (not (:system? m)) (seq (:reactions m)))
-         [reaction-row @s/current m])]]]))
+      (indented
+       :reactions-row
+       [:vbox {:key :reactions-row :margin-top 6}
+        (when (and (:id m) (not (:system? m)) (seq (:reactions m)))
+          [reaction-row @s/current m])])]]))
 
 (defn- day-separator [day-key label]
   [:vbox {:key day-key :spacing 4 :margin 0}
