@@ -10,3 +10,6 @@
 # Nix build symlinks.
 /result
 /result-*
+
+# buck2 output tree.
+/buck-out/
