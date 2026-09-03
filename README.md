@@ -41,6 +41,11 @@ just lib
 just run
 ```
 
+The scripts under `scripts/` are babashka, reached through `scripts/bb`: a bb
+on `PATH` if there is one — the dev shell puts one there — and otherwise the
+flake's `.#bb`, built once and kept under `build/`. Nothing has to be installed
+for that but Nix.
+
 `just lib` fetches both shared objects this client loads —
 [jolt-native](https://gitlab.com/nandithebull/jolt-native)'s `libvidya`, the
 retained-tree ABI glimmer paints through, and `libjoltmoq`, the AV media plane
@@ -105,12 +110,11 @@ answer, because they are counted in rows of chrome rather than in lengths: a
 window's row is 34 points and a terminal's is one cell. `chrome-row` is where
 that is said, and `frq.tui` sets it.
 
-Two things are unpinned, because the terminal backend is not in a jolt-native
-release yet: `libjolttui.so` comes out of a jolt-native checkout's target
-directory (`JOLT_NATIVE=…`, or beside this tree) for `just tui`, and the flake
-carries a second `jolt-native-tui` input at the rev that has it — its own input
-rather than a bump, so the window half stays on the release the rest of the
-tree names. Both become one pin when it ships.
+`just tui` is `just run`'s two halves with the other backend under them: this
+tree's source on the flake's everything-else, in the dev shell. jolt-native
+carries both native libraries and both Jolt sides — glimmer-vidya for the
+window, glimmer-tui for the terminal — so one input answers for either, and
+nothing here needs a checkout beside the tree.
 
 ## Signing in
 
@@ -152,13 +156,17 @@ NativeActivity's own library), `libjoltmoq.so` (the media plane) and
 `libjoltapp.so` (frq compiled to a Chez boot image, linked against both).
 
 ```bash
-./android/build-apk.bb run      # build, install, launch on a connected device
-./android/build-apk.bb log      # logcat, filtered
+just apk run                    # build, install, launch on a connected device
+just apk log                    # logcat, filtered
 ```
 
-Needs an SDK and a cross-built Chez in `~/.cache/vidya-chez-android`; the NDK
-comes down through `scripts/android-ndk.dotslash`. `just apk` builds the same
-APK as a buck2 graph, which is the incremental way in.
+Needs nothing on the machine but Nix and an `adb`: the build is
+[`nix/android.nix`](nix/android.nix), and the SDK, the NDK, the arm64 Chez
+cross target and the OpenSSL the app carries are all built or fetched there.
+`nix build .#apk` is the same thing without adb; on a machine with a remote
+builder, hand it the store rather than a `builders` entry —
+`FRQ_NIX_STORE=ssh-ng://eu.nixbuild.net just apk`, and see the header of
+`nix/android.nix` for why.
 
 TLS does not work there: jolt reaches OpenSSL through the dynamic loader, and
 Android has no public `libssl` to load. The connect screen falls back to the

@@ -1,13 +1,5 @@
-# Build outputs: the boot image and the APK.
-/android/build/
-
 # The native libraries `just lib` links out of the DotSlash cache.
 /build/
-
-# buck2 output tree.
-/buck-out
-# Written by the `buck` recipe: this machine's paths, not a shared setting.
-/.buckconfig.local
 
 # Tool caches.
 /.cpcache/

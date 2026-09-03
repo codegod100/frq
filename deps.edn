@@ -41,9 +41,10 @@
            ;; with cells under it — so `frq.tui` requires it after `frq.app`
            ;; and renders the hiccup that is already written.
            ;;
-           ;; A path rather than a sha because the backend is not in a
-           ;; jolt-native release yet; it wants the checkout beside this one,
-           ;; and `libjolttui.so` on the library path:
+           ;; A path rather than a sha, like glimmer-vidya's would be if this
+           ;; alias were the way in: `just tui` builds jolt-native out of the
+           ;; flake and hands both Jolt halves over with -Sdeps, so this is for
+           ;; a checkout beside the tree and nothing else reads it.
            ;;
            ;;   just tui
            :tui {:extra-deps {nandi/glimmer-tui

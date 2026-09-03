@@ -11,6 +11,7 @@
             [frq.av :as av]
             [frq.avatars :as avatars]
             [frq.clock :as clock]
+            [frq.glyphs :as glyphs]
             [frq.media :as media]
             [frq.platform :as platform]
             [frq.profile :as profile]
@@ -290,14 +291,57 @@
         (let [tail (subs text pos)]
           (cond-> acc (seq tail) (conj [:text tail])))))))
 
+(def ^:private text-emoji-size
+  "An emoji in a message, at the size of the words around it. Bigger and the
+  line it sits in grows to make room for it; smaller and it reads as a
+  footnote on the sentence rather than a word of it."
+  14)
+
+(defn- word-node
+  "Body text, or dim text for the lines the client writes itself."
+  [k value system?]
+  (if system?
+    [:dim-label {:key k :label value}]
+    [:label {:key k :label value}]))
+
 (defn- run-node
   "One run as a widget. A link is accent-coloured and opens on click; the rest
-  is body text, or dim text for the lines the client writes itself."
+  is body text.
+
+  Except for the emoji in it. A label is set in the text font, and that font —
+  Ubuntu with a DejaVu subset behind it — has no emoji in it at all, so every
+  one anybody typed was drawn as tofu. The Twemoji pack has the picture, so
+  the emoji come out of the text and are drawn from the pack, and the words
+  either side stay text.
+
+  `:emoji` and not `:reaction`, though both draw the same picture. A reaction
+  is a tally: it wears a pill, it answers the pointer, and it names the people
+  in it on hover. An emoji in a sentence is a character — so it is drawn bare,
+  and a message that ends in one no longer reads as a message someone has
+  reacted to.
+
+  The pieces go in a wrapping row rather than the column the runs themselves
+  are stacked in: a row is what puts an emoji *in* a sentence instead of
+  breaking the sentence around it, and `:hbox` wraps its children by default,
+  so a long line still folds at the column's edge. A run with no emoji in it
+  is still one plain label — the row is only paid for where it is needed."
   [j [kind value] system?]
-  (cond
-    (= :link kind) [:link {:key j :label value :on-click #(platform/open-url! value)}]
-    system? [:dim-label {:key j :label (str/trim value)}]
-    :else [:label {:key j :label (str/trim value)}]))
+  (if (= :link kind)
+    [:link {:key j :label value :on-click #(platform/open-url! value)}]
+    (let [pieces (glyphs/runs (str/trim value))]
+      (if (glyphs/emoji? pieces)
+        ;; Runs alternate text and picture, so this gap only ever falls either
+        ;; side of an emoji — never between two words, whose spacing is the
+        ;; spaces the message was typed with. A bare glyph carries no margin of
+        ;; its own the way the pill did, and a picture set flush against a word
+        ;; reads as part of it.
+        [:hbox {:key j :spacing 2}
+         (map-indexed (fn [k [pkind pvalue]]
+                        (if (= :emoji pkind)
+                          [:emoji {:key k :emoji pvalue :size text-emoji-size}]
+                          (word-node k pvalue system?)))
+                      pieces)]
+        (word-node j (str/trim value) system?)))))
 
 (defn- summarise
   "A message in one line's worth of words."

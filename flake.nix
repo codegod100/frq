@@ -29,29 +29,24 @@
       flake = false;
     };
 
-    # v0.1.3, which is the rev deps.edn and the scripts/*.dotslash pins both
-    # name. Pinned, and pinned to that: this input carries both halves of
+    # Ahead of v0.1.3, which is what deps.edn and the scripts/*.dotslash pins
+    # name — and deliberately: the pins are the last release, and this is what
+    # `just run` builds, so a change to jolt-native can be run before there is
+    # a release to fetch. The two meet again at `just bump`.
+    #
+    # Pinned all the same, and pinned to a rev: this input carries both halves of
     # glimmer-vidya — libvidya, and the Jolt side that binds it — so an
     # unpinned `main` is a build whose native half is free to sit at a
     # different commit from the tree that talks to it. It did, and what the
     # drift cost was silence: the Jolt half sent a reaction pill's hover card
     # to a libvidya with no handler for one, and the pill said nothing.
+    # It also carries the terminal backend — crates/jolt-tui, the same tree ABI
+    # over a grid of cells, and jolt/glimmer-tui beside glimmer-vidya. That was
+    # a second input at a second rev while it lived on a branch, which is the
+    # drift this comment warns about wearing a different hat: one input, and
+    # the window and the terminal are the same library either way.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=fd0e21a6c5d745ff9d134f92f909665454a7a1c9";
-      flake = false;
-    };
-
-    # The terminal backend, which v0.1.3 has not got: crates/jolt-tui (the tree
-    # ABI over a grid of cells) and jolt/glimmer-tui (the jolt side that binds
-    # it). On a branch rather than a tag because the backend is still being
-    # fixed against this client — the last bump was a box that painted its
-    # first child and dropped the rest, which is what the chats list here was
-    # showing. Its own input rather than a bump of the one above, deliberately —
-    # the window half stays pinned to the release the rest of the tree names,
-    # and only `tui` evaluates this. When the backend ships in a release the
-    # two become one pin again.
-    jolt-native-tui = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=c4f56b0a96ecb29336e2cf16c522b794ae62ad3f";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=258bbc5161b93d580a4c84363acabe63b0624e88";
       flake = false;
     };
 
@@ -95,21 +90,54 @@
     };
   };
 
-  outputs = { self, nixpkgs, jolt-src, jolt-native, jolt-native-tui, glimmer, chez-src, jolt-android-src, nixgl, nix-appimage }:
+  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, chez-src, jolt-android-src, nixgl, nix-appimage }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = f:
         nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+
+      # Mesa, despite the name: it covers Intel and AMD alike. The NVIDIA
+      # wrappers are the ones that need --impure (they read the host kernel
+      # module's version), which is why this only ever reaches for Intel.
+      #
+      # Built from nixGL's default.nix rather than taken from its flake
+      # outputs, for the one argument the flake hardcodes on: `enable32bits`,
+      # which on x86_64 puts a second, i686 copy of mesa, its LLVM, and
+      # intel-media-driver into the wrapper. frq is 64-bit on both halves —
+      # the Rust cdylibs and the Chez runtime — so nothing here ever opens the
+      # 32-bit driver, and carrying it is most of the dev shell's closure.
+      nixGLFor = pkgs: (import nixgl {
+        inherit pkgs;
+        enable32bits = false;
+      }).nixGLIntel;
+
+      # egui reaches for these with dlopen rather than linking them, so being
+      # in the cdylib's buildInputs is not enough — whatever starts frq has to
+      # put them on the loader path itself. Without libx11 here, vidya reports
+      # "X11 unavailable", falls back to Wayland, and winit refuses to build a
+      # second event loop after the failed first one.
+      #
+      # Out here rather than beside the package that first needed them: the
+      # dev shell starts frq too, on this tree's source rather than the store's
+      # copy of it, and a second copy of this list is a second chance for the
+      # two ways of running to disagree about what the window needs.
+      runtimeLibsFor = pkgs: with pkgs; [
+        libGL
+        libxkbcommon
+        wayland
+        libx11
+        libxcursor
+        libxi
+        libxrandr
+        vulkan-loader
+      ];
     in
     {
       packages = forEachSystem (pkgs:
         let
           inherit (pkgs) lib;
 
-          # Mesa, despite the name: it covers Intel and AMD alike. The NVIDIA
-          # wrappers are the ones that need --impure (they read the host kernel
-          # module's version), which is why this only ever reaches for Intel.
-          nixGL = nixgl.packages.${pkgs.stdenv.hostPlatform.system}.nixGLIntel;
+          nixGL = nixGLFor pkgs;
 
           # libvidya (the retained-tree ABI glimmer-vidya binds, on egui) and
           # libjoltmoq (the AV media plane). One workspace, two cdylibs.
@@ -162,44 +190,6 @@
             '';
           };
 
-          # libjolttui alone, out of the tui input's workspace. One crate
-          # rather than the whole of it: the terminal backend's dependencies
-          # are crossterm and a width table, where libvidya's and libjoltmoq's
-          # are egui, openh264 and v4l — none of which a terminal needs, and
-          # all of which this would otherwise build a second time at a second
-          # rev.
-          nativeTui = pkgs.rustPlatform.buildRustPackage {
-            pname = "jolt-tui";
-            version = "0.1.0";
-            src = jolt-native-tui;
-
-            cargoLock = {
-              lockFile = "${jolt-native-tui}/Cargo.lock";
-              allowBuiltinFetchGit = true;
-            };
-
-            nativeBuildInputs = with pkgs; [ pkg-config cmake rustPlatform.bindgenHook ];
-            buildInputs = with pkgs; [ alsa-lib pipewire openssl libxkbcommon wayland libGL ];
-
-            cargoBuildFlags = [ "-p" "jolt-tui" ];
-
-            # As above: upstream's .cargo/config.toml drives the build through
-            # DotSlash, which a sandbox has no network for.
-            postPatch = ''
-              rm -f .cargo/config.toml
-            '';
-
-            V4L2R_VIDEODEV2_H_PATH = "${pkgs.linuxHeaders}/include";
-            doCheck = false;
-
-            installPhase = ''
-              runHook preInstall
-              mkdir -p "$out/lib"
-              install -m644 target/*/release/libjolttui.so "$out/lib/"
-              runHook postInstall
-            '';
-          };
-
           # Jolt itself: Clojure on Chez, built the way its own flake builds it.
           # A function, because there are two of them — upstream for the
           # desktop, and the Bionic-addrinfo fork for the boot image the APK
@@ -230,7 +220,10 @@
             '';
 
             # jolt.deps shells out to git and unzip, and jolt.mvn-http dlopens
-            # OpenSSL through the JOLT_OPENSSL_LIBDIR seam.
+            # OpenSSL through the JOLT_OPENSSL_LIBDIR seam. gitMinimal rather
+            # than git: all jolt.deps asks for is clone/fetch/rev-parse, and
+            # the full package carries Perl and Python for the subcommands
+            # written in them — a quarter of a gigabyte for git-send-email.
             #
             # TZDIR so a zone *name* resolves wherever this runs: frq.clock
             # hands one to tzset, and glibc then looks for the tzfile under
@@ -239,7 +232,7 @@
             # machine. --set-default, so a TZDIR the user set still wins.
             postFixup = ''
               wrapProgram "$out/bin/jolt" \
-                --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.git pkgs.unzip ]}" \
+                --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.gitMinimal pkgs.unzip ]}" \
                 --set-default JOLT_OPENSSL_LIBDIR "${pkgs.lib.makeLibraryPath [ pkgs.openssl ]}" \
                 --set-default TZDIR "${pkgs.tzdata}/share/zoneinfo" \
                 --set-default SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
@@ -253,23 +246,9 @@
           # deps.edn asks for glimmer by git — the top-level override below
           # answers for both.
           glimmerVidya = "${jolt-native}/jolt/glimmer-vidya";
-          glimmerTui = "${jolt-native-tui}/jolt/glimmer-tui";
+          glimmerTui = "${jolt-native}/jolt/glimmer-tui";
 
-          # egui reaches for these with dlopen rather than linking them, so
-          # being in the cdylib's buildInputs is not enough — the launcher has
-          # to put them on the loader path itself. Without libX11 here, vidya
-          # reports "X11 unavailable", falls back to Wayland, and winit refuses
-          # to build a second event loop after the failed first one.
-          runtimeLibs = with pkgs; [
-            libGL
-            libxkbcommon
-            wayland
-            xorg.libX11
-            xorg.libXcursor
-            xorg.libXi
-            xorg.libXrandr
-            vulkan-loader
-          ];
+          runtimeLibs = runtimeLibsFor pkgs;
 
           # The project as jolt sees it: source, deps.edn, nothing else.
           frqSource = pkgs.runCommand "frq-source" { } ''
@@ -300,7 +279,7 @@
           # a terminal is the one surface that needs nothing from the host but
           # a terminal, which is the reason this output exists.
           tuiScript = pkgs.writeShellScript "frq-tui" ''
-            export LD_LIBRARY_PATH="${nativeTui}/lib:${native}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${native}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             cd ${frqSource}
 
             exec ${joltRuntime}/bin/jolt \
@@ -339,8 +318,8 @@
           # `legacyPackages` everything above uses. Confined to the Android
           # outputs: `nix build` of frq itself never evaluates it.
           #
-          # The NDK here is r29, which is the version scripts/android-ndk.dotslash
-          # pins and the one the pinned libvidya was built with.
+          # The NDK here is r29, which is the one the pinned libvidya was
+          # built with.
           androidPkgs = import nixpkgs {
             inherit (pkgs.stdenv.hostPlatform) system;
             config = {
@@ -364,9 +343,15 @@
         in
         {
           inherit native frq;
-          inherit nativeTui tui;
+          inherit tui;
           jolt = joltRuntime;
           default = frq;
+
+          # The interpreter scripts/ is written in, named here so that
+          # scripts/bb can build it. Nothing else in this flake uses it: it is
+          # an output because a shell script cannot ask for `nixpkgs#babashka`
+          # at the version this tree pins, and `.#bb` is exactly that.
+          bb = pkgs.babashka;
 
           # frq and everything it loads, squashed into one runnable file for
           # hosts without Nix. The whole closure rides along — Mesa included,
@@ -381,6 +366,62 @@
         // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           inherit (android) apk chezAndroid joltBoot libjoltapp;
           apk-unsigned = android.apk-unsigned;
+        });
+
+      # Where `just run` runs, and — because entering it realises what it
+      # names — what builds the half of frq that is not this working tree.
+      #
+      # The two halves, and the split is the whole point of the shell. The frq
+      # source is the files on disk, uncommitted edits and all. Everything
+      # under it — jolt, glimmer, glimmer-vidya, both native objects — is the
+      # flake's, at the revs flake.lock names, so a run says what it ran
+      # against and both halves of glimmer-vidya move together. That is the
+      # drift the `jolt-native` input's comment is about, and a pin frq can
+      # answer for is worth more here than the convenience of a checkout.
+      #
+      # `native` is the cargo build of that input rather than jolt-native's own
+      # buck2 graph, which is a compromise and not a free one: buck2 is what
+      # its CI runs and what makes its releases, and its cpal has the pipewire
+      # feature this one does not, so device *names* in a call come out as ALSA
+      # PCMs. What it buys is a derivation — one thing nixbuild.net can be
+      # handed. The buck2 build fetches its rustc, zig and every third-party
+      # crate as it goes and writes buck-out into the tree it builds; a sandbox
+      # with no network and a read-only store is the one place it cannot run,
+      # so on a remote builder it is not a slower option but no option at all.
+      #
+      # Nothing here says "nixbuild", though: it is a plain derivation, and
+      # where it gets built is the machine's business. scripts/run.bb asks for
+      # the shell with --max-jobs 0, which is what sends it to the `builders`
+      # entry rather than compiling egui on a laptop.
+      devShells = forEachSystem (pkgs:
+        let
+          inherit (pkgs) lib;
+          inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) jolt native;
+        in
+        {
+          default = pkgs.mkShellNoCC {
+            name = "frq";
+
+            # jolt, because the runtime frq is run by should be the flake's
+            # too. nixGL for the same reason the launcher reaches for it — see
+            # frqScript. babashka because scripts/bb prefers one on PATH, and
+            # inside here that should be this one rather than a second copy
+            # built through `.#bb`. just so the recipe runner comes from here
+            # too rather than the host — `nix develop` and then `just run` is
+            # the whole of what a machine with nix needs.
+            packages = [ jolt pkgs.babashka pkgs.just (nixGLFor pkgs) ];
+
+            # Read by scripts/run.bb rather than baked into a wrapper: the frq
+            # source `just run` runs is the working tree, so the launcher has
+            # to be a script in that tree and the shell has to hand it its
+            # answers. Naming these is also what makes the shell build them.
+            JOLT_NATIVE_LIB = "${native}/lib";
+            GLIMMER_SRC = glimmer;
+            GLIMMER_VIDYA_SRC = "${jolt-native}/jolt/glimmer-vidya";
+            GLIMMER_TUI_SRC = "${jolt-native}/jolt/glimmer-tui";
+            FRQ_LIB_PATH = lib.makeLibraryPath (runtimeLibsFor pkgs);
+            NIXGL = "${nixGLFor pkgs}/bin/nixGLIntel";
+          };
         });
 
       apps = forEachSystem (pkgs: {

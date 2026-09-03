@@ -110,33 +110,16 @@
     "jolt-native": {
       "flake": false,
       "locked": {
-        "lastModified": 1788237272,
-        "narHash": "sha256-JdiPynqnCGSlQ7IBB9eMyLwk5WHiLSCDBLcMu7I156o=",
+        "lastModified": 1788405941,
+        "narHash": "sha256-aVMj/9IAX7szfmI0Awx8oHVU5/87sJ2V+w7MuBGHYmc=",
         "ref": "refs/heads/main",
-        "rev": "fd0e21a6c5d745ff9d134f92f909665454a7a1c9",
-        "revCount": 25,
+        "rev": "258bbc5161b93d580a4c84363acabe63b0624e88",
+        "revCount": 37,
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       },
       "original": {
-        "rev": "fd0e21a6c5d745ff9d134f92f909665454a7a1c9",
-        "type": "git",
-        "url": "https://gitlab.com/nandithebull/jolt-native"
-      }
-    },
-    "jolt-native-tui": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1788332109,
-        "narHash": "sha256-sS9ruxMwMmpESDVNpDGjdHb37DZRayB0qoJbvYfOp1A=",
-        "ref": "refs/heads/main",
-        "rev": "c4f56b0a96ecb29336e2cf16c522b794ae62ad3f",
-        "revCount": 35,
-        "type": "git",
-        "url": "https://gitlab.com/nandithebull/jolt-native"
-      },
-      "original": {
-        "rev": "c4f56b0a96ecb29336e2cf16c522b794ae62ad3f",
+        "rev": "258bbc5161b93d580a4c84363acabe63b0624e88",
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       }
@@ -224,7 +207,6 @@
         "glimmer": "glimmer",
         "jolt-android-src": "jolt-android-src",
         "jolt-native": "jolt-native",
-        "jolt-native-tui": "jolt-native-tui",
         "jolt-src": "jolt-src",
         "nix-appimage": "nix-appimage",
         "nixgl": "nixgl",
