@@ -374,8 +374,10 @@
             # too. nixGL for the same reason the launcher reaches for it — see
             # frqScript. babashka because scripts/bb prefers one on PATH, and
             # inside here that should be this one rather than a second copy
-            # built through `.#bb`.
-            packages = [ jolt pkgs.babashka (nixGLFor pkgs) ];
+            # built through `.#bb`. just so the recipe runner comes from here
+            # too rather than the host — `nix develop` and then `just run` is
+            # the whole of what a machine with nix needs.
+            packages = [ jolt pkgs.babashka pkgs.just (nixGLFor pkgs) ];
 
             # Read by scripts/run.bb rather than baked into a wrapper: the frq
             # source `just run` runs is the working tree, so the launcher has
