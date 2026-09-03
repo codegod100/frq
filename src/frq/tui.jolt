@@ -33,6 +33,7 @@
   (:require [clojure.string :as str]
             [frq.app :as app]
             [frq.state :as s]
+            [jolt.host :as host]
             [glimmer.core :as ui]
             ;; last, so its install! is the one that stands
             [glimmer-tui.core :as tui]))
@@ -79,6 +80,33 @@
   (reset! s/screen :chat)
   nil)
 
+(defn- graphics?
+  "Whether this terminal draws pictures over its cells.
+
+  The same question `jolt-tui` asks itself before it reserves cells for an
+  `:image`, and asked the same way: the protocol's own query comes back as
+  input, long after the layout has had to decide how many rows a picture takes,
+  so a terminal is identified by name here as it is everywhere else — and
+  `JOLT_TUI_GRAPHICS` is the way in for one neither of us has learned yet.
+
+  frq asks it too, rather than reading the answer back out of the library,
+  because what hangs on it is a tree: a face on a message is an `:image` node
+  or it is no node at all, and that is decided before the backend sees it."
+  []
+  (let [env (fn [k] (or (host/getenv k) ""))
+        known? (fn [name]
+                 (let [name (str/lower-case name)]
+                   (boolean (some #(str/includes? name %)
+                                  ["kitty" "ghostty" "wezterm"]))))]
+    (case (str/lower-case (env "JOLT_TUI_GRAPHICS"))
+      ("1" "true") true
+      ("0" "false") false
+      (or (seq (env "KITTY_WINDOW_ID"))
+          (seq (env "GHOSTTY_RESOURCES_DIR"))
+          (known? (env "TERM"))
+          (known? (env "TERM_PROGRAM"))
+          false))))
+
 (defn- narrow!
   "Tell the layout how much room it has, in the units it expects.
 
@@ -108,9 +136,14 @@
   ;; nine the window's count works out to.
   (reset! app/chrome-row points-per-row)
   ;; And a message here is a name with its words hanging under it, rather than
-  ;; a face with them beside it: there is no picture in a cell, and the initial
-  ;; that stood in for one only pushed every nick in past its own text.
+  ;; a face with them beside it: the initial that stands in for a portrait in a
+  ;; window is a letter printed twice here, which only pushed every nick in
+  ;; past its own text.
   (reset! app/terminal? true)
+  ;; The face itself comes back where the terminal can draw one: this client
+  ;; fetches the picture either way, and Kitty's protocol puts it over the
+  ;; cells the layout reserved for it.
+  (reset! app/terminal-graphics? (boolean (graphics?)))
   (app/start! {:after! tui/after!
                :every! tui/every!
                :title! nil
