@@ -35,6 +35,7 @@
             [frq.state :as s]
             [jolt.host :as host]
             [glimmer.core :as ui]
+            [glimmer-tui.ffi :as tui-ffi]
             ;; last, so its install! is the one that stands
             [glimmer-tui.core :as tui]))
 
@@ -107,6 +108,28 @@
           (known? (env "TERM_PROGRAM"))
           false))))
 
+(defn- at-end?
+  "Whether the scroll that is being reported ran into the end of its content.
+
+  A terminal's viewport is moved by an offset and reports the offset it was
+  asked for, so `to` on its own says nothing about where the bottom is. What
+  says it is the clamp: painting fits the offset to the content it had and
+  writes the fitted one back, so a request that came out smaller than it went
+  in is a request that asked for more list than there was — which is a reader
+  who has scrolled back down to the newest line.
+
+  Read here, in the handler, because this is the one moment it is true of this
+  scroll: the loop paints the frame the input caused and only then hands out
+  the events, so the offset on the node is already this request, clamped. The
+  render that follows will clear it.
+
+  The one it cannot see is a page that lands exactly on the end — nothing was
+  clamped, so it reads as a scroll like any other, and the button stays up for
+  one more press. There is no max on the node to compare against, and asking
+  for one is the jump itself."
+  [to]
+  (< (tui-ffi/node-get-num (tui-ffi/event-node) "offset") to))
+
 (defn- narrow!
   "Tell the layout how much room it has, in the units it expects.
 
@@ -144,6 +167,9 @@
   ;; fetches the picture either way, and Kitty's protocol puts it over the
   ;; cells the layout reserved for it.
   (reset! app/terminal-graphics? (boolean (graphics?)))
+  ;; And how a scroll here answers "am I at the newest line?", which the
+  ;; window's scroll area answers for itself.
+  (reset! s/at-end-probe at-end?)
   (app/start! {:after! tui/after!
                :every! tui/every!
                :title! nil

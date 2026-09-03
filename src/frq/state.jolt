@@ -140,7 +140,37 @@
 (defonce at-present? (atom true))
 (defonce jump-tick (atom 0))
 
-(defn jump-to-present! [] (swap! jump-tick inc))
+;; How a backend answers "did that scroll end at the end?".
+;;
+;; The window's scroll area says so itself — `:on-change` arrives with "end" —
+;; and the terminal's does not: it reports the offset it was asked for and
+;; never how far down the bottom is. What it does do is clamp, so a request
+;; that came back smaller than it went out is a request that ran into the end.
+;; Only a backend that can see that installs this; `scrolled!` is written for
+;; both, and asks.
+(defonce at-end-probe (atom nil))
+
+(defn scrolled!
+  "A viewport moved under the reader, to the offset `to`.
+
+  For the backends whose scroll areas report a position rather than a place:
+  where that leaves the reader is what `at-end-probe` is asked, and with
+  nobody to ask, any scroll at all is a scroll away from the newest line."
+  [to]
+  (reset! at-present? (boolean (when-let [probe @at-end-probe] (probe to))))
+  nil)
+
+(defn jump-to-present!
+  "Go back to the newest line.
+
+  `at-present?` is set here rather than left to the view because not every
+  backend can tell us: the window's scroll area reports where it ended up and
+  corrects this on the next frame, and the terminal's does not report the
+  bottom at all — so what a jump means for the button that asked for it is
+  said here, once, for both."
+  []
+  (reset! at-present? true)
+  (swap! jump-tick inc))
 ;; A counter rather than a clock: the list only needs their order, and a
 ;; monotonic tick cannot be surprised by the system time moving.
 (defonce access-tick (atom 0))

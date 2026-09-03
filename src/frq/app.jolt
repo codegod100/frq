@@ -1237,6 +1237,26 @@
         (for [p people] ^{:key (:nick p)} [member-row p])
         [:dim-label {:label "Nobody listed yet."}])]]))
 
+(defn- messages-scroll-key
+  "What the backlog's scroll position is remembered under.
+
+  One name in a window: `:scroll-to-bottom` is how the jump button is answered
+  there, and the position under that name is the one the reader left behind.
+
+  The terminal backend has no `:scroll-to-bottom` — a viewport there is moved
+  by the wheel and the page keys and by nothing else — but it does open a
+  sticky viewport it has never seen at the bottom, which is the same thing
+  said differently. So a jump renames the viewport: the tick that asks the
+  window to scroll gives the terminal a name with no position saved under it,
+  and the newest line is what it opens on.
+
+  Only on a jump, so scrolling and every message that arrives between two
+  jumps still find the position where they left it."
+  []
+  (if @terminal?
+    (str "chat-messages-" @s/jump-tick)
+    "chat-messages"))
+
 (defn chat-screen []
   (let [name @s/current
         buffer (get @s/channels name)
@@ -1246,7 +1266,14 @@
     ;; that scrolls, bounded so what follows it keeps its room.
     ;; Same margin all round: the compose row's own air is what centres it in
     ;; the strip below the separator, and it is measured from this edge.
-    [:vbox {:spacing 8 :margin 12}
+    ;; Ctrl-End is the jump without the button, for a reader whose hands are
+    ;; on the compose bar. It is unhandled everywhere below — the entry takes
+    ;; plain End for its own caret and leaves this one alone — so it arrives
+    ;; here by bubbling up from whatever had the focus. The window backend
+    ;; registers the handler and never calls it: keys there belong to egui.
+    [:vbox {:spacing 8 :margin 12
+            :on-key (fn [k]
+                      (when (= k "ctrl+end") (s/jump-to-present!)))}
      [:hbox {:spacing 8}
       ;; The way back to the list, on a window with room for one thing at a
       ;; time. Beside the list there is nothing to go back to, so the button
@@ -1295,11 +1322,15 @@
       [:vbox {:key :messages :fill-height true
               :reserve (below-messages)
               :width-request (if show-users? (messages-width) 0)}
-       [:scroll {:scroll-key "chat-messages"
+       [:scroll {:scroll-key (messages-scroll-key)
                  :orientation :vertical
                  :stick-to-bottom true
                  :scroll-to-bottom @s/jump-tick
-                 :on-change #(reset! s/at-present? (= "end" %))}
+                 :on-change #(reset! s/at-present? (= "end" %))
+                 ;; The terminal's half of the same question, which arrives
+                 ;; as the offset the list moved to rather than as a place.
+                 ;; `scrolled!` is what turns one into the other.
+                 :on-scroll s/scrolled!}
         (if (seq (:messages buffer))
           (message-rows (:messages buffer))
           [:dim-label {:label "Nothing here yet."}])]]
@@ -1315,7 +1346,13 @@
      [:vbox {:key :jump}
       (if @s/at-present?
         [:spacer {:size 34}]
-        [:button {:label "↓ Jump to present" :on-click s/jump-to-present!}])]
+        ;; With the key beside it where there is a key: a terminal is where a
+        ;; reader is least likely to reach for the mouse, and most likely to
+        ;; have paged up here with the keyboard in the first place.
+        [:button {:label (if @terminal?
+                           "↓ Jump to present (Ctrl-End)"
+                           "↓ Jump to present")
+                  :on-click s/jump-to-present!}])]
      [:separator {}]
      ;; What the draft is answering, directly above where it is being typed.
      [:vbox {:key :replying}
