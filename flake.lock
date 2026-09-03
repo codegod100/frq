@@ -110,16 +110,16 @@
     "jolt-native": {
       "flake": false,
       "locked": {
-        "lastModified": 1788405941,
-        "narHash": "sha256-aVMj/9IAX7szfmI0Awx8oHVU5/87sJ2V+w7MuBGHYmc=",
+        "lastModified": 1788420146,
+        "narHash": "sha256-U5Z/ekhVdMashVpJZJK+OL2CzXRQuAv2Dd/CCWjaIII=",
         "ref": "refs/heads/main",
-        "rev": "258bbc5161b93d580a4c84363acabe63b0624e88",
-        "revCount": 37,
+        "rev": "3dd441e764bc6b0123d9b33fe9871dcf7ac150b6",
+        "revCount": 40,
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       },
       "original": {
-        "rev": "258bbc5161b93d580a4c84363acabe63b0624e88",
+        "rev": "3dd441e764bc6b0123d9b33fe9871dcf7ac150b6",
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       }

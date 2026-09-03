@@ -46,7 +46,7 @@
     # drift this comment warns about wearing a different hat: one input, and
     # the window and the terminal are the same library either way.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=258bbc5161b93d580a4c84363acabe63b0624e88";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=3dd441e764bc6b0123d9b33fe9871dcf7ac150b6";
       flake = false;
     };
 
