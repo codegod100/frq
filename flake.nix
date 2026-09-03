@@ -146,9 +146,32 @@
             version = "0.1.0";
             src = jolt-native;
 
+            # The media plane's deps are seven git repos rather than crates.io
+            # releases. `allowBuiltinFetchGit` would fetch them with
+            # builtins.fetchGit, which happens at *eval* time — so every
+            # evaluation clones them in full (all refs), even when the built
+            # library is already in a cache, and the clones themselves are not
+            # derivations and can never be substituted. Hashed, they are plain
+            # fixed-output derivations: one entry per repo (nixpkgs keys these
+            # by commit, so the sibling crates out of the same workspace are
+            # covered), substitutable, fetched once. The cost is that these
+            # move whenever jolt-native's Cargo.lock does.
             cargoLock = {
               lockFile = "${jolt-native}/Cargo.lock";
-              allowBuiltinFetchGit = true;
+              outputHashes = {
+                # github.com/Frando/moq @ 53fe78d8 — moq-lite, moq-native, hang, conducer
+                "moq-lite-0.15.5" = "sha256-wh8telcXK4Zqaefs42n6LJitye8cc0rAmXd8RtJZJ+Q=";
+                # github.com/n0-computer/iroh-live @ edd9bcc5 — iroh-moq, moq-media, rusty-{capture,codecs}
+                "iroh-live-0.1.0" = "sha256-+bOIMXU4F/9toLZ25MFRA0Kd3Cr4iyP4icOfBkObtfU=";
+                # github.com/n0-computer/iroh @ 8af8370b — iroh, iroh-base, iroh-relay
+                "iroh-0.97.0" = "sha256-tCEzLwu+bcAiH0dMmQoKRB24N5eiNG6BNixod8Y6igo=";
+                # github.com/Frando/web-transport @ f7a523f1 — the four web-transport-* crates
+                "web-transport-proto-0.6.0" = "sha256-5WP98+nTI6FR23AM7DNf0nnsolqr7M0RHxY09NNdDzs=";
+                # github.com/n0-computer/noq @ ab042ea7 — noq, noq-proto, noq-udp
+                "noq-0.17.0" = "sha256-aur6ekfwr3PsnR8RrBKLgCvujQRi4tccyK9nJo6O+Tg=";
+                "iroh-gossip-0.97.0" = "sha256-DEIq1BCsCZL+1q9yiEZAXzv7wxvIXgsW044Y8uHW7PU=";
+                "iroh-smol-kv-0.3.1" = "sha256-oXGdnJVyQfiomzyZhj5r7ez4Uxh73imGt6V9+vHTQZQ=";
+              };
             };
 
             nativeBuildInputs = with pkgs; [
