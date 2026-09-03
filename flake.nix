@@ -108,7 +108,7 @@
 
       # egui reaches for these with dlopen rather than linking them, so being
       # in the cdylib's buildInputs is not enough — whatever starts frq has to
-      # put them on the loader path itself. Without libX11 here, vidya reports
+      # put them on the loader path itself. Without libx11 here, vidya reports
       # "X11 unavailable", falls back to Wayland, and winit refuses to build a
       # second event loop after the failed first one.
       #
@@ -120,10 +120,10 @@
         libGL
         libxkbcommon
         wayland
-        xorg.libX11
-        xorg.libXcursor
-        xorg.libXi
-        xorg.libXrandr
+        libx11
+        libxcursor
+        libxi
+        libxrandr
         vulkan-loader
       ];
     in
