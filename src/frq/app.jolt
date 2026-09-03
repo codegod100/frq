@@ -134,7 +134,19 @@
     [connect-action]]
    [:dim-label {:label "TLS rides jolt's OpenSSL bindings; untick it for a plain :6667 listener. Sign-in needs TLS, so it is desktop-only."}]])
 
+;; Whether the backend under this tree is a terminal, set by `frq.tui` before
+;; the first paint and never again. Two things in a message hang on it, and
+;; both are about a cell grid rather than a canvas: there is no picture to
+;; draw a face with, and a name with nothing to its left is the heading the
+;; text hangs off — the shape a terminal has read messages in for forty years.
+(defonce terminal? (atom false))
+
 ;; ---------------------------------------------------------------- chats
+
+(defn- open-button [name]
+  [:button {:label "Open"
+            :kind :primary
+            :on-click #(s/open-channel! name)}])
 
 (defn conversation-row [buffer]
   (let [name (:name buffer)
@@ -147,8 +159,17 @@
      ;; split down two lines — while the card, sized to a row that no longer
      ;; fits, sticks out past the cards above and below it.
      ;;
+     ;; In a terminal the Open button rides up onto the name's line. A row of
+     ;; chrome there is one cell, so a button on a line of its own costs the
+     ;; card a whole row — four of them and the list has spent a screenful on
+     ;; buttons. A window's row is 34 points and its button is a lozenge with
+     ;; air around it, which is why it keeps its own line there.
+     (if @terminal?
+       [:hbox {:spacing 8 :wrap false}
+        [:title-2 {:label name}]
+        [open-button name]]
+       [:title-2 {:label name}])
      ;; `:wrap false` on the badges: they sit beside each other or not at all.
-     [:title-2 {:label name}]
      [:hbox {:spacing 12 :wrap false}
       ;; A DM has no membership to report — there is nothing to be in — so the
       ;; badge says what the buffer is instead of answering a question nobody
@@ -159,7 +180,7 @@
                 :live (boolean (:joined? buffer))}]
       (when (pos? unread) [:label {:label (str "● " unread)}])]
      [:dim-label {:label (s/last-preview buffer)}]
-     [:button {:label "Open" :kind :primary :on-click #(s/open-channel! name)}]]))
+     (when-not @terminal? [open-button name])]))
 
 (def ^:private sidebar-width 320)
 
@@ -179,13 +200,6 @@
 (defonce chrome-row (atom window-row))
 
 (defn- chrome-scale [] (/ (double @chrome-row) window-row))
-
-;; Whether the backend under this tree is a terminal, set by `frq.tui` before
-;; the first paint and never again. Two things in a message hang on it, and
-;; both are about a cell grid rather than a canvas: there is no picture to
-;; draw a face with, and a name with nothing to its left is the heading the
-;; text hangs off — the shape a terminal has read messages in for forty years.
-(defonce terminal? (atom false))
 
 (defn- chip-gap
   "The air between two chips on a row.
@@ -289,7 +303,13 @@
      [:vbox {:key :list :fill-height true :reserve (below-list)}
       [:scroll {:scroll-key "chats-list" :orientation :vertical}
        (if (seq buffers)
-         (for [b buffers] [conversation-row b])
+         ;; Keyed on the name, because this list reorders: opening a
+         ;; conversation bumps it to the top, and unkeyed children reconcile by
+         ;; position — the widgets stay put and their props are rewritten under
+         ;; them. What is focused is a widget, so the highlight would stay in
+         ;; the slot the reader clicked while the row that moved into it is
+         ;; someone else's conversation.
+         (for [b buffers] ^{:key (:name b)} [conversation-row b])
          [:card {} [:dim-label {:label "No conversations yet — join a channel."}]])]]
      [:vbox {:key :foot :spacing 8}
       [:separator {}]
@@ -1158,7 +1178,10 @@
      [:scroll {:scroll-key (str "users-" name)
                :orientation :vertical}
       (if (seq people)
-        (for [p people] [member-row p])
+        ;; Keyed, for the reason the conversation list is: this list reorders
+        ;; as people come and go, and a name is a button someone can be
+        ;; standing on.
+        (for [p people] ^{:key (:nick p)} [member-row p])
         [:dim-label {:label "Nobody listed yet."}])]]))
 
 (defn chat-screen []
