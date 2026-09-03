@@ -632,10 +632,19 @@
 
   Clamped at both ends, and falling back to the old fixed height until the
   first poll has landed: a preview is a preview either way, and the lightbox
-  is what full size is for."
+  is what full size is for.
+
+  A terminal gets less of its screen, and a hard ceiling on top of that. Four
+  fifths of a window is a picture you look at; four fifths of a terminal is a
+  conversation with one message in it, and the rows a picture takes are rows
+  that cannot hold a line. Twelve of them is enough to see what a picture is
+  of, and to decide whether to open it."
   []
   (let [h @s/window-height]
-    (if (pos? h) (min 900 (max 240 (long (* 0.8 h)))) 260)))
+    (cond
+      (not (pos? h)) 260
+      @terminal? (max 80 (min 192 (long (* 0.4 h))))
+      :else (min 900 (max 240 (long (* 0.8 h)))))))
 
 (defn- preview-width
   "How wide a picture in the conversation may be.
