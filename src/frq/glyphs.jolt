@@ -1,0 +1,83 @@
+(ns frq.glyphs
+  "Where a line of chat stops being text and becomes a picture.
+
+  Vidya paints a `:label` with Ubuntu Light and a DejaVu subset behind it —
+  UI punctuation, maths-in-prose, box drawing — and no emoji at all. So an
+  emoji anybody typed into a message was drawn as tofu: the hollow box a font
+  puts up for a codepoint it has no glyph for. The same emoji in a reaction
+  pill drew properly all along, because `:reaction` is the one node that looks
+  a glyph up in the Twemoji pack instead of setting it as text.
+
+  The split therefore has to happen before the text reaches a label, and this
+  is where: the message cut into the parts a font can draw and the parts only
+  the pack can."
+  (:require [frq.emoji :as emoji]))
+
+(def ^:private tones
+  "The five skin-tone modifiers.
+
+  `emoji/catalog` leaves toned variants out on purpose — they multiply it by
+  five and say nothing a reaction needs to say — but the pack has a picture
+  for every one, and vidya falls back to the untoned picture where it has
+  none. So a tone is stripped for the lookup and kept for the drawing."
+  #{0x1F3FB 0x1F3FC 0x1F3FD 0x1F3FE 0x1F3FF})
+
+(defn- untoned [s]
+  (apply str (remove #(contains? tones (int %)) (seq s))))
+
+(def ^:private pack
+  "Every emoji there is a picture for. `emoji/catalog` is already filtered to
+  exactly that, which is why the lookup is against it and not against a range
+  of codepoints: a codepoint the pack has missed would be swapped out of the
+  text for a picture that does not exist, and drawn as the same tofu by a
+  longer road."
+  (set (map first emoji/catalog)))
+
+(def ^:private starts
+  "The first codepoint of each of them. A message with no emoji in it — which
+  is nearly all of them — costs one set lookup a character this way, and no
+  substrings at all."
+  (set (map #(first (seq (first %))) emoji/catalog)))
+
+(def ^:private scan-limit
+  "The most codepoints one emoji can run to. A family is a single glyph made
+  of four people, three joiners and a tone each, so the scan cannot assume a
+  cluster is short — it is the longest thing in the catalog, plus room for the
+  tones the catalog itself leaves out."
+  (+ 5 (reduce max 1 (map #(count (first %)) emoji/catalog))))
+
+(defn- emoji-at
+  "The longest emoji the pack knows that starts at `i`, or nil.
+
+  Longest first, because the short one is a prefix of the long one: 👨 is the
+  head of 👨‍👩‍👧, and taking the man would leave his family as three more
+  glyphs and two tofu joiners."
+  [cps i]
+  (loop [len (min scan-limit (- (count cps) i))]
+    (when (pos? len)
+      (let [s (apply str (subvec cps i (+ i len)))]
+        (if (or (contains? pack s) (contains? pack (untoned s)))
+          s
+          (recur (dec len)))))))
+
+(defn runs
+  "`text` as alternating `[:text s]` and `[:emoji s]` runs, in order.
+
+  An `:emoji` run is one glyph: a chip draws one picture, so two emoji side by
+  side are two runs and not one."
+  [text]
+  (let [cps (vec (seq (or text "")))
+        n (count cps)
+        flush (fn [acc buf] (cond-> acc (seq buf) (conj [:text (apply str buf)])))]
+    (loop [i 0 buf [] acc []]
+      (if (>= i n)
+        (flush acc buf)
+        (if-let [hit (and (contains? starts (nth cps i)) (emoji-at cps i))]
+          (recur (+ i (count hit)) [] (conj (flush acc buf) [:emoji hit]))
+          (recur (inc i) (conj buf (nth cps i)) acc))))))
+
+(defn emoji?
+  "Whether any of `runs` is a picture — which is what decides between a plain
+  label and a row that has to mix the two."
+  [runs]
+  (boolean (some #(= :emoji (first %)) runs)))
