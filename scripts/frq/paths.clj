@@ -19,23 +19,6 @@
 
 (defn env [k default] (or (not-empty (System/getenv k)) default))
 
-;; An archive pinned in scripts/*.dotslash, resolved to the file its manifest
-;; names. DotSlash downloads it once, verifies the digest and caches it, so
-;; every script here asks the same question of the same pin and a second
-;; jolt-native checkout is never part of the answer.
-;;
-;; Only the desktop libraries are pinned this way now — `just lib`, and the
-;; release half of a run. The Android side is nix/android.nix, which fetches
-;; the same archives by the same digests as `fetchurl`.
-;;
-;; DOTSLASH names the fetcher for a caller that has one but has not got it on
-;; PATH.
-(defn dist [root name]
-  (let [manifest (fs/path root "scripts" (str name ".dotslash"))]
-    (when-not (fs/exists? manifest)
-      (die (str "no DotSlash manifest: " manifest)))
-    (out (env "DOTSLASH" "dotslash") "--" "fetch" manifest)))
-
 ;; The sha deps.edn pins for a git url, so a bump there reaches the boot image.
 ;; Read as data rather than grepped: it is Clojure, and so is this.
 (defn dep-sha [root url]

@@ -26,7 +26,7 @@
  ;; lives in src/frq/av.jolt; the media half is three thousand lines of codec
  ;; and transport that would only be written badly a second time here.
  ;;
- ;;   just lib
+ ;;   just run
  :jolt/native [{:name "vidya"
                 :darwin ["libvidya.dylib"]
                 :linux ["libvidya.so"]}

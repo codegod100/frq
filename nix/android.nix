@@ -47,12 +47,11 @@ let
   ndkBin = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/bin";
   cc = "${ndkBin}/aarch64-linux-android${apiLevel}-clang";
 
-  # What comes out of jolt-native's releases. These two pins are the Android
-  # half of what `just bump` moves — the desktop half stays in
-  # scripts/*.dotslash, and the tag written here is the one written there, so
-  # a phone and a laptop run the same release. Do not edit them by hand:
-  # bump-jolt-native.bb fetches each archive, weighs it, and writes both the
-  # url and the digest below.
+  # What comes out of jolt-native's releases. These two pins are the whole of
+  # what `just bump` moves on the native side — a desktop run builds the flake
+  # input instead, so this is the only place a release is fetched. Do not edit
+  # them by hand: bump-jolt-native.bb fetches each archive, weighs it, and
+  # writes both the url and the digest below.
   #
   # One archive, two libraries: libvidya (the retained-tree UI) and libjoltmoq
   # (the AV media plane). They are built together and only make sense together

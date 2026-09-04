@@ -29,10 +29,10 @@
       flake = false;
     };
 
-    # Ahead of v0.1.3, which is what deps.edn and the scripts/*.dotslash pins
-    # name — and deliberately: the pins are the last release, and this is what
-    # `just run` builds, so a change to jolt-native can be run before there is
-    # a release to fetch. The two meet again at `just bump`.
+    # Ahead of v0.1.3, which is what nix/android.nix pins the APK to — and
+    # deliberately: that pin is the last release, and this is what `just run`
+    # builds, so a change to jolt-native can be run before there is a release
+    # to fetch. The two meet again at `just bump`.
     #
     # Pinned all the same, and pinned to a rev: this input carries both halves of
     # glimmer-vidya — libvidya, and the Jolt side that binds it — so an

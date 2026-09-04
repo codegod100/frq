@@ -6,12 +6,11 @@
 # Clojure is already the language this repo is written in.
 #
 # This used to be a DotSlash manifest, pinning a release of babashka the way
-# the native libraries are pinned. It is the flake's now, for the reason the
+# the desktop libraries were pinned. It is the flake's now, for the reason the
 # flake exists: a bb from `nixpkgs` is one this tree already names a version
-# of, so a checkout needs nix and nothing else. DotSlash still answers for the
-# desktop libraries — those are jolt-native's releases, which no nixpkgs has —
-# but nothing has to be installed to reach *them* any more either, because the
-# script that fetches them starts here.
+# of, so a checkout needs nix and nothing else. Nothing is fetched by digest
+# here any more — the libraries a run loads are the flake's too, and the only
+# release pins left are the APK's, in nix/android.nix.
 #
 # Three answers, in order:
 #

@@ -34,10 +34,9 @@ Android is logcat.
 
 ## Running
 
-Both native libraries, then the app:
+The app:
 
 ```bash
-just lib
 just run
 ```
 
@@ -46,19 +45,28 @@ on `PATH` if there is one — the dev shell puts one there — and otherwise the
 flake's `.#bb`, built once and kept under `build/`. Nothing has to be installed
 for that but Nix.
 
-`just lib` fetches both shared objects this client loads —
-[jolt-native](https://gitlab.com/nandithebull/jolt-native)'s `libvidya`, the
-retained-tree ABI glimmer paints through, and `libjoltmoq`, the AV media plane
-— out of that project's release, by the digests in `scripts/*.dotslash`, and
-links them into `build/lib`. Nothing is compiled: no Rust toolchain, and no
-jolt-native checkout beside this one. It needs `patchelf`, and only to name
-libasound in `libjoltmoq.so`, which v0.1.3 does not — see the comment in
-`scripts/lib.bb`; that goes away with the release that links it. `just bump` moves every pin to the
-latest release at once, and `just bump v0.1.2` to a named one.
+`just run` is `jolt -M:frq` inside `nix develop`, with `LD_LIBRARY_PATH`
+pointed at the shell's `JOLT_NATIVE_LIB` — the flake's build of
+[jolt-native](https://gitlab.com/nandithebull/jolt-native), which is both
+shared objects this client loads: `libvidya`, the retained-tree ABI glimmer
+paints through, and `libjoltmoq`, the AV media plane. The source frq runs is
+the working tree; everything under it is built rather than fetched, at the revs
+`flake.lock` names. Nothing has to be installed but Nix, and no jolt-native
+checkout beside this one.
 
-`just run` is `jolt -M:frq` with `LD_LIBRARY_PATH` pointed at `build/lib`. It
-connects to `irc.freeq.at:6697` over TLS and joins `#test`. Untick TLS on the
-connect screen (or point it at `127.0.0.1`) for a local server's
+The APK is the other half of that: it takes the two libraries out of
+jolt-native's *release* instead, by the digests in `nix/android.nix`, because a
+derivation's inputs have to be fetchurl. `just bump` moves those pins — and
+deps.edn's glimmer-vidya sha — to the latest release at once, and
+`just bump v0.1.2` to a named one.
+
+`jolt` on its own does not work in this tree: `deps.edn` names both libraries
+under `:jolt/native`, so every invocation loads them before it reads a line and
+dies if the loader cannot find them. `just repl` is that jolt with the shell
+under it — a REPL, or `just repl nrepl-server` for an editor.
+
+frq connects to `irc.freeq.at:6697` over TLS and joins `#test`. Untick TLS on
+the connect screen (or point it at `127.0.0.1`) for a local server's
 plain listener:
 
 ```bash

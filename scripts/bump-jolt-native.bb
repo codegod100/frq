@@ -8,24 +8,22 @@ exec "$(dirname "$0")/bb" "$0" "$@"
 ;;     scripts/bump-jolt-native.bb            # the latest release
 ;;     scripts/bump-jolt-native.bb v0.1.3     # a named one
 ;;
-;; A jolt-native bump is four facts in three places: the tag, the URL, the size
-;; and the digest of each archive in scripts/*.dotslash, the same URL and digest
-;; for the Android archives in nix/android.nix, and the release's commit in
+;; A jolt-native bump is three facts in two places: the URL and the digest of
+;; each Android archive in nix/android.nix, and the release's commit in
 ;; deps.edn. Done by hand it is a lot of copying between a browser and a
 ;; sha256sum, and the failure mode is a pin that still says v0.1.2 while its
-;; digest is v0.1.3's — which DotSlash catches, but only on the machine that
-;; next fetches it, and which fetchurl catches at build time and no sooner.
+;; digest is v0.1.3's — which fetchurl catches at build time and no sooner.
 ;;
-;; The two places exist because the two builds fetch differently and neither can
-;; read the other's pin: `just lib` and a released-halves run resolve DotSlash
-;; manifests, and the APK is a nix derivation, whose inputs have to be fetchurl.
-;; The digests are the same bytes either way — DotSlash's `digest` is over the
-;; archive, which is what fetchurl hashes too.
+;; Only the APK fetches a release now; a desktop run builds jolt-native out of
+;; the flake input, whose rev is flake.lock's. So the two halves this moves are
+;; the phone's bytes and the Jolt source that binds them, and the thing to
+;; remember is that flake.lock is a third pin nothing here touches — see the
+;; jolt-native input's comment in flake.nix for why it runs ahead.
 ;;
 ;; So: ask GitLab what the release holds, fetch each archive once, weigh it,
-;; write the manifests and nix/android.nix back, and put the release's commit in
-;; deps.edn — which is what jolt resolves glimmer-vidya from, and so what the
-;; boot image compiles against.
+;; write nix/android.nix back, and put the release's commit in deps.edn — which
+;; is what jolt resolves glimmer-vidya from, and so what the boot image
+;; compiles against.
 ;;
 ;; Nothing here decides whether the new release is a good idea. It only makes
 ;; the tree say one version instead of two.
@@ -37,8 +35,7 @@ exec "$(dirname "$0")/bb" "$0" "$@"
          '[cheshire.core :as json]
          '[clojure.string :as str])
 
-(def here (fs/parent (fs/canonicalize *file*)))
-(def root (str (fs/parent here)))
+(def root (str (fs/parent (fs/parent (fs/canonicalize *file*)))))
 (def project "nandithebull%2Fjolt-native")
 (def repo "https://gitlab.com/nandithebull/jolt-native")
 
@@ -55,21 +52,7 @@ exec "$(dirname "$0")/bb" "$0" "$@"
       body
       (or (first body) (paths/die (str "no releases at all under " repo))))))
 
-;; The manifests this tree pins out of jolt-native. Every DotSlash file beside
-;; this script whose providers point at the repo — rather than a list written
-;; here, which would be a sixth place to forget.
-(defn manifests []
-  (->> (fs/glob here "*.dotslash")
-       sort
-       (keep (fn [file]
-               (let [text (slurp (str file))
-                     json (json/parse-string (subs text (str/index-of text "{")))]
-                 (when (->> (get json "platforms")
-                            vals
-                            (some #(str/starts-with? (get-in % ["providers" 0 "url"]) repo)))
-                   {:file file :text text :json json}))))))
-
-;; The archive an entry names, at the new tag. The URL a manifest carries is the
+;; The archive an entry names, at the new tag. The URL a pin carries is the
 ;; release permalink — /-/releases/<tag>/downloads/<asset> — so the asset's name
 ;; is its last segment, and the name carries the version too. Both move.
 (defn retag [url old new]
@@ -80,65 +63,20 @@ exec "$(dirname "$0")/bb" "$0" "$@"
 (defn tag-of [url]
   (second (re-find #"/-/releases/([^/]+)/downloads/" url)))
 
-;; Fetch once per distinct URL, then weigh it: DotSlash wants the size and the
-;; sha256 of the archive as downloaded, not of anything inside it.
+;; Fetch once per distinct URL, then weigh it: the digest is over the archive as
+;; downloaded, which is what fetchurl hashes too — not of anything inside it.
 (def weigh
   (memoize
    (fn [dir url]
      (let [file (fs/path dir (last (str/split url #"/")))]
        (println (str "  fetching " (fs/file-name file)))
        (p/shell "curl" "-fsSL" "-o" (str file) url)
-       {:size (fs/size file)
-        :digest (first (str/split (paths/out "sha256sum" (str file)) #"\s+"))
-        :file file}))))
+       (first (str/split (paths/out "sha256sum" (str file)) #"\s+"))))))
 
-;; What the shim will reach for inside the archive. A release that moved a file
-;; leaves a manifest that fetches and verifies and then cannot resolve, which is
-;; a worse thing to find out from than this.
-(defn check-path! [{:keys [file]} path]
-  (let [names (set (str/split-lines (paths/out "tar" "-tzf" (str file))))]
-    (when-not (some #(= path (str/replace % #"^\./" "")) names)
-      (paths/die (str "no " path " in " (fs/file-name file))
-                 "The release moved it; the manifest's `path` needs a hand."))))
-
-;; The JSON back out, in the shape it went in: two-space indentation, a value
-;; after each key, and the `//` comment block above it kept — that block is why
-;; anyone reading the manifest knows what the object is for.
-(def pretty
-  (json/create-pretty-printer
-   (assoc json/default-pretty-print-options
-          :indentation "  "
-          :indent-arrays? true
-          :object-field-value-separator ": ")))
-
-(defn rewrite [{:keys [file text json]} tmp tag]
-  (let [platforms (get json "platforms")
-        updated
-        (into (array-map)
-              (for [[platform entry] platforms
-                    :let [url (retag (get-in entry ["providers" 0 "url"]) (tag-of (get-in entry ["providers" 0 "url"])) tag)
-                          {:keys [size digest] :as got} (weigh tmp url)]]
-                (do
-                  (check-path! got (get entry "path"))
-                  [platform (-> entry
-                                (assoc "size" size "digest" digest)
-                                (assoc-in ["providers" 0 "url"] url))])))
-        head (subs text 0 (str/index-of text "{"))
-        ;; The prose above the JSON names the release too — "from jolt-native's
-        ;; v0.1.3 release". Left saying the old one it would be a lie the moment
-        ;; this script succeeds.
-        head (reduce (fn [h old] (str/replace h old tag))
-                     head
-                     (distinct (keep #(tag-of (get-in % ["providers" 0 "url"])) (vals platforms))))]
-    (spit (str file) (str head (json/generate-string (assoc json "platforms" updated) {:pretty pretty}) "\n"))
-    (println (str "  " (fs/file-name file)))))
-
-;; nix/android.nix fetches two of the same archives as `pkgs.fetchurl`, because
-;; a derivation cannot resolve a DotSlash manifest: the fetch is the input, and
-;; an input has to be a fixed-output derivation with the digest written down.
-;; Rewritten as text for the same reason deps.edn is — the file is mostly the
-;; comments explaining each step, and there is no round-tripping Nix as data
-;; here anyway.
+;; nix/android.nix fetches the release archives as `pkgs.fetchurl`, which is the
+;; only fetch of a release left in this tree. Rewritten as text for the same
+;; reason deps.edn is — the file is mostly the comments explaining each step,
+;; and there is no round-tripping Nix as data here anyway.
 ;;
 ;; Every fetchurl whose url points at the repo, whatever it is called: a third
 ;; archive appearing in android.nix should move with the other two rather than
@@ -156,7 +94,7 @@ exec "$(dirname "$0")/bb" "$0" "$@"
         updated (str/replace text pattern
                              (fn [[_ head url mid _ tail]]
                                (let [new-url (retag url (tag-of url) tag)
-                                     {:keys [digest]} (weigh tmp new-url)]
+                                     digest (weigh tmp new-url)]
                                  (swap! seen conj (last (str/split new-url #"/")))
                                  (str head new-url mid digest tail))))]
     (when (empty? @seen)
@@ -182,15 +120,11 @@ exec "$(dirname "$0")/bb" "$0" "$@"
       rel (release tag)
       tag (get rel "tag_name")
       commit (get-in rel ["commit" "id"])
-      files (manifests)
       tmp (fs/create-temp-dir {:prefix "jolt-native-"})]
-  (when (empty? files)
-    (paths/die (str "no DotSlash manifest in " here " points at " repo)))
   (println (str "jolt-native " tag " (" (subs commit 0 8) ")"))
   (try
-    (doseq [m files] (rewrite m tmp tag))
+    (bump-nix! tmp tag)
     (finally (fs/delete-tree tmp)))
-  (bump-nix! tmp tag)
   (bump-deps! commit)
-  (println (str "\nNow: git diff, then `just lib` and `just apk` — the pins are "
+  (println (str "\nNow: git diff, then `just apk` — the pins are "
                 "written, nothing is built.")))

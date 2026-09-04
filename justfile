@@ -8,15 +8,11 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Both native libraries, out of the release pins. `run` builds them instead.
-lib:
-    scripts/lib.bb
-
 # The APK, out of the flake. `just apk install` puts it on the device.
 apk action="build":
     scripts/apk.bb {{action}}
 
-# Every jolt-native pin — the manifests, deps.edn, nix/android.nix — at a release.
+# Every jolt-native pin — nix/android.nix and deps.edn — at a release.
 bump tag="":
     scripts/bump-jolt-native.bb {{tag}}
 
@@ -27,3 +23,7 @@ run *args:
 # The same screens in a terminal. `just tui --headless` prints one screenshot.
 tui *args:
     scripts/tui.bb {{args}}
+
+# A jolt with the native libraries under it: a REPL, or `just repl nrepl-server`.
+repl *args:
+    scripts/repl.bb {{args}}

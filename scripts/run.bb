@@ -20,10 +20,10 @@ exec "$(dirname "$0")/bb" "$0" "$@"
 ;; runs as whatever was there before, silently. A run that is meant to answer
 ;; "does my change work" has to be the files on disk.
 ;;
-;; And deliberately not the scripts/*.dotslash pins either, which is what this
-;; used to do. Those name a release; a change to jolt-native is by definition
-;; not in one yet. `just lib` still fetches them, and the APK takes the same
-;; released bytes through nix/android.nix — but a run does not.
+;; And deliberately not a release either, which is what this used to do: it
+;; resolved the scripts/*.dotslash pins, and those name a release — a change to
+;; jolt-native is by definition not in one yet. The APK still takes released
+;; bytes, through nix/android.nix — but a run does not.
 (require '[babashka.classpath :as cp])
 (cp/add-classpath (str (babashka.fs/parent *file*)))
 (require '[frq.paths :as paths]
