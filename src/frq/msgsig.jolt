@@ -122,7 +122,7 @@
               (let [pub (ffi/alloc 32)
                     plen (ffi/alloc (ffi/sizeof :size_t))]
                 (try
-                  (ffi/write plen :size_t 0 32)
+                  (ffi/write plen :size_t 32)
                   (when (= 1 (c-get-raw-pub pkey pub plen))
                     (let [raw (ffi/read-array pub 32)]
                       (reset! signer
@@ -149,7 +149,7 @@
           ctx (c-md-ctx-new)]
       (try
         (ffi/write-array msg bs)
-        (ffi/write slen :size_t 0 64)
+        (ffi/write slen :size_t 64)
         (when (and (= 1 (c-sign-init ctx ffi/null ffi/null ffi/null pkey))
                    (= 1 (c-sign ctx sig slen msg n)))
           (str "ed25519:" kid ":" (b64url (ffi/read-array sig (ffi/read slen :size_t)))))
