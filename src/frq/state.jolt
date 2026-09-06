@@ -290,6 +290,22 @@
            :last-read-id (:id newest)
            :last-read-at (max (:last-read-at buffer 0) (:at newest 0)))))
 
+;; How far back a room nobody has seen before counts as already read.
+;;
+;; A room being joined for the first time replays its whole history, and none
+;; of that is news — the reader was not away for it, they were not here. So a
+;; new buffer starts caught up rather than at the beginning, or joining a busy
+;; channel announces a hundred unread posts from before you arrived.
+;;
+;; Caught up to a minute ago rather than to this instant, because a live line
+;; is timestamped by the server and this by our clock: the two disagree by
+;; whatever the skew is, and a live message stamped a few seconds behind us
+;; would land under the marker and never be counted. A minute is more skew than
+;; there will be and far less than the age of any backlog, and what it costs is
+;; that a message sent in the minute before you joined counts as unread — which
+;; is the harmless direction.
+(def ^:private fresh-room-grace-ms 60000)
+
 (defn- ensure-channel [m name]
   (if (contains? m name)
     m
@@ -298,7 +314,8 @@
                    ;; What has been seen, and what the count is derived from.
                    ;; `:unread` and `:mention?` are answers, not records — see
                    ;; `recount`.
-                   :last-read-id nil :last-read-at 0 :mention? false
+                   :last-read-id nil :mention? false
+                   :last-read-at (max 0 (- (clock/now-ms) fresh-room-grace-ms))
                    :kind (if (dm? name) :dm :channel)
                    :peer-did nil :last-activity 0
                    ;; nick -> mode prefix, for the people panel
