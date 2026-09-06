@@ -149,79 +149,21 @@
 
           nixGL = nixGLFor pkgs;
 
-          # libvidya (the retained-tree ABI glimmer-vidya binds, on egui) and
-          # libjoltmoq (the AV media plane). One workspace, two cdylibs.
-          native = pkgs.rustPlatform.buildRustPackage {
-            pname = "jolt-native";
-            version = "0.1.0";
-            src = jolt-native;
-
-            # The media plane's deps are seven git repos rather than crates.io
-            # releases. `allowBuiltinFetchGit` would fetch them with
-            # builtins.fetchGit, which happens at *eval* time — so every
-            # evaluation clones them in full (all refs), even when the built
-            # library is already in a cache, and the clones themselves are not
-            # derivations and can never be substituted. Hashed, they are plain
-            # fixed-output derivations: one entry per repo (nixpkgs keys these
-            # by commit, so the sibling crates out of the same workspace are
-            # covered), substitutable, fetched once. The cost is that these
-            # move whenever jolt-native's Cargo.lock does.
-            cargoLock = {
-              lockFile = "${jolt-native}/Cargo.lock";
-              outputHashes = {
-                # github.com/Frando/moq @ 53fe78d8 — moq-lite, moq-native, hang, conducer
-                "moq-lite-0.15.5" = "sha256-wh8telcXK4Zqaefs42n6LJitye8cc0rAmXd8RtJZJ+Q=";
-                # github.com/n0-computer/iroh-live @ edd9bcc5 — iroh-moq, moq-media, rusty-{capture,codecs}
-                "iroh-live-0.1.0" = "sha256-+bOIMXU4F/9toLZ25MFRA0Kd3Cr4iyP4icOfBkObtfU=";
-                # github.com/n0-computer/iroh @ 8af8370b — iroh, iroh-base, iroh-relay
-                "iroh-0.97.0" = "sha256-tCEzLwu+bcAiH0dMmQoKRB24N5eiNG6BNixod8Y6igo=";
-                # github.com/Frando/web-transport @ f7a523f1 — the four web-transport-* crates
-                "web-transport-proto-0.6.0" = "sha256-5WP98+nTI6FR23AM7DNf0nnsolqr7M0RHxY09NNdDzs=";
-                # github.com/n0-computer/noq @ ab042ea7 — noq, noq-proto, noq-udp
-                "noq-0.17.0" = "sha256-aur6ekfwr3PsnR8RrBKLgCvujQRi4tccyK9nJo6O+Tg=";
-                "iroh-gossip-0.97.0" = "sha256-DEIq1BCsCZL+1q9yiEZAXzv7wxvIXgsW044Y8uHW7PU=";
-                "iroh-smol-kv-0.3.1" = "sha256-oXGdnJVyQfiomzyZhj5r7ez4Uxh73imGt6V9+vHTQZQ=";
-              };
-            };
-
-            nativeBuildInputs = with pkgs; [
-              pkg-config
-              cmake
-              rustPlatform.bindgenHook
-            ];
-
-            buildInputs = with pkgs; [
-              alsa-lib
-              pipewire
-              openssl
-              libxkbcommon
-              wayland
-              libGL
-            ];
-
-            # Upstream's .cargo/config.toml drives the whole build through
-            # DotSlash: a pinned rustc, sccache, and zig as the C/C++ compiler
-            # and linker, each fetched from the network on first use. None of
-            # that survives a build sandbox, and none of it is needed when the
-            # toolchain comes from the store — so drop it and let stdenv's cc
-            # link (openh264 is C++, which stdenv covers too).
-            postPatch = ''
-              rm -f .cargo/config.toml
-            '';
-
-            # bindgen reads linux/videodev2.h directly; upstream points it at
-            # zig's bundled headers, which under Nix is just the kernel headers.
-            V4L2R_VIDEODEV2_H_PATH = "${pkgs.linuxHeaders}/include";
-
-            doCheck = false;
-
-            installPhase = ''
-              runHook preInstall
-              mkdir -p "$out/lib"
-              install -m644 target/*/release/*.so "$out/lib/"
-              runHook postInstall
-            '';
-          };
+          # libvidya (the retained-tree ABI glimmer-vidya binds, on egui),
+          # libjolttui (the same tree over a grid of cells) and libjoltmoq (the
+          # AV media plane) — one workspace, three cdylibs, taken from
+          # jolt-native's own flake rather than rebuilt here.
+          #
+          # This used to be a rustPlatform.buildRustPackage over the same
+          # source, which meant restating upstream's build: the seven git deps
+          # hashed by hand in `cargoLock.outputHashes` and re-hashed whenever
+          # its Cargo.lock moved, the linuxHeaders path v4l2r's bindgen wants,
+          # and a postPatch dropping the .cargo/config.toml that pointed the
+          # build at DotSlash. Upstream's flake says all of that itself now,
+          # and says it once. It also builds cpal with the `pipewire` feature,
+          # which the restatement did not — so device names in a call are
+          # PipeWire's rather than raw ALSA PCMs.
+          native = jolt-native.packages.${pkgs.stdenv.hostPlatform.system}.default;
 
           # Jolt itself: Clojure on Chez, built the way its own flake builds it.
           # A function, because there are two of them — upstream for the
@@ -412,15 +354,13 @@
       # drift the `jolt-native` input's comment is about, and a pin frq can
       # answer for is worth more here than the convenience of a checkout.
       #
-      # `native` is the cargo build of that input rather than jolt-native's own
-      # buck2 graph, which is a compromise and not a free one: buck2 is what
-      # its CI runs and what makes its releases, and its cpal has the pipewire
-      # feature this one does not, so device *names* in a call come out as ALSA
-      # PCMs. What it buys is a derivation — one thing nixbuild.net can be
-      # handed. The buck2 build fetches its rustc, zig and every third-party
-      # crate as it goes and writes buck-out into the tree it builds; a sandbox
-      # with no network and a read-only store is the one place it cannot run,
-      # so on a remote builder it is not a slower option but no option at all.
+      # `native` is jolt-native's own flake output. It was a buck2 graph when
+      # this comment was first written and a cargo build restated here when it
+      # was second: buck2 fetches its rustc, zig and every third-party crate as
+      # it goes and writes buck-out into the tree it builds, so a sandbox with
+      # no network and a read-only store was the one place it could not run.
+      # Upstream builds with nix now, so the thing its CI runs and the thing
+      # this shell hands a builder are the same derivation.
       #
       # Nothing here says "nixbuild", though: it is a plain derivation, and
       # where it gets built is the machine's business. scripts/run.bb asks for
