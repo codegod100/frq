@@ -179,7 +179,11 @@
 
 (defn conversation-row [buffer]
   (let [name (:name buffer)
-        unread (:unread buffer)]
+        ;; Defaulted rather than assumed. Everything that builds a buffer
+        ;; goes through `ensure-channel`, but the list draws whatever is in
+        ;; the atom, and a half-made room reaching here should be a row that
+        ;; reads as quiet rather than the frame that killed the client.
+        unread (:unread buffer 0)]
     [:card {:key name}
      ;; The name gets the line, and membership and unread count the one under
      ;; it. All three on one line is what the list pane has no room for: the

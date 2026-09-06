@@ -667,7 +667,9 @@
 
 (defn- remove-user! [channel nick]
   (when (and channel nick)
-    (swap! channels #(update-in % [channel :users] dissoc nick))))
+    (swap! channels #(if (contains? % channel)
+                       (update-in % [channel :users] dissoc nick)
+                       %))))
 
 (defn- remove-user-everywhere!
   "A QUIT names no channel — the person left the server, so they left every
@@ -926,9 +928,14 @@
                    ;; Adopted or asked for, it is ours now and the file should
                    ;; say so before the next connect judges it.
                    (remember-rooms! true)))
-                 (do (add-user! ch from)
-                     (when-not @hide-join-part?
-                       (push-message! ch "*" (str from " joined"))))))
+                 ;; Somebody else arriving in a room we do not hold is not a
+                 ;; reason to start holding it: `add-user!` and `push-message!`
+                 ;; both build the buffer they are given, so either one would
+                 ;; put the refused room back in the list.
+                 (when (contains? @channels ch)
+                   (add-user! ch from)
+                   (when-not @hide-join-part?
+                     (push-message! ch "*" (str from " joined"))))))
       ;; NAMES, a line at a time. The channel is the parameter that names one:
       ;; the reply is `<us> <symbol> <channel> :<names>`, and a server that
       ;; leaves the symbol out shifts everything before the list along by one.
@@ -945,21 +952,33 @@
                 (irc/send-line! @conn
                                 (str "CHATHISTORY LATEST " ch " * " history-limit))))
 
+      ;; `assoc-in` on a channel that is not there does not fail, it invents
+      ;; one — a buffer with a `:joined?` and nothing else, no name and no
+      ;; unread, which the room list then tries to draw. That is not
+      ;; hypothetical now: refusing a room the file does not claim sends PART,
+      ;; and the server echoes it straight back at us. A membership changing in
+      ;; a room we do not hold is nothing to record.
       "PART" (let [ch (first params)]
                (if (= from @form-nick)
-                 (swap! channels #(-> % (assoc-in [ch :joined?] false)
-                                        (assoc-in [ch :joining?] false)
-                                        (assoc-in [ch :users] {})))
-                 (do (remove-user! ch from)
-                     (when-not @hide-join-part?
-                       (push-message! ch "*" (str from " left"))))))
+                 (swap! channels #(if (contains? % ch)
+                                    (-> % (assoc-in [ch :joined?] false)
+                                          (assoc-in [ch :joining?] false)
+                                          (assoc-in [ch :users] {}))
+                                    %))
+                 (when (contains? @channels ch)
+                   (remove-user! ch from)
+                   (when-not @hide-join-part?
+                     (push-message! ch "*" (str from " left"))))))
       "KICK" (let [[ch who] params]
                (if (= who @form-nick)
-                 (swap! channels #(-> % (assoc-in [ch :joined?] false)
-                                        (assoc-in [ch :joining?] false)
-                                        (assoc-in [ch :users] {})))
+                 (swap! channels #(if (contains? % ch)
+                                    (-> % (assoc-in [ch :joined?] false)
+                                          (assoc-in [ch :joining?] false)
+                                          (assoc-in [ch :users] {}))
+                                    %))
                  (remove-user! ch who))
-               (push-message! ch "*" (str who " was kicked by " from)))
+               (when (contains? @channels ch)
+                 (push-message! ch "*" (str who " was kicked by " from))))
       ;; A QUIT and a NICK name no channel, so both are folded into every
       ;; buffer the person was listed in — and said out loud only where they
       ;; were, which is what keeps a stranger's rename out of a quiet room.
