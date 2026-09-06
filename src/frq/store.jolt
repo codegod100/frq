@@ -45,9 +45,9 @@
 (defn channels-file [] (str (config-dir) "/channels.edn"))
 
 (defn load-channels
-  "The channels this client has opened, in the order it last used them. Unlike
-  the session beside it this is not a credential — just names — so it is an
-  ordinary file."
+  "The channels an older frq wrote: names alone, most recently used first.
+  Read only to migrate them into `rooms.edn`, which says the same and more —
+  nothing writes this file any more."
   []
   (let [path (channels-file)]
     (when (host/file-exists? path)
@@ -56,12 +56,37 @@
           (when (vector? v) (filterv string? v)))
         (catch Exception _ nil)))))
 
-(defn save-channels!
-  "Write the channel names, most recently used first."
-  [names]
+(defn rooms-file [] (str (config-dir) "/rooms.edn"))
+
+(defn load-rooms
+  "The rooms this client knows, most recently used first, each carrying the
+  read marker that says how much of it has been seen.
+
+  This is the authority for what rooms exist. The server forgets them — it has
+  told us we are in rooms we are not and left out ones we are — so a room is
+  gone when the reader closes it here and not before.
+
+  A record that will not parse is dropped rather than defaulted: a room with a
+  broken marker would count its whole history unread, which is worse than a
+  room that starts over. An older frq's `channels.edn` migrates in as names
+  with no marker, which is exactly what it knew."
+  []
+  (let [path (rooms-file)]
+    (or (when (host/file-exists? path)
+          (try
+            (let [v (edn/read-string (slurp path))]
+              (when (vector? v)
+                (filterv #(and (map? %) (string? (:name %)) (seq (:name %))) v)))
+            (catch Exception _ nil)))
+        (when-let [names (seq (load-channels))]
+          (mapv (fn [n] {:name n}) names)))))
+
+(defn save-rooms!
+  "Write the room records, most recently used first."
+  [rooms]
   (try
     (host/mkdirs! (config-dir))
-    (spit (channels-file) (pr-str (vec names)))
+    (spit (rooms-file) (pr-str (vec rooms)))
     true
     (catch Exception _ false)))
 

@@ -200,7 +200,11 @@
                              (:joined? buffer) "joined"
                              :else "not joined")
                 :live (boolean (:joined? buffer))}]
-      (when (pos? unread) [:label {:label (str "● " unread)}])]
+      ;; A mention is not more unread, it is different unread: the dot says
+      ;; how much there is and the name says it was aimed at you. Both or
+      ;; neither — a room with your name in it always has a line to count.
+      (when (pos? unread)
+        [:label {:label (str (if (:mention? buffer) "◆ @ " "● ") unread)}])]
      [:dim-label {:label (s/last-preview buffer)}]
      (when-not @terminal? [open-button name])]))
 

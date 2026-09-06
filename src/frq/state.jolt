@@ -199,14 +199,28 @@
 
 (defn connected? [] (some? @conn))
 
-(declare channel-order request-names!)
+(declare channel-order room-records request-names!)
 
-(defn- remember-channels!
-  "Write the order out. Off the caller's thread: opening a channel should not
-  wait on a file, and the order it records is read from the same atom either
-  way."
-  []
-  (future (store/save-channels! (channel-order))))
+(defonce ^:private rooms-saved-at (atom 0))
+
+(defn- remember-rooms!
+  "Write the room records out: what rooms there are, in the order they were
+  last used, and how much of each has been read.
+
+  Off the caller's thread, because opening a room should not wait on a file.
+  Throttled, because the marker moves on every line that arrives while a room
+  is on screen and a busy channel would otherwise write the file per message —
+  `force?` is for the moments worth paying for, which is a room being opened.
+
+  A late write costs at most the handful of lines that arrived since the last
+  one, shown unread again on the next run. That is the right way round: the
+  marker never claims to have read more than it has."
+  ([] (remember-rooms! false))
+  ([force?]
+   (let [now (clock/now-ms)]
+     (when (or force? (> (- now @rooms-saved-at) 5000))
+       (reset! rooms-saved-at now)
+       (future (store/save-rooms! (room-records)))))))
 
 (defn dm?
   "Whether a buffer is a conversation with a person rather than a room. Every
@@ -220,11 +234,73 @@
           (str/starts-with? s "#") s
           :else (str "#" s))))
 
+(defn- after-marker
+  "The messages in `buffer` the reader has not seen: everything after its read
+  marker.
+
+  By id where the marked message is still held, and by time otherwise. The id
+  is the exact answer — a msgid survives every revision, so it names the same
+  line however often the server replays it — and the timestamp is what answers
+  when the marked line has fallen off the end of the buffer or was never in
+  this run's copy of it.
+
+  Derived rather than counted, because a count cannot survive what the server
+  does: a JOIN replays the backlog and CHATHISTORY replays it again, and every
+  line of it would tick a counter a second time. Against a marker a replayed
+  line is simply older than it and counts for nothing."
+  [buffer]
+  (let [id (:last-read-id buffer)
+        at (:last-read-at buffer 0)
+        msgs (vec (:messages buffer))]
+    (if (and id (some #(= id (:id %)) msgs))
+      (vec (rest (drop-while #(not= id (:id %)) msgs)))
+      (filterv #(> (:at % 0) at) msgs))))
+
+(defn- mentions-me?
+  "Whether a line is addressed at the reader by name. Our own lines do not
+  count — saying your own nick is not being called."
+  [m]
+  (let [me (str/trim (or @form-nick ""))]
+    (and (seq me)
+         (not= (:from m) me)
+         (str/includes? (str/lower-case (or (:text m) ""))
+                        (str/lower-case me)))))
+
+(defn- recount
+  "Answer what the marker says: how many lines are unseen, and whether any of
+  them names the reader."
+  [buffer]
+  (let [fresh (after-marker buffer)]
+    (assoc buffer
+           :unread (count fresh)
+           :mention? (boolean (some mentions-me? fresh)))))
+
+(defn- mark-read
+  "Move the marker to the newest line this buffer holds. Both halves: the id
+  for as long as that line is here, and its time for after it is gone.
+
+  The time only ever goes forward. A backlog can arrive after the reader has
+  already read past it, and taking the last line's time unconditionally would
+  walk the marker backwards and re-unread what was read."
+  [buffer]
+  (let [newest (last (:messages buffer))]
+    (assoc buffer
+           :unread 0
+           :mention? false
+           :last-read-id (:id newest)
+           :last-read-at (max (:last-read-at buffer 0) (:at newest 0)))))
+
 (defn- ensure-channel [m name]
   (if (contains? m name)
     m
     (assoc m name {:name name :messages [] :unread 0
                    :joined? false :joining? false :accessed 0
+                   ;; What has been seen, and what the count is derived from.
+                   ;; `:unread` and `:mention?` are answers, not records — see
+                   ;; `recount`.
+                   :last-read-id nil :last-read-at 0 :mention? false
+                   :kind (if (dm? name) :dm :channel)
+                   :peer-did nil :last-activity 0
                    ;; nick -> mode prefix, for the people panel
                    :users {}})))
 
@@ -298,8 +374,20 @@
                                 :edited? (boolean edited?)
                                 ;; emoji -> the nicks who put it there
                                 :reactions (or reactions {})})
-                      (update-in [channel :unread]
-                                 (if viewing? (constantly 0) inc))))))))))
+                      (assoc-in [channel :last-activity] at)
+                      ;; A DM is a room named after whoever is in it, and a
+                      ;; nick is not a name that lasts. The DID is, so the
+                      ;; record keeps it the first time the other end says
+                      ;; anything — ours would name the wrong side.
+                      (cond-> (and (dm? channel) did (not= from @form-nick))
+                        (assoc-in [channel :peer-did] did))
+                      ;; Reading a room *is* marking it read: a line that
+                      ;; arrives while it is on screen moves the marker past
+                      ;; itself. Everything else re-derives, so a line arriving
+                      ;; in a room nobody is looking at costs a recount of that
+                      ;; room and nothing more.
+                      (update channel (if viewing? mark-read recount))))))))
+     (remember-rooms!)))
 
 (defn open-channel!
   "Show a buffer. A channel we are not in is joined on the way — a row can
@@ -320,9 +408,9 @@
     (reset! editing nil)
     (reset! draft ""))
   (swap! channels #(-> (ensure-channel % name)
-                       (assoc-in [name :unread] 0)
+                       (update name mark-read)
                        (assoc-in [name :accessed] (swap! access-tick inc))))
-  (remember-channels!)
+  (remember-rooms! true)
   ;; `joining?` as well as `joined?`: the JOIN echo takes a round trip, and a
   ;; second JOIN sent in the meantime is what makes the server replay nothing.
   (let [buffer (get @channels name)]
@@ -1499,24 +1587,65 @@
        (sort-by #(- (:accessed % 0)))
        (mapv :name)))
 
+(defn room-records
+  "The rooms as they go to disk: what each one is, when it last said anything,
+  and how far into it the reader has got.
+
+  `:unread` and `:mention?` are not written. They are what the marker adds up
+  to against the messages in hand, and a count written down is a count that can
+  be wrong — the marker cannot be. `:mention?` rides along all the same, as the
+  one thing that cannot be recomputed before the history it was derived from
+  comes back: a room that had your name in it says so on the next run's first
+  frame rather than a round trip later, and is corrected by `recount` the
+  moment the backlog lands."
+  []
+  (->> (vals @channels)
+       (filter #(pos? (:accessed % 0)))
+       (sort-by #(- (:accessed % 0)))
+       (mapv #(select-keys % [:name :kind :peer-did :last-activity
+                              :last-read-id :last-read-at :mention?]))))
+
 (defn restore-channels!
-  "Bring back the channels of earlier runs, in the order they were last used.
+  "Bring back the rooms of earlier runs, in the order they were last used, each
+  with the marker saying how much of it had been read.
 
   Empty buffers, not memberships: opening one is what joins it, and a list of
   rooms is the part worth keeping — the messages in them come from the server.
-  The tick is seeded so this run's first open still sorts above all of them."
+  The tick is seeded so this run's first open still sorts above all of them.
+
+  The marker is what makes the returning backlog readable. Without one every
+  replayed line is new and every room comes back with its whole history
+  unread; with one, the reader is put back where they were and only what
+  arrived while they were away is counted. A room migrated from an older frq
+  has no marker and is caught up as if read, which is the kinder of the two
+  wrong answers — the alternative announces a hundred unread lines the reader
+  has already seen."
   []
-  (when-let [saved (seq (store/load-channels))]
+  (when-let [saved (seq (store/load-rooms))]
     (let [ordered (reverse saved)]                 ; oldest first, so ticks ascend
       (swap! channels
              (fn [m]
-               (reduce (fn [acc name]
-                         (if (contains? acc name)
-                           acc
-                           (assoc acc name {:name name :messages [] :unread 0
-                                            :joined? false :joining? false
-                                            :users {}
-                                            :accessed (swap! access-tick inc)})))
+               (reduce (fn [acc room]
+                         (let [name (:name room)]
+                           (if (contains? acc name)
+                             acc
+                             (assoc acc name
+                                    {:name name :messages [] :unread 0
+                                     :joined? false :joining? false
+                                     :users {}
+                                     :kind (or (:kind room)
+                                               (if (dm? name) :dm :channel))
+                                     :peer-did (:peer-did room)
+                                     :last-activity (:last-activity room 0)
+                                     :last-read-id (:last-read-id room)
+                                     ;; No marker at all — an older frq's list,
+                                     ;; or a record that lost it. Read up to
+                                     ;; now rather than back to the beginning.
+                                     :last-read-at (:last-read-at room
+                                                                  (clock/now-ms))
+                                     :mention? (boolean (:mention? room))
+                                     :accessed (swap! access-tick inc)})))
+                         )
                        m
                        ordered))))
     (count saved)))
