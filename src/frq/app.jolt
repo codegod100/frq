@@ -170,6 +170,13 @@
             :kind :primary
             :on-click #(s/open-channel! name)}])
 
+;; The only way out of a room. Everything else adds one — the server saying we
+;; are in it, a message arriving in it — so without this the list only grows,
+;; and what rooms.edn claims we are in could never shrink.
+(defn- close-button [name]
+  [:button {:label "Close"
+            :on-click #(s/leave-channel! name)}])
+
 (defn conversation-row [buffer]
   (let [name (:name buffer)
         unread (:unread buffer)]
@@ -189,7 +196,8 @@
      (if @terminal?
        [:hbox {:spacing 8 :wrap false}
         [:title-2 {:label name}]
-        [open-button name]]
+        [open-button name]
+        [close-button name]]
        [:title-2 {:label name}])
      ;; `:wrap false` on the badges: they sit beside each other or not at all.
      [:hbox {:spacing 12 :wrap false}
@@ -206,7 +214,10 @@
       (when (pos? unread)
         [:label {:label (str (if (:mention? buffer) "◆ @ " "● ") unread)}])]
      [:dim-label {:label (s/last-preview buffer)}]
-     (when-not @terminal? [open-button name])]))
+     (when-not @terminal?
+       [:hbox {:spacing 8 :wrap false}
+        [open-button name]
+        [close-button name]])]))
 
 (def ^:private sidebar-width 320)
 

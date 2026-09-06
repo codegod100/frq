@@ -182,9 +182,23 @@
 ;; the answer to something you just did.
 (defonce hide-join-part? (atom false))
 
+;; Whether rooms.edn is the authority yet.
+;;
+;; It is not, the first time this version runs: freeq re-joins an authenticated
+;; user's channels at registration, so on connect the server announces every
+;; room it has you in — and a client that parted everything not already in its
+;; file would walk out of all of them before the file had ever been told they
+;; existed. So the first connect adopts what the server says and writes it
+;; down, and every connect after that is the strict one.
+(defonce room-list-owned? (atom false))
+
+;; And whether this session is the adopting one, decided at 001.
+(defonce ^:private adopting-rooms? (atom false))
+
 (defn- save-prefs! []
   (future (store/save-prefs! (assoc (store/load-prefs)
-                                    :hide-join-part? @hide-join-part?))))
+                                    :hide-join-part? @hide-join-part?
+                                    :room-list-owned? @room-list-owned?))))
 
 (defn toggle-hide-join-part! []
   (swap! hide-join-part? not)
@@ -195,6 +209,7 @@
   []
   (let [prefs (store/load-prefs)]
     (reset! hide-join-part? (boolean (:hide-join-part? prefs)))
+    (reset! room-list-owned? (boolean (:room-list-owned? prefs)))
     prefs))
 
 (defn connected? [] (some? @conn))
@@ -270,7 +285,13 @@
   "Answer what the marker says: how many lines are unseen, and whether any of
   them names the reader."
   [buffer]
-  (let [fresh (after-marker buffer)]
+  ;; Joins, parts, quits and "Joined #room" are the room talking about itself,
+  ;; not somebody talking in it. They arrive stamped now — the join notice is
+  ;; written the moment we are in — so counted, every room you are a member of
+  ;; sits at one unread from the moment it opens, saying only that you joined
+  ;; it. The marker still moves past them: they are read, they are just never
+  ;; what made a room worth looking at.
+  (let [fresh (remove :system? (after-marker buffer))]
     (assoc buffer
            :unread (count fresh)
            :mention? (boolean (some mentions-me? fresh)))))
@@ -339,7 +360,13 @@
   ([channel from text] (push-message! channel from text {}))
   ([channel from text {:keys [at did id reply-to reactions edited?]}]
    (let [at (or at (clock/now-ms))
-         who (avatars/actor did from)]
+         who (avatars/actor did from)
+         ;; A room reaching the store matters more than the throttle does: a
+         ;; connection joins every channel at once, and the writes for all but
+         ;; the first would be five seconds away — long enough that quitting
+         ;; straight after signing in is how a client forgets the rooms it just
+         ;; joined. Read before the swap, so this is the arrival that made it.
+         new-room? (not (contains? @channels channel))]
      (doseq [url (media/image-urls text)]
        (media/fetch! url #(swap! media-tick inc)))
      ;; The same tick: an avatar arriving is a picture arriving, and the chat
@@ -425,8 +452,8 @@
                       ;; itself. Everything else re-derives, so a line arriving
                       ;; in a room nobody is looking at costs a recount of that
                       ;; room and nothing more.
-                      (update channel (if viewing? mark-read recount))))))))
-     (remember-rooms!)))
+                      (update channel (if viewing? mark-read recount)))))))
+     (remember-rooms! new-room?))))
 
 (defn open-channel!
   "Show a buffer. A channel we are not in is joined on the way — a row can
@@ -463,6 +490,44 @@
   ;; NAMES that came with it did not.
   (when (:joined? (get @channels name))
     (request-names! name)))
+
+(defn join-saved-rooms!
+  "Ask to be in every channel `rooms.edn` says we are in.
+
+  The server re-joins an authenticated user's channels itself, and gets it
+  wrong in both directions — it forgets rooms and announces ones that are not
+  ours. This is the half that answers the forgetting: the file says what we are
+  in, so on arrival we say it too. A JOIN for a channel the server has already
+  put us in is answered with the membership we already have, so asking twice
+  costs nothing.
+
+  DMs are not asked for. There is nothing to join in a conversation with a
+  person; the buffer is the whole of it."
+  []
+  (when-let [conn @conn]
+    (doseq [[name buffer] @channels
+            :when (and (str/starts-with? name "#")
+                       (not (:joined? buffer))
+                       (not (:joining? buffer)))]
+      (swap! channels #(assoc-in % [name :joining?] true))
+      (irc/join! conn name))))
+
+(defn leave-channel!
+  "Leave a room and forget it: PART on the wire, gone from the list, gone from
+  `rooms.edn`.
+
+  The only way a room leaves the file. Everything else adds — the server
+  announcing one, a message arriving in one — so without this the list is a
+  thing that only grows, and the strictness above would have nothing to be
+  strict about."
+  [name]
+  (when (and @conn (str/starts-with? name "#"))
+    (irc/part! @conn name))
+  (swap! channels dissoc name)
+  (when (= name @current)
+    (reset! current nil)
+    (reset! screen :chats))
+  (remember-rooms! true))
 
 (defn- parse-reactions
   "The server's tally of what is already on a message, as
@@ -742,6 +807,18 @@
                                   (str "Connected as " @form-nick)))
                 (reset! connecting? false)
                 (reset! screen :chats)
+                ;; This session decides once whether it is the one that
+                ;; takes the room list over from the server. Before the flag
+                ;; is set the file has never been told what we are in, so the
+                ;; server's answer is adopted rather than argued with.
+                (reset! adopting-rooms? (not @room-list-owned?))
+                (when-not @room-list-owned?
+                  (reset! room-list-owned? true)
+                  (save-prefs!))
+                ;; What the file says we are in, we ask to be in. The server
+                ;; forgets rooms, and a room it has forgotten is one that
+                ;; would otherwise quietly stop existing.
+                (join-saved-rooms!)
                 ;; Back where the reader left off. The list is still what a
                 ;; connect lands on underneath, so Back from the reopened
                 ;; channel goes to the chats rather than out of the app.
@@ -825,14 +902,30 @@
                    :else nil))
       "JOIN" (let [ch (first params)]
                (if (= from @form-nick)
-                 (let [fresh? (empty? (get-in @channels [ch :messages]))]
+                 ;; Ours if the file says so — restored from rooms.edn, or
+                 ;; asked for since. Anything else is the server putting us
+                 ;; somewhere we did not ask to be, which it does: it
+                 ;; announces memberships that are not real, and adding them
+                 ;; is how a list nobody chose fills up with rooms.
+                 ;;
+                 ;; So we leave again, unless this is the session that is
+                 ;; still adopting — on the first connect the file has not
+                 ;; been told anything yet, and parting then would be leaving
+                 ;; every room we are actually in.
+                 (if (and (not (contains? @channels ch))
+                          (not @adopting-rooms?))
+                   (when @conn (irc/part! @conn ch))
+                   (let [fresh? (empty? (get-in @channels [ch :messages]))]
                    (swap! channels #(-> (ensure-channel % ch)
                                         (assoc-in [ch :joined?] true)
                                         (assoc-in [ch :joining?] false)))
                    ;; Only on the way in to an empty buffer. A reconnect joins
                    ;; every channel again, and saying so on top of the backlog
                    ;; already there is just a second line of noise.
-                   (when fresh? (push-message! ch "*" (str "Joined " ch))))
+                   (when fresh? (push-message! ch "*" (str "Joined " ch)))
+                   ;; Adopted or asked for, it is ours now and the file should
+                   ;; say so before the next connect judges it.
+                   (remember-rooms! true)))
                  (do (add-user! ch from)
                      (when-not @hide-join-part?
                        (push-message! ch "*" (str from " joined"))))))
@@ -1630,6 +1723,12 @@
   "The rooms as they go to disk: what each one is, when it last said anything,
   and how far into it the reader has got.
 
+  Every room, not only the ones that have been opened. Being in a channel is
+  what makes it yours; opening it only says which you looked at last, and that
+  is what `:accessed` orders them by. Writing down the opened ones alone is how
+  a client in a dozen channels came back knowing one — the rest were left for
+  the server to remember, which is the thing it does not do.
+
   `:unread` and `:mention?` are not written. They are what the marker adds up
   to against the messages in hand, and a count written down is a count that can
   be wrong — the marker cannot be. `:mention?` rides along all the same, as the
@@ -1639,7 +1738,6 @@
   moment the backlog lands."
   []
   (->> (vals @channels)
-       (filter #(pos? (:accessed % 0)))
        (sort-by #(- (:accessed % 0)))
        (mapv #(select-keys % [:name :kind :peer-did :last-activity
                               :last-read-id :last-read-at :mention?]))))
