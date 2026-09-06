@@ -19,6 +19,21 @@
         "url": "https://github.com/cisco/ChezScheme"
       }
     },
+    "crane": {
+      "locked": {
+        "lastModified": 1788465171,
+        "narHash": "sha256-Y1/TTVXjYXGF068IThQH9fPSZ0SIE74PABlUxnWTUH0=",
+        "owner": "ipetkov",
+        "repo": "crane",
+        "rev": "eb35abda9f232cc6610b1d1e3200d15c49b7ac54",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ipetkov",
+        "repo": "crane",
+        "type": "github"
+      }
+    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -71,6 +86,24 @@
         "type": "github"
       }
     },
+    "flake-utils_3": {
+      "inputs": {
+        "systems": "systems_3"
+      },
+      "locked": {
+        "lastModified": 1731533236,
+        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
     "glimmer": {
       "flake": false,
       "locked": {
@@ -89,7 +122,12 @@
       }
     },
     "jolt-android-src": {
-      "flake": false,
+      "inputs": {
+        "makes": "makes",
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
       "locked": {
         "lastModified": 1788137223,
         "narHash": "sha256-VeHi864PEtZoHRNA7ms9uaJb6+7nHvDyRXqLLPQ1tao=",
@@ -108,44 +146,96 @@
       }
     },
     "jolt-native": {
-      "flake": false,
+      "inputs": {
+        "crane": "crane",
+        "flake-utils": "flake-utils",
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "rust-overlay": "rust-overlay"
+      },
       "locked": {
-        "lastModified": 1788471157,
-        "narHash": "sha256-uHU8c4naFpJmwvmriVR2CEn6xhfwUFhqmMQzEjSyWt0=",
+        "lastModified": 1788676506,
+        "narHash": "sha256-lMPf1JhK50a0MkyB0+bEbj6pfmW5VDP/lM6DQ+ri7d0=",
         "ref": "refs/heads/main",
-        "rev": "c41903b106d04e5cf80828c49e2d7d456a54739d",
-        "revCount": 43,
+        "rev": "4956d1e2f73eae7b1f8ef16fab875c56c69dea84",
+        "revCount": 47,
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       },
       "original": {
-        "rev": "c41903b106d04e5cf80828c49e2d7d456a54739d",
+        "rev": "4956d1e2f73eae7b1f8ef16fab875c56c69dea84",
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       }
     },
     "jolt-src": {
-      "flake": false,
+      "inputs": {
+        "makes": "makes_2",
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "vendor-clojure-test-suite": "vendor-clojure-test-suite",
+        "vendor-fs": "vendor-fs",
+        "vendor-grenadine": "vendor-grenadine",
+        "vendor-irregex": "vendor-irregex",
+        "vendor-process": "vendor-process",
+        "vendor-sci": "vendor-sci"
+      },
       "locked": {
-        "lastModified": 1788135812,
-        "narHash": "sha256-DvVmjNN09mfxp67Y9zOyXNbAIYR9h2gpuyTbdj777a8=",
+        "lastModified": 1788673555,
+        "narHash": "sha256-QMHvZyLFzKCQsEqsBljLksrdxMc4g5ncBExJCVUoxzA=",
         "ref": "refs/heads/main",
-        "rev": "6f1d436f6e4cb1e2f878c5fc90c39a48a8bf4310",
-        "revCount": 2803,
+        "rev": "b7b738b37b16532be2f539c22367bdfc3f4d708d",
+        "revCount": 3026,
         "submodules": true,
         "type": "git",
-        "url": "https://github.com/jolt-lang/jolt"
+        "url": "https://gitlab.com/nandithebull/jolt"
       },
       "original": {
         "submodules": true,
         "type": "git",
-        "url": "https://github.com/jolt-lang/jolt"
+        "url": "https://gitlab.com/nandithebull/jolt"
+      }
+    },
+    "makes": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1785480273,
+        "narHash": "sha256-/g8O4PW0v3NNChKyrWw/EqpEAUCKiI9/KFE2EiXoUlA=",
+        "owner": "makeplus",
+        "repo": "makes",
+        "rev": "d14cb578c2f04e6f9d00e01c7c4e416a9baf94e9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "makeplus",
+        "repo": "makes",
+        "rev": "d14cb578c2f04e6f9d00e01c7c4e416a9baf94e9",
+        "type": "github"
+      }
+    },
+    "makes_2": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1785480273,
+        "narHash": "sha256-/g8O4PW0v3NNChKyrWw/EqpEAUCKiI9/KFE2EiXoUlA=",
+        "owner": "makeplus",
+        "repo": "makes",
+        "rev": "d14cb578c2f04e6f9d00e01c7c4e416a9baf94e9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "makeplus",
+        "repo": "makes",
+        "rev": "d14cb578c2f04e6f9d00e01c7c4e416a9baf94e9",
+        "type": "github"
       }
     },
     "nix-appimage": {
       "inputs": {
         "flake-compat": "flake-compat",
-        "flake-utils": "flake-utils",
+        "flake-utils": "flake-utils_2",
         "nixpkgs": [
           "nixpkgs"
         ]
@@ -166,7 +256,7 @@
     },
     "nixgl": {
       "inputs": {
-        "flake-utils": "flake-utils_2",
+        "flake-utils": "flake-utils_3",
         "nixpkgs": [
           "nixpkgs"
         ]
@@ -213,6 +303,27 @@
         "nixpkgs": "nixpkgs"
       }
     },
+    "rust-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "jolt-native",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788591095,
+        "narHash": "sha256-Vh+BeLWfbTT9AecazIsQ/Tkg/RzJeX3lEduANf256WA=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "c361047d3a538f547f1617bb6b410411929ac9cc",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
     "systems": {
       "locked": {
         "lastModified": 1681028828,
@@ -240,6 +351,123 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_3": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "vendor-clojure-test-suite": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1782670040,
+        "narHash": "sha256-NzNoVBdImoxriFTD+qr42YjDfnBtUG1SG/K5VeyviXQ=",
+        "owner": "jank-lang",
+        "repo": "clojure-test-suite",
+        "rev": "489b6743e8421687ef96cec557830acf258d1886",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jank-lang",
+        "repo": "clojure-test-suite",
+        "rev": "489b6743e8421687ef96cec557830acf258d1886",
+        "type": "github"
+      }
+    },
+    "vendor-fs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1783722973,
+        "narHash": "sha256-cMUQmVOR6zxd96ndnQ9UXkit9Nt39eZzfI9HmQRsLtE=",
+        "owner": "babashka",
+        "repo": "fs",
+        "rev": "5b273b8a943a622593fbc85fca6761c5a39d6d66",
+        "type": "github"
+      },
+      "original": {
+        "owner": "babashka",
+        "repo": "fs",
+        "rev": "5b273b8a943a622593fbc85fca6761c5a39d6d66",
+        "type": "github"
+      }
+    },
+    "vendor-grenadine": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1787000287,
+        "narHash": "sha256-l1eO8B3F8GkgJP+OOzz2hFV0aCDox8dQI0jtiGdGEFo=",
+        "owner": "clojurestar",
+        "repo": "grenadine",
+        "rev": "77992327c0b220c186ece61d74f7eb570978a6f5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "clojurestar",
+        "repo": "grenadine",
+        "rev": "77992327c0b220c186ece61d74f7eb570978a6f5",
+        "type": "github"
+      }
+    },
+    "vendor-irregex": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1770512408,
+        "narHash": "sha256-eii7VP3sJuirqxz3SbUorN/Xe+USan6AEjBI1qXt36c=",
+        "owner": "ashinn",
+        "repo": "irregex",
+        "rev": "c948a704fc732914a243c1643bfe359913d11c7b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ashinn",
+        "repo": "irregex",
+        "rev": "c948a704fc732914a243c1643bfe359913d11c7b",
+        "type": "github"
+      }
+    },
+    "vendor-process": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786767494,
+        "narHash": "sha256-d9ei6RCU9cUoq9+108jKIsaL04/ODRzVdrMueDMnRPo=",
+        "owner": "jolt-lang",
+        "repo": "process",
+        "rev": "7d881f3a3ec6d273cf014c8172dea037abb31da3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jolt-lang",
+        "repo": "process",
+        "rev": "7d881f3a3ec6d273cf014c8172dea037abb31da3",
+        "type": "github"
+      }
+    },
+    "vendor-sci": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1781990664,
+        "narHash": "sha256-nBpQg7IkxmnfkOGpXEdloPbvLpEs0sdE79O/vhygzDo=",
+        "owner": "borkdude",
+        "repo": "sci",
+        "rev": "32d62a5136ad3dc148588752f5bcc4cc30b14752",
+        "type": "github"
+      },
+      "original": {
+        "owner": "borkdude",
+        "repo": "sci",
+        "rev": "32d62a5136ad3dc148588752f5bcc4cc30b14752",
         "type": "github"
       }
     }

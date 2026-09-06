@@ -21,12 +21,21 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # Jolt's own flake declares `self.submodules`, which this Nix rejects when
-    # the flake is fetched through the github scheme — so take the source and
-    # build it here. `vendor/` is a submodule and the build needs it.
+    # `git+https` with `?submodules=1` rather than the github scheme: Jolt's
+    # own flake declares `self.submodules`, which this Nix rejects when the
+    # flake is fetched as `github:`. Its outputs are not what we take — the
+    # runtime is built here, by joltFrom — but it is a flake all the same, so
+    # its own inputs are locked with ours rather than left to float, and
+    # `vendor/` comes along as the submodule the build needs.
+    #
+    # The fork rather than jolt-lang/jolt: it is what jolt-android-src already
+    # pins for the boot image, and a desktop runtime built from a different
+    # tree than the APK's is the same drift the jolt-native comment warns
+    # about. Unpinned here — the desktop follows the fork's main, while the
+    # APK stays on the rev below.
     jolt-src = {
-      url = "git+https://github.com/jolt-lang/jolt?submodules=1";
-      flake = false;
+      url = "git+https://gitlab.com/nandithebull/jolt?submodules=1";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     # Ahead of v0.1.3, which is what nix/android.nix pins the APK to — and
@@ -46,8 +55,8 @@
     # drift this comment warns about wearing a different hat: one input, and
     # the window and the terminal are the same library either way.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=c41903b106d04e5cf80828c49e2d7d456a54739d";
-      flake = false;
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=4956d1e2f73eae7b1f8ef16fab875c56c69dea84";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     # Chez itself, because the APK needs a cross target nixpkgs does not
@@ -55,14 +64,15 @@
     # Chez's own `tarm64le` workarea — boot files, xpatch and libkernel.a.
     # The version is the one the hand-built tree under ~/.cache used, and the
     # submodules are not optional (zuo builds it, lz4 and zlib link into it).
-    # The fork jolt's own Android pin names, built here rather than fetched as
-    # a release binary: upstream reads the socket address out of `struct
+    # The same fork jolt-src takes, built here rather than fetched as a
+    # release binary: upstream reads the socket address out of `struct
     # addrinfo` at glibc's offset, which on Bionic is `ai_canonname`, so an APK
-    # built with upstream cannot open a TLS connection at all. Only the boot
-    # image uses it; the desktop package still builds jolt-src.
+    # built with upstream cannot open a TLS connection at all. Pinned to a rev
+    # where jolt-src is not: the APK is a release artefact, so its runtime
+    # moves when `just bump` says so rather than when the fork does.
     jolt-android-src = {
       url = "git+https://gitlab.com/nandithebull/jolt?rev=2b80d68d1f7a31ba92b208b3957e5fb555617ada&submodules=1";
-      flake = false;
+      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     chez-src = {
