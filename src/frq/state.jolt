@@ -798,11 +798,49 @@
                        (= session-id (:session-id lc))))
           (av/stop-media!))))))
 
+;; Which channel's POLICY reply is outstanding, or nil. The server answers
+;; POLICY with a run of NOTICEs addressed to our nick and naming no channel;
+;; without this they land in the status banner one at a time, and the rules
+;; the reader is being asked to accept are never readable.
+;;
+;; ponytail: the run ends at the first line that is not a NOTICE, so a PING
+;; landing mid-answer truncates the rules. A reply-tag or a POLICY numeric
+;; from the server would end it properly.
+(defonce ^:private policy-asking (atom nil))
+
+(defn ask-policy!
+  "Ask the server what this channel's policy says, so the reader can read what
+  they are being asked to accept.
+
+  The answer comes back as plain NOTICEs to our nick, naming no channel — so
+  the question is remembered here, and the lines that follow it are filed
+  under the channel that asked."
+  [ch]
+  (swap! channels #(assoc-in (ensure-channel % ch) [ch :policy-text] []))
+  (reset! policy-asking ch)
+  (when-let [c @conn]
+    (irc/send-line! c (str "POLICY " ch " RULES"))
+    (irc/send-line! c (str "POLICY " ch " INFO"))))
+
+(defn accept-policy!
+  "Accept the channel's policy and go back in. The JOIN follows immediately:
+  accepting is only ever done in order to be in the room, and the server takes
+  the two in the order they are sent."
+  [ch]
+  (when-let [c @conn]
+    (irc/send-line! c (str "POLICY " ch " ACCEPT"))
+    (swap! channels #(-> (ensure-channel % ch)
+                         (assoc-in [ch :policy-required?] false)
+                         (assoc-in [ch :joining?] true)))
+    (irc/join! c ch)))
+
 (defn apply-msg!
   "Fold one parsed IRC message into the state."
   [msg]
   (let [{:keys [command params prefix]} msg
         from (irc/nick-of prefix)]
+    (when (and @policy-asking (not= command "NOTICE"))
+      (reset! policy-asking nil))
     (case command
       "001" (do (reset! status (if @session
                                   (str "Connected as " (:handle @session))
@@ -920,7 +958,10 @@
                    (let [fresh? (empty? (get-in @channels [ch :messages]))]
                    (swap! channels #(-> (ensure-channel % ch)
                                         (assoc-in [ch :joined?] true)
-                                        (assoc-in [ch :joining?] false)))
+                                        (assoc-in [ch :joining?] false)
+                                        ;; In the room: whatever it was asking
+                                        ;; for, it is not asking any more.
+                                        (assoc-in [ch :policy-required?] false)))
                    ;; Only on the way in to an empty buffer. A reconnect joins
                    ;; every channel again, and saying so on top of the backlog
                    ;; already there is just a second line of noise.
@@ -996,7 +1037,12 @@
       "MODE" (let [[target modes & args] params]
                (when (str/starts-with? (or target "") "#")
                  (apply-mode! target modes args)))
-      ("NOTICE" "372" "375" "376" "002" "003" "004")
+      "NOTICE"
+      (if-let [ch @policy-asking]
+        (swap! channels #(update-in (ensure-channel % ch) [ch :policy-text]
+                                    (fnil conj []) (str/trimr (or (last params) ""))))
+        (reset! status (or (last params) @status)))
+      ("372" "375" "376" "002" "003" "004")
       (reset! status (or (last params) @status))
       ;; 473 invite-only, 474 banned, 475 keyed, 477 needs registration,
       ;; 471 full, 403 no such channel. The channel is params[1]; clearing its
@@ -1008,7 +1054,14 @@
           (swap! channels #(-> (ensure-channel % ch)
                                (assoc-in [ch :joined?] false)
                                (assoc-in [ch :joining?] false)))
-          (push-message! ch "*" (str "Could not join " ch " — " why)))
+          (push-message! ch "*" (str "Could not join " ch " — " why))
+          ;; The one refusal the reader can answer themselves: the room is not
+          ;; shut to them, it is waiting on them to say yes to something. The
+          ;; flag is what puts the Accept button in the channel, and the rules
+          ;; are asked for so it is not a yes to an unread page.
+          (when (str/includes? (str/lower-case (or why "")) "policy")
+            (swap! channels #(assoc-in % [ch :policy-required?] true))
+            (ask-policy! ch)))
         ;; Deliberately not the global banner: it outlives the screen it was
         ;; about, and the reason is in the channel's own buffer where it
         ;; belongs. The banner is for what stops the whole app — a failed
@@ -1530,6 +1583,19 @@
         {:keys [url status path] :as att} @attachment]
     (cond
       (not target) nil
+      ;; A line beginning with "/" is said to the server, not to the room:
+      ;; POLICY, MODE, whatever the server asks for by name. Without it a
+      ;; channel that answers a JOIN with "use POLICY <channel> ACCEPT" is one
+      ;; the reader can see the instructions for and has no way to follow.
+      ;; "//" is how you say a line that really does start with a slash.
+      (and (str/starts-with? text "/") (not (str/starts-with? text "//")))
+      (if-let [c @conn]
+        (let [line (str/trim (subs text 1))]
+          (when (seq line)
+            (irc/send-line! c line)
+            (push-message! target "*" (str "> " line)))
+          (reset! draft ""))
+        (reset! error "Not connected."))
       (= :uploading status) (reset! error "The picture is still uploading.")
       ;; A rewrite replaces what was said, and what was said is a line of text:
       ;; there is no wire form for adding a picture to a message already sent,
@@ -1550,7 +1616,8 @@
           (reset! draft ""))
       (and (str/blank? text) (not url)) nil
       :else
-      (let [line (str/trim (str text (when url (str " " url))))]
+      (let [text (if (str/starts-with? text "//") (subs text 1) text)
+            line (str/trim (str text (when url (str " " url))))]
         ;; Saying something is a way of asking to see it.
         (jump-to-present!)
         (when-let [c @conn] (irc/privmsg! c target line (:id reply-to)))

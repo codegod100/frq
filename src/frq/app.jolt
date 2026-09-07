@@ -1276,6 +1276,22 @@
     (str "chat-messages-" @s/jump-tick)
     "chat-messages"))
 
+(defn- policy-note
+  "What this channel wants agreed to, and the one button that agrees to it.
+
+  Above the backlog rather than in it: the refusal is already a line in the
+  buffer, and a button scrolled away with last week's messages is a button
+  nobody finds. The rules come from the server; when it has none to give, its
+  own words about that are what shows."
+  [name buffer]
+  (when (:policy-required? buffer)
+    [:vbox {:spacing 4}
+     [:dim-label {:label (str name " asks you to accept its policy before joining.")}]
+     (for [[i line] (map-indexed vector (:policy-text buffer))]
+       ^{:key (str "policy-" i)} [:dim-label {:label line}])
+     [:button {:label "Accept policy" :kind :primary
+               :on-click #(s/accept-policy! name)}]]))
+
 (defn chat-screen []
   (let [name @s/current
         buffer (get @s/channels name)
@@ -1321,6 +1337,9 @@
                    :kind (when @s/show-users? :primary)
                    :on-click s/toggle-users!}])]]
      [error-note]
+     ;; In a wrapper of its own, for the reconciler's sake: it comes and goes.
+     [:vbox {:key :policy}
+      (policy-note name buffer)]
      [call-bar name]
      ;; :reserve leaves room for everything below: the jump button's row, the
      ;; separator and the compose bar. It does not vary with whether the button
