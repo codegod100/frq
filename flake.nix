@@ -339,12 +339,6 @@
           jolt = joltRuntime;
           default = frq;
 
-          # The interpreter scripts/ is written in, named here so that
-          # scripts/bb can build it. Nothing else in this flake uses it: it is
-          # an output because a shell script cannot ask for `nixpkgs#babashka`
-          # at the version this tree pins, and `.#bb` is exactly that.
-          bb = pkgs.babashka;
-
           # frq and everything it loads, squashed into one runnable file for
           # hosts without Nix. The whole closure rides along — Mesa included,
           # which is not waste: off NixOS the launcher goes through nixGL, and
@@ -380,7 +374,7 @@
       # this shell hands a builder are the same derivation.
       #
       # Nothing here says "nixbuild", though: it is a plain derivation, and
-      # where it gets built is the machine's business. scripts/run.bb asks for
+      # where it gets built is the machine's business. The `run` recipe asks for
       # the shell with --max-jobs 0, which is what sends it to the `builders`
       # entry rather than compiling egui on a laptop.
       devShells = forEachSystem (pkgs:
@@ -394,17 +388,15 @@
 
             # jolt, because the runtime frq is run by should be the flake's
             # too. nixGL for the same reason the launcher reaches for it — see
-            # frqScript. babashka because scripts/bb prefers one on PATH, and
-            # inside here that should be this one rather than a second copy
-            # built through `.#bb`. just so the recipe runner comes from here
-            # too rather than the host — `nix develop` and then `just run` is
-            # the whole of what a machine with nix needs.
-            packages = [ jolt pkgs.babashka pkgs.just (nixGLFor pkgs) ];
+            # frqScript. just so the recipe runner comes from here too rather
+            # than the host — `nix develop` and then `just run` is the whole of
+            # what a machine with nix needs.
+            packages = [ jolt pkgs.just (nixGLFor pkgs) ];
 
-            # Read by scripts/run.bb rather than baked into a wrapper: the frq
+            # Read by the recipes rather than baked into a wrapper: the frq
             # source `just run` runs is the working tree, so the launcher has
-            # to be a script in that tree and the shell has to hand it its
-            # answers. Naming these is also what makes the shell build them.
+            # to live in that tree and the shell has to hand it its answers.
+            # Naming these is also what makes the shell build them.
             JOLT_NATIVE_LIB = "${native}/lib";
             GLIMMER_SRC = glimmer;
             GLIMMER_VIDYA_SRC = "${jolt-native}/glimmer-backends/glimmer-vidya";

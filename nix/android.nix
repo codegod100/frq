@@ -9,7 +9,7 @@
 #   nix build .#apk
 #
 # `just apk` is the same build with the store path handed to adb afterwards;
-# see scripts/apk.bb.
+# see the `apk` recipe in the justfile.
 #
 # On a machine with a remote builder configured, prefer
 #

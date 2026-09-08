@@ -40,10 +40,10 @@ The app:
 just run
 ```
 
-The scripts under `scripts/` are babashka, reached through `scripts/bb`: a bb
-on `PATH` if there is one — the dev shell puts one there — and otherwise the
-flake's `.#bb`, built once and kept under `build/`. Nothing has to be installed
-for that but Nix.
+Every recipe lives in the `justfile` itself. Each one that runs frq re-enters
+`nix develop` and comes back to the same recipe, so `just run` and
+`nix develop --command just run` are one code path rather than two. Nothing has
+to be installed for that but Nix.
 
 `just run` is `jolt -M:frq` inside `nix develop`, with `LD_LIBRARY_PATH`
 pointed at the shell's `JOLT_NATIVE_LIB` — the flake's build of
