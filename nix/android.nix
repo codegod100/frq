@@ -25,7 +25,7 @@
 # The steps are the ones the graph before it ran, in the same order; where a
 # genrule read a path out of `read_root_config`, a derivation takes an
 # argument.
-{ pkgs, lib, self, chez-src, jolt-native, glimmer, joltAndroid, androidSdk, ndk }:
+{ pkgs, lib, self, chez-src, jolt-native, jolt-native-android, glimmer, joltAndroid, androidSdk, ndk }:
 
 let
   # What the APK targets, in the three spellings the tools want it in.
@@ -47,45 +47,30 @@ let
   ndkBin = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/bin";
   cc = "${ndkBin}/aarch64-linux-android${apiLevel}-clang";
 
-  # What comes out of jolt-native's releases. These two pins are the whole of
-  # what `just bump` moves on the native side — a desktop run builds the flake
-  # input instead, so this is the only place a release is fetched. Do not edit
-  # them by hand: bump-jolt-native.bb fetches each archive, weighs it, and
-  # writes both the url and the digest below.
+  # What comes out of jolt-native's CI, as a flake input rather than a fetchurl:
+  # nix unpacks a tarball input itself, and flake.lock holds the digest that
+  # used to be written here by hand. `just bump` moves it with
+  # `nix flake update jolt-native-android` and nothing in this file changes.
   #
   # One archive, two libraries: libvidya (the retained-tree UI) and libjoltmoq
   # (the AV media plane). They are built together and only make sense together
   # — libjoltapp links both — so there is one pin for the pair rather than two
-  # that could drift apart.
-  nativeRelease = pkgs.fetchurl {
-    url = "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-android-arm64-v0.1.3.tar.gz";
-    sha256 = "4519745bae6db9a791a71b38a26478879e246166802b0a48dbf7d45e4d45a108";
-  };
+  # that could drift apart. It carries include/ and libc++_shared.so besides,
+  # which is why the glue's headers and the C++ runtime come from here too.
+  nativeLibs = jolt-native-android;
 
-  glue = pkgs.fetchurl {
-    url = "https://gitlab.com/nandithebull/jolt-native/-/releases/v0.1.3/downloads/jolt-native-android-glue-v0.1.3.tar.gz";
-    sha256 = "83313eda124f2a0cfff6827cf4473600c1f71db2f208d654b97068a85af38da5";
-  };
-
-  # Unpacked once, so the consumers below name files rather than repeat the tar.
-  nativeLibs = pkgs.runCommand "jolt-native-android" { } ''
-    mkdir -p "$out"
-    tar -xzf ${nativeRelease} -C "$out"
-  '';
-
-  glueSrc = pkgs.runCommand "jolt-android-glue" { } ''
-    mkdir -p "$out"
-    tar -xzf ${glue} -C "$out" --strip-components=1
-  '';
-
-  # The C++ runtime, out of the same NDK the glue is compiled with.
+  # The C++ runtime, out of the archive rather than the NDK composed here.
   #
   # openh264 is C++, and its build script asks to be linked against
   # `libc++_shared.so` by name — so libjoltmoq carries that as a DT_NEEDED. An
   # app's linker namespace will not hand out the platform's own copy (there is
   # no stable one to hand out), so the APK carries it, exactly as it carries
   # OpenSSL below and for the same reason.
-  libcxx = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so";
+  #
+  # jolt-native ships it beside the libraries that need it, so this is the copy
+  # they were actually linked against — where the NDK path was whichever
+  # revision `composeAndroidPackages` happened to resolve here.
+  libcxx = "${nativeLibs}/lib/${abi}/libc++_shared.so";
 
   # --- Chez's arm64 cross target ------------------------------------------
   # The one piece with no nixpkgs equivalent: `pkgs.chez` builds a Scheme for
@@ -261,14 +246,14 @@ let
   # crash on the phone.
   libjoltapp = pkgs.runCommand "libjoltapp.so" { } ''
     mkdir -p lib
-    cp ${nativeLibs}/libvidya.so lib/libvidya.so
-    cp ${nativeLibs}/libjoltmoq.so lib/libjoltmoq.so
+    cp ${nativeLibs}/lib/${abi}/libvidya.so lib/libvidya.so
+    cp ${nativeLibs}/lib/${abi}/libjoltmoq.so lib/libjoltmoq.so
 
     ${cc} -shared -fPIC -O2 -o "$out" \
-      ${glueSrc}/android/jolt_main.c \
+      ${jolt-native}/android/jolt_main.c \
       ${joltBootObj} \
       -I${joltBoot} \
-      -I${glueSrc}/include \
+      -I${nativeLibs}/include \
       -Llib \
       ${chezAndroid}/tarm64le/boot/tarm64le/libkernel.a \
       ${chezAndroid}/lz4/lib/liblz4.a \
@@ -341,8 +326,8 @@ let
       nativeBuildInputs = [ pkgs.zip ];
     } ''
     mkdir -p stage/lib/${abi}
-    cp ${nativeLibs}/libvidya.so stage/lib/${abi}/libvidya.so
-    cp ${nativeLibs}/libjoltmoq.so stage/lib/${abi}/libjoltmoq.so
+    cp ${nativeLibs}/lib/${abi}/libvidya.so stage/lib/${abi}/libvidya.so
+    cp ${nativeLibs}/lib/${abi}/libjoltmoq.so stage/lib/${abi}/libjoltmoq.so
     cp ${libcxx} stage/lib/${abi}/libc++_shared.so
     cp ${libjoltapp} stage/lib/${abi}/libjoltapp.so
     cp ${opensslAndroid.out}/lib/libssl.so stage/lib/${abi}/libssl.so

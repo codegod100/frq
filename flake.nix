@@ -38,10 +38,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Ahead of v0.1.3, which is what nix/android.nix pins the APK to — and
-    # deliberately: that pin is the last release, and this is what `just run`
-    # builds, so a change to jolt-native can be run before there is a release
-    # to fetch. The two meet again at `just bump`.
+    # The source half of jolt-native: the Jolt code under glimmer-backends/ that
+    # binds the native objects, and the flake that builds the desktop ones. The
+    # Android objects no longer come from here — jolt-native-android below
+    # fetches those prebuilt — so this input is what `just run` builds against
+    # and what an APK's Clojure side is read from, both at this rev.
     #
     # Pinned all the same, and pinned to a rev: this input carries both halves of
     # glimmer-vidya — libvidya, and the Jolt side that binds it — so an
@@ -55,8 +56,24 @@
     # drift this comment warns about wearing a different hat: one input, and
     # the window and the terminal are the same library either way.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=16408ca25dde0dc34bec4930ba79a6cf5adedc0c";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=d970307ccf1fe67e2e971f2837d2282d8ba79a62";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    # The Android objects, prebuilt by jolt-native's CI rather than compiled
+    # here: an APK needs libvidya and libjoltmoq for arm64, and building them
+    # locally means an NDK, a Rust cross toolchain and the whole crane graph
+    # for two files that upstream already built and published.
+    #
+    # "latest" is the version its CI overwrites on every default-branch build,
+    # so this input finds a new one on `nix flake update` -- but flake.lock
+    # still records exactly which bytes an APK was built from, which is the
+    # pin that matters. `just bump` decides when to move; this only decides
+    # where to look. The archive is rooted at include/ and lib/arm64-v8a/, so
+    # nothing here has to unpack it.
+    jolt-native-android = {
+      url = "https://gitlab.com/api/v4/projects/nandithebull%2Fjolt-native/packages/generic/jolt-native/latest/android-arm64-v8a.tar.gz";
+      flake = false;
     };
 
     # Chez itself, because the APK needs a cross target nixpkgs does not
@@ -100,7 +117,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, chez-src, jolt-android-src, nixgl, nix-appimage }:
+  outputs = { self, nixpkgs, jolt-src, jolt-native, jolt-native-android, glimmer, chez-src, jolt-android-src, nixgl, nix-appimage }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = f:
@@ -220,8 +237,8 @@
           # glimmer-vidya lives inside the jolt-native checkout, and its own
           # deps.edn asks for glimmer by git — the top-level override below
           # answers for both.
-          glimmerVidya = "${jolt-native}/jolt/glimmer-vidya";
-          glimmerTui = "${jolt-native}/jolt/glimmer-tui";
+          glimmerVidya = "${jolt-native}/glimmer-backends/glimmer-vidya";
+          glimmerTui = "${jolt-native}/glimmer-backends/glimmer-tui";
 
           runtimeLibs = runtimeLibsFor pkgs;
 
@@ -310,7 +327,7 @@
           };
 
           android = import ./nix/android.nix {
-            inherit pkgs self chez-src jolt-native glimmer joltAndroid;
+            inherit pkgs self chez-src jolt-native jolt-native-android glimmer joltAndroid;
             inherit (pkgs) lib;
             androidSdk = androidComposition.androidsdk;
             ndk = androidComposition.ndk-bundle;
@@ -390,8 +407,8 @@
             # answers. Naming these is also what makes the shell build them.
             JOLT_NATIVE_LIB = "${native}/lib";
             GLIMMER_SRC = glimmer;
-            GLIMMER_VIDYA_SRC = "${jolt-native}/jolt/glimmer-vidya";
-            GLIMMER_TUI_SRC = "${jolt-native}/jolt/glimmer-tui";
+            GLIMMER_VIDYA_SRC = "${jolt-native}/glimmer-backends/glimmer-vidya";
+            GLIMMER_TUI_SRC = "${jolt-native}/glimmer-backends/glimmer-tui";
             FRQ_LIB_PATH = lib.makeLibraryPath (runtimeLibsFor pkgs);
             NIXGL = "${nixGLFor pkgs}/bin/nixGLIntel";
           };

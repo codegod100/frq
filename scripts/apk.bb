@@ -47,10 +47,25 @@ exec "$(dirname "$0")/bb" "$0" "$@"
   (when-let [s (paths/env "FRQ_NIX_STORE" nil)]
     ["--store" s "--eval-store" "auto"]))
 
+;; The Android objects come from jolt-native's CI under a "latest" alias, and a
+;; flake input is locked once and then stays put — so without this an APK is
+;; built against whatever `flake.lock` recorded the first time, however old.
+;; Re-resolving that one input before every build is what makes "latest" mean
+;; latest; the lock still records which bytes this APK was built from, so a
+;; build remains reproducible after the fact.
+;;
+;; Only this input: `nix flake update` with no argument would move jolt,
+;; nixpkgs and glimmer too, and the whole point of their pins is that they move
+;; when someone decides they should.
+(defn refresh-native []
+  (apply paths/out (paths/nix root ["nix" "flake" "update" "jolt-native-android"
+                                    "--flake" (str root)])))
+
 ;; Built without a `result` symlink: the path is what the caller wants, and a
 ;; symlink into a store that may not be this one is not a useful thing to leave
 ;; in the tree.
 (defn build []
+  (refresh-native)
   (let [out (->> (paths/nix root (concat ["nix" "build" (str root "#apk")
                                           "--no-link" "--print-out-paths"]
                                          store))

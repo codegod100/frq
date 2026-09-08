@@ -12,7 +12,9 @@ default:
 apk action="build":
     scripts/apk.bb {{action}}
 
-# Every jolt-native pin — nix/android.nix and deps.edn — at a release.
+# The jolt-native source pin — deps.edn and the flake input — at a release. The
+# Android objects are not pinned here any more; `just apk` takes the latest CI
+# build of those on every run.
 bump tag="":
     scripts/bump-jolt-native.bb {{tag}}
 
