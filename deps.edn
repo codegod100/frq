@@ -23,7 +23,7 @@
  ;;   libjoltmoq the AV media plane — MoQ over QUIC, Opus, H.264, capture
  ;;
  ;; Calls are the one thing this client cannot do in jolt. Signaling is IRC and
- ;; lives in src/frq/av.jolt; the media half is three thousand lines of codec
+ ;; lives in src/frq/av.clj; the media half is three thousand lines of codec
  ;; and transport that would only be written badly a second time here.
  ;;
  ;;   just run

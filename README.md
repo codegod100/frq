@@ -12,19 +12,19 @@ tags rather than immediate-mode drawing code, and state lives in ratoms instead
 of an `AppState` struct.
 
 ```
-src/frq/atproto.jolt handle → DID → PDS → session, and the SASL payloads
-src/frq/oauth.jolt   the broker flow: login URL, loopback capture, /session
-src/frq/store.jolt   the saved sign-in, mode 600 in the config directory
-src/frq/avatars.jolt profile pictures, by DID or handle
-src/frq/profile.jolt who someone is: the Bluesky profile behind a nick
-src/frq/media.jolt   image links: spot them, fetch them once, cache on disk
-src/frq/upload.jolt  a pasted picture to freeq's media endpoint, as multipart
-src/frq/av.jolt      calls: the signaling, and a handle on the media plane
-src/frq/clock.jolt   the reader's own zone, twelve-hour times, day headings
-src/frq/emoji.jolt   the picker's catalog: every drawable emoji and its name
-src/frq/irc.jolt     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
-src/frq/state.jolt   the ratoms every screen reads, and `apply-msg!`
-src/frq/app.jolt     the screens
+src/frq/atproto.clj handle → DID → PDS → session, and the SASL payloads
+src/frq/oauth.clj   the broker flow: login URL, loopback capture, /session
+src/frq/store.clj   the saved sign-in, mode 600 in the config directory
+src/frq/avatars.clj profile pictures, by DID or handle
+src/frq/profile.clj who someone is: the Bluesky profile behind a nick
+src/frq/media.clj   image links: spot them, fetch them once, cache on disk
+src/frq/upload.clj  a pasted picture to freeq's media endpoint, as multipart
+src/frq/av.clj      calls: the signaling, and a handle on the media plane
+src/frq/clock.clj   the reader's own zone, twelve-hour times, day headings
+src/frq/emoji.clj   the picker's catalog: every drawable emoji and its name
+src/frq/irc.clj     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
+src/frq/state.clj   the ratoms every screen reads, and `apply-msg!`
+src/frq/app.clj     the screens
 ```
 
 ## Tracing
@@ -82,7 +82,7 @@ grid of cells instead of a GPU window.
 
 It is the client, not a preview of it. `frq.app/start!` is what a launch does —
 the saved settings, the rooms this client has been in, the sign-in that
-connects itself — and `src/frq/tui.jolt` hands it the terminal's timers instead
+connects itself — and `src/frq/tui.clj` hands it the terminal's timers instead
 of the window's. Nothing in `frq.app` changed.
 
 ```bash
@@ -113,7 +113,7 @@ prop is divided by the axis it measures. A gap of half a cell rounds to
 nothing, which is what `:spacing 8` against a 16-point row is: thirteen
 messages fit where rounding it up left room for two.
 
-The two reserves in `src/frq/app.jolt` are the one thing a scale cannot
+The two reserves in `src/frq/app.clj` are the one thing a scale cannot
 answer, because they are counted in rows of chrome rather than in lengths: a
 window's row is 34 points and a terminal's is one cell. `chrome-row` is where
 that is said, and `frq.tui` sets it.
@@ -231,7 +231,7 @@ asked to be in a call in that room and there is one.
 Media is not IRC and is not here. Audio and video ride MoQ — Media over QUIC —
 through freeq's SFU, and that is `libjoltmoq`: Opus, H.264, capture and
 transport, lifted out of sleek rather than written a second time in jolt.
-`src/frq/av.jolt` is the whole of what frq says to it, and two of its rules
+`src/frq/av.clj` is the whole of what frq says to it, and two of its rules
 shape this side:
 
 * **Nothing calls back.** Status and video are polled, drained by a timer that
