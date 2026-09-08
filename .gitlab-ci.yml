@@ -1,0 +1,53 @@
+# One job, and it only ever runs on a schedule.
+#
+# jolt-native publishes its Android objects under a "latest" alias on every
+# default-branch build, and frq takes them as a flake input. A flake input is
+# locked once and then stays put, so "latest" only means latest when something
+# re-resolves it. The `apk` recipe does that for the machine building an APK;
+# this does it for the repository, so main's flake.lock names a recent build
+# rather than whichever one it was first locked against.
+#
+# Nothing is built here. The job resolves one input, and if that moved, commits
+# the lock file. Whether the new objects actually work is what an APK build
+# answers, and that is deliberately not this job's business.
+stages: [update]
+
+update-jolt-native:
+  stage: update
+  image: nixos/nix:latest
+  # Schedules only: on a push this would race whoever pushed, and on a merge
+  # request it would commit to a branch nobody asked it to touch.
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  variables:
+    # Committing reads the previous lock, so the checkout needs the git tree
+    # rather than a shallow single commit.
+    GIT_DEPTH: "0"
+  before_script:
+    - echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+  script:
+    - |
+      set -eu
+      nix flake update jolt-native-android
+      if git diff --quiet -- flake.lock; then
+        echo "already on the newest build; nothing to commit."
+        exit 0
+      fi
+      # The alias moves whenever jolt-native builds, so name *which* build this
+      # landed on rather than saying "update flake.lock". lastModified is the
+      # only readable identity a tarball input carries — the jolt-native commit
+      # that produced it is not in the archive's metadata.
+      epoch=$(nix eval --raw --impure --expr \
+        "builtins.toString (builtins.fromJSON (builtins.readFile ./flake.lock)
+           ).nodes.jolt-native-android.locked.lastModified")
+      stamp=$(date -u -d "@$epoch" +%Y-%m-%dT%H:%MZ)
+      git config user.email "$GITLAB_USER_EMAIL"
+      git config user.name "nightly"
+      git add flake.lock
+      # [skip ci] because this pushes to the default branch, and the only job
+      # in this file is the one already running.
+      git commit -m "Follow jolt-native to its $stamp build [skip ci]"
+      # CI_JOB_TOKEN cannot push. FRQ_PUSH_TOKEN is a project access token with
+      # write_repository, which is the one thing this job needs configured.
+      git push "https://oauth2:$FRQ_PUSH_TOKEN@$CI_SERVER_HOST/$CI_PROJECT_PATH.git" \
+        "HEAD:$CI_DEFAULT_BRANCH"
