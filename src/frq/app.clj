@@ -1205,10 +1205,13 @@
   ;; any of it and the column runs past the bottom edge, which does not show as
   ;; a list that is too long: it shows as a compose bar sitting flat on the
   ;; bottom of the window with its margin cut off.
-  (* (chrome-scale)
-     (+ 140
-        (if @s/replying-to 34 0)
-        (if @s/attachment 76 0))))
+  (+ (* (chrome-scale)
+        (+ 140
+           (if @s/replying-to 34 0)
+           (if @s/attachment 76 0)))
+     ;; The two extra rows the terminal's compose field wraps into, in points:
+     ;; a row down the page is two cells' worth of the scale.
+     (if @terminal? (* 4 (chrome-scale)) 0)))
 
 (defn- messages-width
   "How wide the message list may be with the people panel beside it.
@@ -1442,8 +1445,13 @@
       ;; And the same picture chosen rather than pasted, for a phone — which has
       ;; no Ctrl+V, and no clipboard of pictures to read if it had.
       [:button {:label "🖼" :on-click s/open-image-picker!}]
+      ;; In a terminal the row is the width of the screen and a message is
+      ;; longer than 260 points of it: the field takes the surplus and wraps
+      ;; into three rows rather than scrolling one line sideways.
       [:entry {:text @s/draft
                :width-request 260
+               :hexpand @terminal?
+               :rows (if @terminal? 3 1)
                :placeholder "Message"
                :on-change #(reset! s/draft %)
                :on-paste-empty s/paste-image!
