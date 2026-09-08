@@ -5,7 +5,6 @@
 (ns frq.paths
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
-            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 (defn die [& lines]
@@ -18,13 +17,6 @@
   (str/trim (:out (apply p/shell {:out :string} (map str args)))))
 
 (defn env [k default] (or (not-empty (System/getenv k)) default))
-
-;; The sha deps.edn pins for a git url, so a bump there reaches the boot image.
-;; Read as data rather than grepped: it is Clojure, and so is this.
-(defn dep-sha [root url]
-  (->> (:deps (edn/read-string (slurp (str (fs/path root "deps.edn")))))
-       vals
-       (some #(when (= url (:git/url %)) (:git/sha %)))))
 
 (defn require-paths!
   "Every path must exist, or say which one did not and stop."

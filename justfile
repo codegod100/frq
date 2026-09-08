@@ -12,12 +12,6 @@ default:
 apk action="build":
     scripts/apk.bb {{action}}
 
-# The jolt-native source pin — deps.edn and the flake input — at a release. The
-# Android objects are not pinned here any more; `just apk` takes the latest CI
-# build of those on every run.
-bump tag="":
-    scripts/bump-jolt-native.bb {{tag}}
-
 # The app: this tree's source on the flake's everything-else, in the dev shell.
 run *args:
     scripts/run.bb {{args}}
