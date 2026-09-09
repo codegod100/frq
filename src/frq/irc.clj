@@ -17,6 +17,7 @@
   (:require [clojure.string :as str]
             [frq.atproto :as atproto]
             [frq.msgsig :as msgsig]
+            [frq.wire :as wire]
             [jolt.ffi :as ffi]
             [jolt.host :as host]
             [jolt.mvn-http :as tls]
@@ -25,10 +26,6 @@
 (def ^:private af-inet 2)
 (def ^:private sock-stream 1)
 (def ^:private buffer-size 8192)
-
-;; MSG_NOSIGNAL. Writing to a socket the far end has closed raises SIGPIPE
-;; otherwise, and nothing here handles signals — the process simply goes.
-(def ^:private no-signal @#'socket/msg-nosignal)
 
 ;; jolt's TLS sockets carry a 30-second receive timeout, so a quiet connection
 ;; reads nothing without being closed. These decide how long that is allowed to
@@ -127,24 +124,13 @@
 
 ;; ---------------------------------------------------------------- transport
 
-(defn- send-all!
-  "send(2) until the whole string is gone — a short write is not an error."
-  [fd text]
-  (let [len (count (.getBytes text))]
-    (ffi/with-c-string [p text]
-      (loop [sent 0]
-        (when (< sent len)
-          (let [n (socket/c-send fd p (- len sent) no-signal)]
-            (when (neg? n) (throw (ex-info "send failed" {:fd fd})))
-            (recur (+ sent n))))))))
-
 (defn- write!
   "Bytes out, whichever transport this is. TLS callers go through the outbox
   instead — see `send-line!`."
   [conn text]
   (if (= :tls (:kind conn))
     (tls/tls-write (:tls conn) (.getBytes text))
-    (send-all! (:fd conn) text)))
+    (wire/send-all! (:fd conn) text)))
 
 (defn- read-chunk!
   "Block for the next chunk as a string, or nil at end of stream."

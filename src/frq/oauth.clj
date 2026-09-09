@@ -13,6 +13,7 @@
   (:require [clojure.string :as str]
             [frq.atproto :as atproto]
             [frq.platform :as platform]
+            [frq.wire :as wire]
             [jolt.ffi :as ffi]
             [jolt.host :as host]
             [jolt.socket :as socket]))
@@ -87,12 +88,15 @@
 (defn- respond! [fd body content-type]
   (let [head (str "HTTP/1.1 200 OK\r\nContent-Type: " content-type
                   "\r\nConnection: close\r\nContent-Length: "
-                  (count (.getBytes body)) "\r\n\r\n")
+                  (count (.getBytes ^String body "UTF-8")) "\r\n\r\n")
         text (str head body)]
-    (ffi/with-c-string [p text]
-      ;; A closed peer is ordinary here, so a failed write is not an error.
-      (try (socket/c-send fd p (count (.getBytes text)) no-signal)
-           (catch Exception _ -1)))))
+    ;; A closed peer is ordinary here, so a failed write is not an error. A
+    ;; SHORT write is not ordinary: one c-send used to be the whole of this,
+    ;; and the browser was promised a Content-Length the socket had not
+    ;; finished delivering — a hung tab on the one page the user is watching
+    ;; for the sign-in to land.
+    (try (wire/send-all! fd text)
+         (catch Exception _ -1))))
 
 (defn- read-request [fd]
   (let [buf (ffi/alloc 16384)
