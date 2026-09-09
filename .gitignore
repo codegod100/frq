@@ -16,3 +16,6 @@
 
 # nrepl-server drops this next to the deps file for editors to find.
 .nrepl-port
+
+# samizdat writes its journal into whatever project it is pointed at.
+.samizdat/
