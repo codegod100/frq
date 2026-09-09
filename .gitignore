@@ -13,3 +13,6 @@
 
 # buck2 output tree.
 /buck-out/
+
+# nrepl-server drops this next to the deps file for editors to find.
+.nrepl-port

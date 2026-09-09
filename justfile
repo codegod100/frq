@@ -11,6 +11,12 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+# Every recipe below is a `#!` script and passes its arguments on with "$@".
+# Without this that is empty in one — just interpolates into a shebang recipe
+# rather than handing it argv — and `just tui --headless` silently ran the
+# terminal instead.
+set positional-arguments
+
 # nix is not on every host this runs on: on the machine these recipes were
 # written for it lives in an Arch distrobox, at the same path — which is why
 # the container is entered rather than the tree copied into it. See CLAUDE.md.
@@ -154,6 +160,33 @@ tui *args:
     export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
     exec jolt -Sdeps "$deps" -m frq.tui "$@"
+
+# The same classpath as `tui`, with an nREPL on it instead of a `-main`: a
+# session that can require `frq.tui` and then redefine a component while it is
+# on screen, which is a second and not the minute a rebuild costs.
+#
+#     just nrepl                      then, from an editor or a client on 7888:
+#     (require (quote frq.tui))       both backends, terminal installed last
+#     (frq.tui/-main "--headless" "--demo")
+#     (glimmer.core/reload!)          re-mount after redefining a component
+#
+# `just repl nrepl-server` is the window's half of this — the same thing minus
+# glimmer-tui. Port is nrepl-server's own positional: `just nrepl 7889`.
+nrepl *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${JOLT_NATIVE_LIB:-}" ]; then
+        exec {{nix}} develop . --max-jobs {{jobs}} --command just nrepl "$@"
+    fi
+
+    deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
+    deps="$deps nandi/glimmer-vidya {:local/root \"$GLIMMER_VIDYA_SRC\"}"
+    deps="$deps nandi/glimmer-tui {:local/root \"$GLIMMER_TUI_SRC\"}}}"
+
+    export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+    exec jolt -Sdeps "$deps" nrepl-server "$@"
 
 # `jolt` in the repo root does not work on its own: deps.edn carries
 # :jolt/native, so every invocation here loads libvidya and libjoltmoq before it
