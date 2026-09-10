@@ -1468,7 +1468,10 @@
                ;; the minimum it always was.
                :hexpand true
                :rows (if @terminal? 3 1)
-               :placeholder "Message"
+               ;; The break is worth saying out loud where it is new: Enter
+               ;; sends, as it always has, and the box under it takes a
+               ;; paragraph now — which nobody would think to try unasked.
+               :placeholder (if @terminal? "Message — Shift+Enter for a new line" "Message")
                :on-change #(reset! s/draft %)
                :on-paste-empty s/paste-image!
                :on-activate s/send-draft!}]

@@ -1574,9 +1574,21 @@
   A picture still on its way up holds the send rather than losing it: the line
   is left in the box, said so, and the reader presses send again a moment
   later. Sending the text without its picture would be the one outcome nobody
-  asked for."
+  asked for.
+
+  A draft with a break in it is several messages. There is no newline on the
+  wire — a PRIVMSG is one line and a line ends where the protocol says it does
+  — so the box that lets a reader write a paragraph has to be the thing that
+  takes it apart again: one message a line, in order, blank lines dropped. Only
+  the last one carries the picture, and only the first one answers the message
+  being replied to; the rest are the same thought continuing."
   []
-  (let [text (str/trim @draft)
+  (let [lines (->> (str/split-lines @draft)
+                   (map str/trim)
+                   (remove str/blank?))
+        ;; What the branches below that are about one line read: a command and
+        ;; a rewrite are single-line things whatever the box holds.
+        text (str/join " " lines)
         target @current
         reply-to @replying-to
         edit @editing
@@ -1616,16 +1628,26 @@
           (reset! draft ""))
       (and (str/blank? text) (not url)) nil
       :else
-      (let [text (if (str/starts-with? text "//") (subs text 1) text)
-            line (str/trim (str text (when url (str " " url))))]
+      (let [lines (map #(if (str/starts-with? % "//") (subs % 1) %) lines)
+            ;; The picture rides the last line, so a message that is only a
+            ;; picture is the link on its own.
+            lines (if (seq lines) (vec lines) [""])
+            last-i (dec (count lines))
+            lines (map-indexed (fn [i line]
+                                 (str/trim (str line (when (and url (= i last-i))
+                                                       (str " " url)))))
+                               lines)]
         ;; Saying something is a way of asking to see it.
         (jump-to-present!)
-        (when-let [c @conn] (irc/privmsg! c target line (:id reply-to)))
-        ;; Only when the server will not send the line back itself. Its copy
-        ;; carries the msgid, and a message with no id is one nobody can react
-        ;; or reply to; echoing locally as well would put the line up twice.
-        (when-not (some-> @conn (irc/cap-acked? "echo-message"))
-          (push-message! target @form-nick line {:reply-to (:id reply-to)}))
+        (doseq [[i line] (map-indexed vector lines)]
+          (when-let [c @conn]
+            (irc/privmsg! c target line (when (zero? i) (:id reply-to))))
+          ;; Only when the server will not send the line back itself. Its copy
+          ;; carries the msgid, and a message with no id is one nobody can react
+          ;; or reply to; echoing locally as well would put the line up twice.
+          (when-not (some-> @conn (irc/cap-acked? "echo-message"))
+            (push-message! target @form-nick line
+                           {:reply-to (when (zero? i) (:id reply-to))})))
         (reset! replying-to nil)
         (reset! draft "")
         (when att
