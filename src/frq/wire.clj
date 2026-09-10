@@ -38,6 +38,17 @@
   [fd buf len]
   (io-call #(socket/c-recv fd buf len 0) fd :read))
 
+(defn connect!
+  "One `connect` to the address at `sa`, answering zero or a negative.
+
+  `connect` is the fourth of these bindings and was left out of the round
+  that fixed the other three: it is only on the plain-socket path, which the
+  TLS default does not take, so its pair reached `neg?` unnoticed. The wait
+  is for writability — a socket that finishes connecting reports itself
+  writable, which is what jolt's poller is being asked about here."
+  [fd sa len]
+  (io-call #(socket/c-connect fd sa len) fd :write))
+
 (defn accept!
   "One `accept` on a listening fd, answering the connected fd or a negative."
   [fd]

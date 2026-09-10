@@ -241,7 +241,7 @@
     (let [ip (#'socket/ip->str (socket/resolve-host host))
           fd (socket/c-socket af-inet sock-stream 0)]
       (when (neg? fd) (throw (ex-info "socket() failed" {:host host})))
-      (let [rc (socket/c-connect fd (#'socket/make-sockaddr-in ip (int port)) 16)]
+      (let [rc (wire/connect! fd (#'socket/make-sockaddr-in ip (int port)) 16)]
         (when (neg? rc)
           (socket/c-close fd)
           (throw (ex-info "connect() failed" {:host host :ip ip :port port}))))
