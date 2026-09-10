@@ -279,6 +279,16 @@
           # the kernel, so there is no library to name.
           codecs = [ pkgs.libopus pkgs.openh264 frqH264 pkgs.alsa-lib ];
 
+          # ALSA's PipeWire plugin, which is how `default` resolves to
+          # anything on a machine running PipeWire — and every machine frq
+          # targets does. Without it alsa-lib fails to dlopen
+          # libasound_module_pcm_pipewire.so and the only devices that open
+          # are raw hardware ones, which PipeWire is already holding.
+          #
+          # An environment variable rather than a library in the join:
+          # alsa-lib looks plugins up by directory, not by soname.
+          alsaPluginDir = "${pkgs.pipewire}/lib/alsa-lib";
+
           nativeAll = pkgs.symlinkJoin {
             name = "frq-native";
             paths = [ native moqFfi ] ++ codecs;
@@ -356,6 +366,7 @@
           # the only cost is re-resolving the (already local) graph per start.
           frqScript = pkgs.writeShellScript "frq" ''
             export LD_LIBRARY_PATH="${nativeAll}/lib:${lib.makeLibraryPath runtimeLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export ALSA_PLUGIN_DIR="${alsaPluginDir}"
             cd ${frqSource}
 
             # On NixOS the store's Mesa is the system's and the window opens.
@@ -374,6 +385,7 @@
           # a terminal, which is the reason this output exists.
           tuiScript = pkgs.writeShellScript "frq-tui" ''
             export LD_LIBRARY_PATH="${nativeAll}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export ALSA_PLUGIN_DIR="${alsaPluginDir}"
             cd ${frqSource}
 
             exec ${joltRuntime}/bin/jolt \
@@ -437,6 +449,7 @@
         in
         {
           inherit native moqFfi frqH264 nativeAll frq;
+          inherit (pkgs) pipewire;
           inherit tui;
           jolt = joltRuntime;
           default = frq;
@@ -500,6 +513,9 @@
             # to live in that tree and the shell has to hand it its answers.
             # Naming these is also what makes the shell build them.
             JOLT_NATIVE_LIB = "${nativeAll}/lib";
+            # Spelled out rather than shared with the packages block, which
+            # is a different `let`. See `alsaPluginDir` there for why.
+            ALSA_PLUGIN_DIR = "${pkgs.pipewire}/lib/alsa-lib";
             GLIMMER_SRC = glimmer;
             GLIMMER_VIDYA_SRC = "${jolt-native}/glimmer-backends/glimmer-vidya";
             GLIMMER_TUI_SRC = "${jolt-native}/glimmer-backends/glimmer-tui";

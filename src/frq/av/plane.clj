@@ -53,6 +53,7 @@
             [frq.moq.uniffi :as uniffi]
             [frq.codec.h264 :as h264]
             [frq.codec.opus :as opus]
+            [frq.capture.source :as source]
             [jolt.ffi :as ffi]))
 
 ;; --- state -------------------------------------------------------------------
@@ -77,12 +78,27 @@
   Everything that can fail does so HERE rather than at the first frame: the
   encoder validates its size, the decoder opens, and the subscribe settles,
   so a plane that comes up is one that can carry a picture."
-  [{:keys [origin discover session path source mic width height fps bitrate
-           camera? muted? channels]
+  [{:keys [origin discover session path source mic speaker
+           camera-device mic-device speaker-device
+           width height fps bitrate camera? muted? channels]
     :or   {path "/frq" width 640 height 480 fps 30 bitrate 800000
            camera? true muted? false channels 1}}]
   (stop!)
-  (let [broadcast (media/create-broadcast! origin path)
+  ;; A device NAME builds the thunk; a thunk passed directly wins. That
+  ;; ordering is what lets the same plane run against a camera and against
+  ;; a test pattern without knowing which it has.
+  (let [cam       (when (and camera-device (nil? source))
+                    (source/camera camera-device {:width width :height height}))
+        width     (or (:width cam) width)
+        height    (or (:height cam) height)
+        source    (or source (:source cam))
+        micdev    (when (and mic-device (nil? mic))
+                    (source/microphone mic-device {:channels channels}))
+        mic       (or mic (:mic micdev))
+        spk       (or speaker
+                      (when speaker-device
+                        (source/speaker speaker-device {:channels channels})))
+        broadcast (media/create-broadcast! origin path)
         producer  (media/publish-media! broadcast "avc3")
         track     (media/producer-name producer)
         consumer  (media/broadcast-consumer broadcast)
@@ -121,6 +137,8 @@
              :mic-producer mic-producer
              :mic-encoder  (when mic (opus/encoder audio/sample-rate channels :voip))
              :mic          mic
+             :speaker      spk
+             :closers      (into [] (keep :close!) [cam micdev spk])
              :muted?       muted?
              :channels     channels
              :mix          (ffi/alloc (* 2 audio/frame-samples channels))
@@ -150,6 +168,9 @@
     ;; worker there is no reactor to do it on.
     (when-let [sess (:session p)]
       (try (client/shutdown! sess) (catch Exception _ nil)))
+    ;; Devices last: the encoder and the rings may still be reading from
+    ;; buffers these own.
+    (doseq [close! (:closers p)] (try (close!) (catch Exception _ nil)))
     (reset! plane nil))
   nil)
 
@@ -407,10 +428,15 @@
                       (:peers p'))
           peak  (when (seq rings)
                   (audio/mix-into! rings (:mix p') (:channels p')))]
-      (reset! plane (assoc p' :mixed (when peak
-                                       {:ptr (:mix p')
-                                        :samples audio/frame-samples
-                                        :peak peak})))))
+      (let [mixed (when peak {:ptr (:mix p')
+                              :samples audio/frame-samples
+                              :peak peak})]
+        ;; Straight out to the speaker if there is one. A caller with its
+        ;; own output — the terminal backend, a test — reads poll-audio!
+        ;; instead and this stays nil.
+        (when (and mixed (:speaker p'))
+          ((:play! (:speaker p')) mixed))
+        (reset! plane (assoc p' :mixed mixed)))))
   nil)
 
 (defn poll-frames!

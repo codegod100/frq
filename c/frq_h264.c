@@ -244,3 +244,46 @@ void frq_h264_decoder_close(void *handle) {
   free(d->rgba);
   free(d);
 }
+
+/* --- YUYV to I420 ---------------------------------------------------------
+ *
+ * A webcam almost never hands you I420. YUYV (4:2:2 packed) is the format
+ * every UVC device supports, and openh264 wants I420 (4:2:0 planar), so
+ * something has to transpose and subsample between them. Doing it in jolt
+ * would be a per-pixel loop through ffi/read and ffi/write at thirty frames
+ * a second; doing it here is one pass over the row pairs.
+ *
+ * The chroma is AVERAGED down the row pair rather than dropped. Taking every
+ * other line instead is a line cheaper and shows up as combing on anything
+ * with a hard colour edge — a red shirt against a pale wall is the usual
+ * way to see it.
+ *
+ * `src` is width*height*2 bytes; `dst` is width*height*3/2. Both even
+ * dimensions, which V4L2 will have negotiated anyway.
+ */
+void frq_yuyv_to_i420(const unsigned char *src, unsigned char *dst,
+                      int width, int height) {
+  int x, y;
+  unsigned char *Y = dst;
+  unsigned char *U = dst + width * height;
+  unsigned char *V = U + (width / 2) * (height / 2);
+
+  for (y = 0; y < height; y++) {
+    const unsigned char *row = src + (size_t)y * width * 2;
+    unsigned char *yr = Y + (size_t)y * width;
+    for (x = 0; x < width; x++) yr[x] = row[x * 2];
+  }
+  for (y = 0; y < height; y += 2) {
+    const unsigned char *r0 = src + (size_t)y * width * 2;
+    const unsigned char *r1 = src + (size_t)(y + 1) * width * 2;
+    unsigned char *ur = U + (size_t)(y / 2) * (width / 2);
+    unsigned char *vr = V + (size_t)(y / 2) * (width / 2);
+    for (x = 0; x < width; x += 2) {
+      /* One U and one V per two pixels per row; averaged over the pair. */
+      int u = (r0[x * 2 + 1] + r1[x * 2 + 1] + 1) >> 1;
+      int v = (r0[x * 2 + 3] + r1[x * 2 + 3] + 1) >> 1;
+      ur[x / 2] = (unsigned char)u;
+      vr[x / 2] = (unsigned char)v;
+    }
+  }
+}

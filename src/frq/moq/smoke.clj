@@ -41,6 +41,7 @@
             [frq.codec.h264 :as h264]
             [frq.capture.v4l2 :as v4l2]
             [frq.capture.alsa :as alsa]
+            [frq.capture.source :as source]
             [frq.av.plane :as plane]
             [frq.av.audio :as audio]
             [jolt.ffi :as ffi]))
@@ -675,6 +676,46 @@
 
                 :else (do (Thread/sleep 10) (recur req accepted sess))))))))))
 
+(defn- check-wired-devices
+  "The plane driven by real device objects rather than test thunks.
+
+  ALSA's `null` on both ends, and that is a limit of this machine rather
+  than a choice: the sound hardware is held by PipeWire on the host, and
+  PipeWire's own socket is not reachable from inside this container, so
+  `default` and `hw:1,0` both refuse. `null` is a real PCM opened through
+  the real binding — it proves the wiring, the frame arithmetic and the
+  teardown, and it cannot prove that a microphone sounds like anything.
+
+  The camera is not here at all: there is no /dev/video* and no privilege to
+  load the kernel's virtual one. `frq.capture.source/camera` is written and
+  unexercised, and this test says so rather than implying otherwise.
+
+  What IS asserted: that a device-shaped mic drives the outbound half, that
+  a speaker sink is written to without raising, and that stop! releases
+  both. A leak here would show up as `Device or resource busy` on the second
+  run, which is why the check runs the whole cycle twice."
+  []
+  (dotimes [round 2]
+    (let [origin (media/new-origin)]
+      (plane/start! {:origin origin :path "/us"
+                     :source (fn [] nil)
+                     :mic-device "null"
+                     :speaker-device "null"
+                     :width 64 :height 64 :channels 1})
+      (try
+        (dotimes [_ 5] (plane/pump!))
+        (println (str "  round " (inc round) ": mic and speaker opened, pumped, closed"))
+        (finally (plane/stop!)))))
+  ;; And the camera path as far as it goes on a machine with no camera:
+  ;; enumeration is empty and opening one raises rather than pretending.
+  (let [cams (v4l2/devices)]
+    (println "  cameras available:" (count cams))
+    (when (seq cams)
+      (let [c (source/camera (:id (first cams)) {:width 640 :height 480})]
+        (println "  opened" (:id (first cams)) (:width c) "x" (:height c))
+        ((:close! c)))))
+  true)
+
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
@@ -689,7 +730,8 @@
                ["devices"  check-enumeration]
                ["plane"    check-plane]
                ["audio"    check-audio]
-               ["session"  check-session]]]
+               ["session"  check-session]
+               ["wired"    check-wired-devices]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))

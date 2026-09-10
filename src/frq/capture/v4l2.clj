@@ -35,6 +35,10 @@
 (ffi/defcfn c-munmap "munmap" [:pointer :uint64] :int)
 
 (def ^:const o-rdwr 2)
+;; O_NONBLOCK, because the plane is pumped. A blocking DQBUF would hold
+;; glimmer's loop thread for up to a frame interval every pump, and on a
+;; camera that stops producing, for ever.
+(def ^:const o-nonblock 2048)
 (def ^:const prot-read 1)
 (def ^:const prot-write 2)
 (def ^:const map-shared 1)
@@ -136,9 +140,9 @@
     rc))
 
 (defn open-device
-  "Open a camera and answer its fd."
+  "Open a camera and answer its fd. Non-blocking: see `o-nonblock`."
   [path]
-  (let [fd (c-open path o-rdwr)]
+  (let [fd (c-open path (bit-or o-rdwr o-nonblock))]
     (when (neg? fd)
       (throw (ex-info (str "v4l2: cannot open " path) {:errno (ffi/errno) :path path})))
     fd))
@@ -242,6 +246,36 @@
       (ffi/write t :uint32 buf-type-video-capture)
       (ioctl! fd VIDIOC_STREAMOFF t "STREAMOFF")))
   nil)
+
+(defn- eagain?
+  "EAGAIN (11) — no frame ready. On a non-blocking device that is the normal
+  answer most of the time, not a failure."
+  [errno]
+  (= errno 11))
+
+(defn try-frame
+  "Dequeue a frame if one is ready, hand it to `f`, requeue it.
+
+  Answers what `f` answered, or nil when the camera has nothing yet. Unlike
+  `with-frame` this never raises on an empty queue, which is what a pumped
+  caller needs — on a non-blocking device EAGAIN is the ordinary case."
+  [fd buffers f]
+  (ffi/with-arena [a]
+    (let [p (ffi/alloc a (ffi/layout-size buffer))]
+      (blank-buffer p 0)
+      (let [rc (c-ioctl fd VIDIOC_DQBUF p)]
+        (cond
+          (not (neg? rc))
+          (let [i   (ffi/read-field p buffer [:index])
+                n   (ffi/read-field p buffer [:bytesused])
+                buf (nth buffers i)]
+            (try (f (:ptr buf) n)
+                 (finally (queue! fd i))))
+
+          (eagain? (ffi/errno)) nil
+
+          :else
+          (throw (ex-info "v4l2: DQBUF failed" {:errno (ffi/errno)})))))))
 
 (defn with-frame
   "Dequeue a frame, hand it to `f` as [pointer length], and requeue it.
