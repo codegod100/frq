@@ -17,7 +17,7 @@
  :deps {jolt-lang/glimmer  {:git/url "https://gitlab.com/nandithebull/glimmer"
                             :git/sha "399df371c790d690fb6e4560c3d4d7f838502857"}
         nandi/glimmer-jvui {:git/url "https://gitlab.com/nandithebull/jolt-native"
-                            :git/sha "2271a9188bb358e15c020f96d9923f906e495c56"
+                            :git/sha "e72d7b0bc9988bb21d5ed6f0cc8e4d8a15020b82"
                             :deps/root "glimmer-backends/glimmer-jvui"}}
 
  ;; What the UI loads is SDL, and jvui declares it itself — SDL3, SDL3_ttf
