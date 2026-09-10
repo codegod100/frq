@@ -46,6 +46,13 @@
     #
     # Pinned all the same, and pinned to a rev: this input carries both halves of
     # glimmer-vidya — libvidya, and the Jolt side that binds it — so an
+    # Pinned to `no-moq-deps`, which is the rev below plus one commit: it
+    # splits jolt-native's dependency artifact by consumer, so asking for
+    # libvidya and libjolttui no longer builds jolt-moq's 394 crates. It is
+    # branched from the rev this used to name rather than taken off main,
+    # because main has moved on to the Zig/dvui backend and a UI change is
+    # not what this pin is for.
+    #
     # unpinned `main` is a build whose native half is free to sit at a
     # different commit from the tree that talks to it. It did, and what the
     # drift cost was silence: the Jolt half sent a reaction pill's hover card
@@ -56,7 +63,7 @@
     # drift this comment warns about wearing a different hat: one input, and
     # the window and the terminal are the same library either way.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=d970307ccf1fe67e2e971f2837d2282d8ba79a62";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=2975a4318cc748dd0ee25d6cef64f29c87bb1cf7";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
