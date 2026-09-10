@@ -44,6 +44,7 @@
             [frq.capture.source :as source]
             [frq.av.plane :as plane]
             [frq.av.audio :as audio]
+            [frq.av.dial :as dial]
             [jolt.ffi :as ffi]))
 
 (defn- check-contract []
@@ -816,6 +817,61 @@
 
                 :else (do (Thread/sleep 10) (recur req accepted srv sess))))))))))
 
+(defn- check-dial
+  "The URL rules, transcribed out of Rust and worth checking case by case.
+
+  These were `joltmoq_sfu_url` and `joltmoq_can_dial`, and they are the one
+  part of the port that is pure logic rather than a binding — which means
+  they are also the one part where a wrong answer is silent. A URL built
+  slightly wrong does not fail to compile; it dials somewhere that is not
+  there, and the person is told the call timed out.
+
+  The port dropping is the case worth staring at: `irc.freeq.at:6697`
+  becomes `https://irc.freeq.at/av/moq` with no port, because 6697 is the
+  IRC port and the SFU is not on it — but an absolute URL keeps its
+  authority as written, since someone who put a port in a URL meant it."
+  []
+  (let [cases
+        [["irc.freeq.at:6697"        nil   nil    "https://irc.freeq.at/av/moq"]
+         ["irc.freeq.at"             nil   nil    "https://irc.freeq.at/av/moq"]
+         ["wss://irc.freeq.at/irc"   nil   nil    "https://irc.freeq.at/av/moq"]
+         ["ws://localhost:6667"      nil   nil    "http://localhost:6667/av/moq"]
+         ["localhost:6667"           nil   nil    "http://localhost:6667/av/moq"]
+         ["127.0.0.1:6667"           nil   nil    "http://127.0.0.1:6667/av/moq"]
+         ["irc.freeq.at:6697"        "tok" "ab12" "https://irc.freeq.at/av/moq?inst=ab12&jwt=tok"]
+         ["irc.freeq.at"             nil   "ab12" "https://irc.freeq.at/av/moq?inst=ab12"]
+         [""                         nil   nil    nil]
+         ["   "                      nil   nil    nil]]]
+    (doseq [[server jwt inst want] cases]
+      (let [got (dial/sfu-url server jwt inst)]
+        (when-not (= want got)
+          (throw (ex-info "sfu-url disagrees with the Rust it came from"
+                          {:server server :jwt jwt :instance inst
+                           :want want :got got})))))
+    (println "  sfu-url:" (count cases) "cases agree"))
+
+  (let [cases [["localhost:6667"  nil   true]
+               ["127.0.0.1:6667"  nil   true]
+               ["irc.freeq.at"    nil   false]
+               ["irc.freeq.at"    "tok" true]
+               ["wss://irc.freeq.at/irc" nil false]
+               ["http://localhost:6667"  nil true]]]
+    (doseq [[server jwt want] cases]
+      (let [got (dial/can-dial? server jwt)]
+        (when-not (= want got)
+          (throw (ex-info "can-dial? disagrees with the Rust it came from"
+                          {:server server :jwt jwt :want want :got got})))))
+    (println "  can-dial?:" (count cases) "cases agree"))
+
+  (let [ids (repeatedly 200 dial/new-instance)]
+    (when-not (every? #(re-matches #"[0-9a-f]{8}" %) ids)
+      (throw (ex-info "instance ids are not eight hex characters"
+                      {:sample (take 3 (remove #(re-matches #"[0-9a-f]{8}" %) ids))})))
+    ;; Two devices with the same id unpublish each other, so collisions are
+    ;; not a cosmetic concern.
+    (println "  instances:" (count (distinct ids)) "distinct of" (count ids)))
+  true)
+
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
@@ -832,7 +888,8 @@
                ["audio"    check-audio]
                ["session"  check-session]
                ["wired"    check-wired-devices]
-               ["status"   check-status]]]
+               ["status"   check-status]
+               ["dial"     check-dial]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))

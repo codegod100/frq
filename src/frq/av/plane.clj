@@ -67,11 +67,16 @@
 ;; One plane per process, as joltmoq had: its C API was all globals, and the
 ;; call surface above it assumes a single call at a time.
 
-(declare stop!)
+(declare stop! start!)
 
 (defonce ^:private plane (atom nil))
 
-(defn live? [] (some? @plane))
+(defn live?
+  "Whether a call is actually up — not merely dialling."
+  []
+  (boolean (some-> @plane :producer)))
+
+(defn dialling? [] (boolean (some-> @plane :dialling)))
 
 ;; --- starting ----------------------------------------------------------------
 
@@ -167,6 +172,54 @@
              :fps       fps})
     true))
 
+(defn dial!
+  "Dial `url` and bring the plane up when the session answers. Answers true.
+
+  FIRE AND FORGET, like `joltmoq_start` was: the connect is a future, and
+  waiting for it here would block glimmer's loop thread for the length of a
+  QUIC handshake — thirty seconds when the relay is not there. `pump!`
+  finishes the job and `poll-status!` reports it, which is the shape
+  `frq.av` is already written around.
+
+  Everything the plane will need is kept until then, because the tracks
+  cannot be published until there is a session to publish them into."
+  [{:keys [url] :as opts}]
+  (stop!)
+  (let [c (client/new-client)]
+    (reset! plane {:dialling (client/connect! c url)
+                   :client   c
+                   :opts     (dissoc opts :url)
+                   :status   (atom [])
+                   :frames   []
+                   :peers    {}})
+    true))
+
+(defn- pump-dialling!
+  "Finish a connect that has settled, and start the plane on its session."
+  [p]
+  (if-let [fut (:dialling p)]
+    (when (uniffi/settled? fut)
+      (let [sess (try (uniffi/complete! fut)
+                      (catch Exception e
+                        (swap! (:status p) conj
+                               {:code :failed
+                                :text (or (:message (ex-data e)) (ex-message e))})
+                        nil))]
+        (if sess
+          (do (start! (assoc (:opts p)
+                             :origin   (client/session-publisher sess)
+                             :discover (client/session-consumer sess)
+                             :session  sess))
+              ;; start! replaced the plane wholesale; carry over anything
+              ;; queued while we were still dialling.
+              (swap! plane update :status
+                     (fn [q] (swap! q into @(:status p)) q))
+              @plane)
+          ;; A failed dial leaves the plane present but not live, so the
+          ;; reason survives to be read.
+          (assoc p :dialling nil :client nil))))
+    p))
+
 (defn stop!
   "Take the plane down and release everything it holds."
   []
@@ -205,6 +258,25 @@
   [muted?]
   (swap! plane #(when % (assoc % :muted? (boolean muted?))))
   nil)
+
+(defn set-speaker-muted!
+  "Stop playing what the mix produced. The peers keep being decoded — their
+  rings have to stay current or unmuting would start from forty
+  milliseconds of stale audio."
+  [muted?]
+  (swap! plane #(when % (assoc % :speaker-muted? (boolean muted?))))
+  nil)
+
+;; Device switching mid-call is RECORDED, not applied. Reopening a camera
+;; means tearing down the capture, the encoder and the published track and
+;; putting them back — there is no V4L2 ioctl for "become a different
+;; camera" — and doing that underneath a live call is a change worth making
+;; deliberately rather than as a side effect of a menu. `frq.av` keeps the
+;; id either way, so the next call uses it.
+
+(defn set-camera-device!  [id] (swap! plane #(when % (assoc % :camera-device id))) nil)
+(defn set-mic-device!     [id] (swap! plane #(when % (assoc % :mic-device id))) nil)
+(defn set-speaker-device! [id] (swap! plane #(when % (assoc % :speaker-device id))) nil)
 
 (defn force-keyframe!
   "Make the next published frame an IDR.
@@ -464,6 +536,9 @@
   []
   (when-let [p @plane]
    (try
+    (if (:dialling p)
+      ;; Still connecting: nothing to pump but the handshake.
+      (when-let [p' (pump-dialling! p)] (reset! plane p'))
     (let [p (pump-closed! p)]
      (pump-out! p)
      (pump-mic! p)
@@ -480,9 +555,9 @@
         ;; Straight out to the speaker if there is one. A caller with its
         ;; own output — the terminal backend, a test — reads poll-audio!
         ;; instead and this stays nil.
-        (when (and mixed (:speaker p'))
+        (when (and mixed (:speaker p') (not (:speaker-muted? p')))
           ((:play! (:speaker p')) mixed))
-        (reset! plane (assoc p' :mixed mixed)))))
+        (reset! plane (assoc p' :mixed mixed))))))
     (catch Exception e
       (note! p {:code :failed
                 :text (or (:message (ex-data e)) (ex-message e))})
@@ -520,6 +595,20 @@
   "The broadcast paths currently known, self included."
   []
   (some-> @plane :peers keys vec))
+
+(defn feed-keys
+  "The keys of everyone currently sending a picture.
+
+  Not everyone announced: a peer with their camera off has a broadcast and
+  a catalog and no video track, and listing them would leave an empty tile
+  in the wall that never fills. This is joltmoq's `video_keys`, and the
+  test is the same one — is there a video track subscribed."
+  []
+  (into #{}
+        (keep (fn [[path peer]]
+                (when (:media peer)
+                  (if (:self? peer) "__local__" path))))
+        (some-> @plane :peers)))
 
 (defn poll-status!
   "Drain what the plane has learned since the last call, oldest first.

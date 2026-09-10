@@ -16,37 +16,29 @@
                              :git/sha "d970307ccf1fe67e2e971f2837d2282d8ba79a62"
                              :deps/root "glimmer-backends/glimmer-vidya"}}
 
- ;; Both objects come from gitlab.com/nandithebull/jolt-native, one crate each,
- ;; out of one target directory:
+ ;; libvidya comes from gitlab.com/nandithebull/jolt-native:
  ;;
  ;;   libvidya   the retained-tree ABI glimmer-vidya binds, on egui
- ;;   libjoltmoq the AV media plane — MoQ over QUIC, Opus, H.264, capture
  ;;
- ;; Calls are the one thing this client cannot do in jolt. Signaling is IRC and
- ;; lives in src/frq/av.clj; the media half is three thousand lines of codec
- ;; and transport that would only be written badly a second time here.
+ ;; Calls used to be the one thing this client could not do in jolt. The media
+ ;; half is `frq.av.plane` now — MoQ over QUIC from libmoq_ffi, Opus from
+ ;; libopus, H.264 from openh264 through a shim, and the devices from V4L2
+ ;; and ALSA. Signaling was always IRC and still lives in src/frq/av.clj.
  ;;
  ;;   just run
  :jolt/native [{:name "vidya"
                 :darwin ["libvidya.dylib"]
                 :linux ["libvidya.so"]}
-               {:name "joltmoq"
-                :darwin ["libjoltmoq.dylib"]
-                :linux ["libjoltmoq.so"]}
-               ;; moq-ffi's own object, fetched from its release. Not a
-               ;; second media plane: it is the TRANSPORT alone — MoQ over
-               ;; QUIC, the one piece of a call with no C implementation
-               ;; anywhere — and it is here so `frq.moq.*` has something to
-               ;; load while the port off libjoltmoq happens. Both are
-               ;; declared for now, and the day frq.av stops calling
-               ;; joltmoq_* is the day that entry goes.
+               ;; The transport half of a call: MoQ over QUIC, the one
+               ;; piece with no C implementation anywhere. Fetched from
+               ;; moq-ffi's release rather than built — building it means a
+               ;; 1062-crate workspace.
                ;;
-               ;; The codecs are NOT in it: moq-ffi's audio and video
-               ;; features are off in every Linux artifact upstream
-               ;; publishes, and turning them on means compiling a
-               ;; 1062-crate workspace. Opus and H.264 come from their own C
-               ;; libraries instead, which is the whole point of doing this
-               ;; over FFI rather than over a Rust facade.
+               ;; The codecs are NOT in it. moq-ffi's `audio` and `video`
+               ;; features are off in every Linux artifact upstream ships,
+               ;; so Opus and H.264 come from their own C libraries below,
+               ;; which is the whole point of doing this over FFI rather
+               ;; than over a Rust facade.
                ;;
                ;; No :darwin: :systems is x86_64-linux and aarch64-linux, so
                ;; a .dylib named here would name a file nothing fetches.

@@ -6,10 +6,12 @@
   server broadcasts `+freeq.at/av-state` back, which is IRC and nothing more,
   so it is written in the language the rest of the client is written in.
 
-  The other half is audio and video over MoQ, and it is three thousand lines of
-  Opus, H.264, QUIC and capture that would be written badly a second time in
-  any other language. It lives in `libjoltmoq`, extracted from sleek, and this
-  namespace is the whole of what frq says to it.
+  The other half is audio and video over MoQ, and it used to be `libjoltmoq`
+  — three thousand lines of Rust behind a C ABI. It is `frq.av.plane` now:
+  MoQ over QUIC from `libmoq_ffi`, Opus from libopus, H.264 from openh264,
+  and the camera and sound devices from V4L2 and ALSA, all bound directly.
+  This namespace is the whole of what frq says to it, and what it says has
+  barely changed — the plane was built to joltmoq's shape on purpose.
 
   Two rules come from that side and shape everything here:
 
@@ -18,69 +20,43 @@
   * **A video frame is borrowed**, valid only until the next poll. `pump!`
     hands each one to Vidya as it arrives and never keeps one, which is also
     why a frame never becomes a jolt value: it goes from the decoder's buffer
-    to the texture as a pointer, and is never copied on this side at all."
+    to the texture as a pointer, and is never copied on this side at all.
+
+  Both still hold, and for the same reasons — the plane is pumped because a
+  blocking foreign call would pin glimmer's loop thread, and it hands out
+  borrowed pointers because a frame at thirty a second cannot afford a copy."
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
             [glimmer-vidya.core :as vidya]
             [frq.irc :as irc]
-            [jolt.ffi :as ffi]))
+            [frq.av.dial :as dial]
+            [frq.av.plane :as plane]
+            [frq.capture.alsa :as alsa]
+            [frq.capture.v4l2 :as v4l2]))
 
 ;; --- the media plane ---------------------------------------------------------
-;; `libjoltmoq` is declared in deps.edn's `:jolt/native` beside libvidya, so the
-;; loader has already found it by the time these resolve.
+;; `frq.av.plane`, where this used to be twenty-five `joltmoq_*` symbols.
+;; The shape is deliberately the same one — start, stop, poll status, poll
+;; frames — because that is what let the plane be swapped in underneath this
+;; file rather than through it.
 
-(ffi/defcfn raw-init-logging "joltmoq_init_logging" [] :void)
-(ffi/defcfn raw-start "joltmoq_start"
-  [:string :string :string :string :int :int :int :string :string :string] :int)
-(ffi/defcfn raw-stop "joltmoq_stop" [] :void)
-(ffi/defcfn raw-is-live "joltmoq_is_live" [] :int)
-
-(ffi/defcfn raw-set-muted "joltmoq_set_muted" [:int] :void)
-(ffi/defcfn raw-set-speaker-muted "joltmoq_set_speaker_muted" [:int] :void)
-(ffi/defcfn raw-set-camera "joltmoq_set_camera" [:int] :void)
-(ffi/defcfn raw-set-camera-device "joltmoq_set_camera_device" [:string] :void)
-(ffi/defcfn raw-set-mic-device "joltmoq_set_mic_device" [:string] :void)
-(ffi/defcfn raw-set-speaker-device "joltmoq_set_speaker_device" [:string] :void)
-(ffi/defcfn mic-level "joltmoq_mic_level" [] :double)
-
-(ffi/defcfn raw-poll-status "joltmoq_poll_status" [] :int)
-(ffi/defcfn status-text "joltmoq_status_text" [] :string)
-(ffi/defcfn raw-status-has-camera "joltmoq_status_has_camera" [] :int)
-(ffi/defcfn raw-status-has-mic "joltmoq_status_has_mic" [] :int)
-
-(ffi/defcfn raw-frame-poll "joltmoq_frame_poll" [] :int)
-(ffi/defcfn frame-key "joltmoq_frame_key" [] :string)
-(ffi/defcfn frame-width "joltmoq_frame_width" [] :int)
-(ffi/defcfn frame-height "joltmoq_frame_height" [] :int)
-;; The one pointer that crosses. Read as `:pointer` rather than bytes on
-;; purpose: it goes straight back out to `vidya/frame-rgba!`, so the pixels
-;; never become a jolt value and are never copied on this side.
-(ffi/defcfn frame-rgba "joltmoq_frame_rgba" [] :pointer)
-(ffi/defcfn video-keys "joltmoq_video_keys" [] :string)
-
-(ffi/defcfn raw-cameras "joltmoq_cameras" [] :string)
-(ffi/defcfn raw-microphones "joltmoq_microphones" [] :string)
-(ffi/defcfn raw-speakers "joltmoq_speakers" [] :string)
-
-(ffi/defcfn raw-sfu-url "joltmoq_sfu_url" [:string :string :string] :string)
-(ffi/defcfn raw-can-dial "joltmoq_can_dial" [:string :string] :int)
-(ffi/defcfn new-instance "joltmoq_new_instance" [] :string)
-
-;; C has no booleans and no absence; both are converted here rather than at
-;; every call site, so the rest of this file is written in jolt's own terms.
-(def ^:private status-none 0)
-(def ^:private status-live 1)
-(def ^:private status-ended 2)
-(def ^:private status-failed 3)
+(def ^:private status-live :live)
+(def ^:private status-ended :ended)
+(def ^:private status-failed :failed)
 
 (defonce ^:private media-plane
-  ;; Whether `libjoltmoq` is here at all, asked once by calling the smallest
-  ;; thing in it. It is not on the phone — nobody has cross-built the media
-  ;; plane for Android — and a client that cannot make calls is still a client,
-  ;; so the answer gates the call surface rather than ending the run. Every
-  ;; other binding in this namespace is reached only from behind it.
+  ;; Whether the media plane can run here at all, asked once. It cannot on
+  ;; the phone: the plane is V4L2 and ALSA, and Android has neither — the
+  ;; camera is Camera2 through JNI and the audio is AAudio. A client that
+  ;; cannot make calls is still a client, so the answer gates the call
+  ;; surface rather than ending the run.
+  ;;
+  ;; Asked by looking for a sound device rather than by loading anything:
+  ;; every library the plane needs is declared in deps.edn and already
+  ;; resolved by the time this runs, so the question is not "is the code
+  ;; here" but "is there anything for it to talk to".
   (delay
-    (try (raw-init-logging) true
+    (try (boolean (seq (alsa/devices :playback)))
          (catch Exception _ false))))
 
 (defn available?
@@ -88,42 +64,37 @@
   []
   @media-plane)
 
-(defn- flag [b] (if b 1 0))
 (defn- pref [s] (or s ""))
 
-(defn live? [] (not (zero? (raw-is-live))))
+(defn live? [] (plane/live?))
+
 (defn can-dial?
   "Whether dialling this server is worth attempting. A remote SFU with no token
   accepts the connection and closes it, and the MoQ client then retries in a
   tight loop that looks exactly like a hang."
   [server jwt]
-  (not (zero? (raw-can-dial (pref server) (pref jwt)))))
+  (dial/can-dial? server jwt))
 
 (defn sfu-url
   "The SFU to dial for this server, or nil when the server is not one a URL can
   be made of."
   [server jwt instance]
-  (let [u (raw-sfu-url (pref server) (pref jwt) (pref instance))]
-    (when (seq u) u)))
+  (dial/sfu-url server jwt instance))
 
-(defn- parse-devices
-  "`id\\tname\\tdefault` a line into `{:id :name :default?}`.
+(defn new-instance
+  "A per-device call instance id. Two devices signed in as the same person need
+  different ones, or their broadcast paths collide."
+  []
+  (dial/new-instance))
 
-  Tab and newline delimit because a device name may hold anything else — a
-  webcam called \"EMEET SmartCam C960, Mono\" has spaces and a comma in it, and
-  splitting on those gives nonsense."
-  [text]
-  (->> (str/split-lines (or text ""))
-       (remove str/blank?)
-       (mapv (fn [line]
-               (let [[id name default] (str/split line #"\t")]
-                 {:id id
-                  :name (or name id)
-                  :default? (= "1" default)})))))
+;; --- devices -----------------------------------------------------------------
+;; Where joltmoq answered a tab-separated string that this file parsed, the
+;; bindings answer the maps directly. The shape the UI reads is unchanged:
+;; {:id :name :default?}.
 
-(defn cameras [] (parse-devices (raw-cameras)))
-(defn microphones [] (parse-devices (raw-microphones)))
-(defn speakers [] (parse-devices (raw-speakers)))
+(defn cameras []      (try (v4l2/devices) (catch Exception _ [])))
+(defn microphones []  (try (alsa/devices :capture) (catch Exception _ [])))
+(defn speakers []     (try (alsa/devices :playback) (catch Exception _ [])))
 
 ;; --- the signaling tags ------------------------------------------------------
 ;; Every one of these is a TAGMSG to the channel. The server answers with an
@@ -298,7 +269,7 @@
   or the caller is about to send an `av-leave` of its own. Anything else wants
   `dropped!`, or freeq goes on counting a participant who is not there."
   []
-  (raw-stop)
+  (plane/stop!)
   (drop-feeds!)
   (reset! feeds [])
   (reset! local-call nil)
@@ -331,11 +302,23 @@
       (do
         (swap! local-call assoc :media :dialling)
         (reset! media-error nil)
-        (when (zero? (raw-start url session-id (pref nick) instance
-                                (flag muted?) (flag speaker-muted?) (flag camera?)
-                                (pref camera-id) (pref mic-id) (pref speaker-id)))
-          (swap! local-call assoc :media :failed)
-          (reset! media-error "could not start the media plane")))
+        ;; Fire and forget: the connect is a QUIC handshake and waiting for
+        ;; it here would freeze the window for as long as it took — thirty
+        ;; seconds when the SFU is not there. `pump!` finishes it and
+        ;; `pump-status!` below reports what happened, which is exactly
+        ;; what this did when the waiting was joltmoq's to do.
+        (try
+          (plane/dial! {:url url
+                        :path (str "/" instance)
+                        :camera-device (when camera? camera-id)
+                        :mic-device    (when-not muted? mic-id)
+                        :speaker-device (when-not speaker-muted? speaker-id)
+                        :camera? camera?
+                        :muted?  muted?})
+          (catch Exception e
+            (swap! local-call assoc :media :failed)
+            (reset! media-error (or (ex-message e)
+                                    "could not start the media plane")))))
       (do (swap! local-call assoc :media :failed)
           (reset! media-error (str "no SFU for " server))))))
 
@@ -417,64 +400,69 @@
 
 (defn set-muted! [muted?]
   (swap! local-call assoc :muted? muted?)
-  (raw-set-muted (flag muted?)))
+  (plane/set-muted! muted?))
 
 (defn set-speaker-muted! [muted?]
   (swap! local-call assoc :speaker-muted? muted?)
-  (raw-set-speaker-muted (flag muted?)))
+  (plane/set-speaker-muted! muted?))
 
 (defn set-camera! [on?]
   (swap! local-call assoc :camera? on?)
-  (raw-set-camera (flag on?))
+  (plane/set-camera! on?)
   ;; The tile goes when the camera does: the plane stops publishing, so no
   ;; frame arrives to replace the last one.
   (when-not on?
     (vidya/frame-drop! local-feed)
     (swap! painted-feeds disj local-feed)))
 
+;; Switching a device mid-call reopens it, which the plane can only do by
+;; going round again — there is no V4L2 ioctl for "become a different
+;; camera". The id is recorded either way, so a call started afterwards
+;; uses it even where a live switch is not offered yet.
+
 (defn set-camera-device! [id]
   (swap! local-call assoc :camera-id id)
-  (raw-set-camera-device (pref id)))
+  (plane/set-camera-device! id))
 
 (defn set-mic-device! [id]
   (swap! local-call assoc :mic-id id)
-  (raw-set-mic-device (pref id)))
+  (plane/set-mic-device! id))
 
 (defn set-speaker-device! [id]
   (swap! local-call assoc :speaker-id id)
-  (raw-set-speaker-device (pref id)))
+  (plane/set-speaker-device! id))
 
 ;; --- the pump ----------------------------------------------------------------
 
 (defn- pump-status!
-  "Drain what the media plane has learned since the last frame."
+  "Drain what the media plane has learned since the last frame.
+
+  A drained QUEUE rather than a code per call, which is what the plane
+  answers — but the loop is the same shape and for the same reason: a call
+  can fail and end between two pumps, and reading only the latest state
+  would show the wrong one."
   []
-  (loop []
-    (let [code (raw-poll-status)]
-      (when-not (= code status-none)
-        (cond
-          (= code status-live)
-          (swap! local-call #(when %
-                               (assoc % :media :live
-                                        :has-camera? (not (zero? (raw-status-has-camera)))
-                                        :has-mic? (not (zero? (raw-status-has-mic))))))
+  (doseq [{:keys [code text has-camera? has-mic?]} (plane/poll-status!)]
+    (cond
+      (= code status-live)
+      (swap! local-call #(when % (assoc % :media :live
+                                          :has-camera? (boolean has-camera?)
+                                          :has-mic? (boolean has-mic?))))
 
-          ;; Both of these are the call ending underneath us rather than at
-          ;; our request, so both have to be announced. A failure keeps the
-          ;; local call up afterwards so the reason stays on screen — but the
-          ;; server is told either way, because we are no longer in the call
-          ;; whether or not the person has read why yet.
-          (= code status-ended)
-          (dropped!)
+      ;; Both of these are the call ending underneath us rather than at
+      ;; our request, so both have to be announced. A failure keeps the
+      ;; local call up afterwards so the reason stays on screen — but the
+      ;; server is told either way, because we are no longer in the call
+      ;; whether or not the person has read why yet.
+      (= code status-ended)
+      (dropped!)
 
-          (= code status-failed)
-          (let [why (status-text)
-                call @local-call]
-            (when-let [announce @on-dropped]
-              (when call (try (announce call) (catch Exception _ nil))))
-            (reset! media-error why)
-            (swap! local-call #(when % (assoc % :media :failed)))))
-        (recur)))))
+      (= code status-failed)
+      (let [call @local-call]
+        (when-let [announce @on-dropped]
+          (when call (try (announce call) (catch Exception _ nil))))
+        (reset! media-error text)
+        (swap! local-call #(when % (assoc % :media :failed)))))))
 
 (defn- pump-frames!
   "Hand every new frame straight to Vidya.
@@ -482,18 +470,16 @@
   The pointer is borrowed until the next poll, so it is used and dropped inside
   this loop and never held. Nothing is copied on this side: the pixels go from
   the decoder's own buffer to a texture without becoming a jolt value at all,
-  which is the only way a call at thirty frames a second is affordable here."
+  which is the only way a call at thirty frames a second is affordable here.
+
+  Several frames at once now, where joltmoq answered one per poll. That is
+  safe because the plane keeps a decoder PER PEER: one shared between them
+  would make every pointer here alias the last picture decoded."
   []
-  (loop []
-    (when-not (zero? (raw-frame-poll))
-      (let [key (frame-key)
-            w (frame-width)
-            h (frame-height)
-            px (frame-rgba)]
-        (when (and (seq key) (pos? w) (pos? h) (not (ffi/null? px)))
-          (vidya/frame-rgba! key w h px)
-          (swap! painted-feeds conj key)))
-      (recur))))
+  (doseq [{:keys [key w h rgba]} (plane/poll-frames!)]
+    (when (and (seq key) (pos? w) (pos? h) rgba)
+      (vidya/frame-rgba! key w h rgba)
+      (swap! painted-feeds conj key))))
 
 (defn- order-feeds
   "Everyone with a picture, the self-view last.
@@ -514,7 +500,7 @@
   thing, and every `:image` node under it would be rebuilt around a texture
   that was fine where it was."
   []
-  (let [live (set (remove str/blank? (str/split-lines (or (video-keys) ""))))]
+  (let [live (plane/feed-keys)]
     (doseq [k (remove live @painted-feeds)]
       (vidya/frame-drop! k)
       (swap! painted-feeds disj k))
@@ -552,14 +538,16 @@
     (pump-feeds!)))
 
 (defn init-logging!
-  "Let the media plane talk to stderr, honouring `RUST_LOG`.
+  "Ask, once, whether calls can happen here.
 
-  Worth doing unconditionally: it says nothing at all without a `RUST_LOG`,
-  and when a call misbehaves it is the only thing that knows why — MoQ
-  subscription, codec negotiation and device open all happen on the far side of
-  the boundary, where no jolt-level trace can see them.
+  It used to do two things: turn on the Rust media plane's logging and, as
+  a side effect of the call succeeding, discover that the plane existed.
+  There is no Rust plane now and nothing to switch on — `frq.av.plane`
+  raises where it fails and `poll-status!` carries the reason, both of
+  which a jolt-level trace can already see.
 
-  Asking whether the media plane is there is the same call, so this is it."
+  The name stays because `frq.app` calls it at startup and the answer it
+  wants is unchanged: is there a media plane here at all."
   []
   (available?))
 

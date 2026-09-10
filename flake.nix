@@ -180,7 +180,25 @@
           # and says it once. It also builds cpal with the `pipewire` feature,
           # which the restatement did not — so device names in a call are
           # PipeWire's rather than raw ALSA PCMs.
-          native = jolt-native.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          # libvidya and libjolttui, NOT libjoltmoq. Its `default` is all
+          # three joined, and the third is the Rust media plane frq no
+          # longer loads — `frq.av.plane` replaced it.
+          #
+          # This makes the closure smaller and the APK smaller. It does NOT
+          # make the build shorter, and it is worth being exact about why:
+          # jolt-native compiles its external crates ONCE, in a
+          # `buildDepsOnly` derivation shared by all three objects, so
+          # asking for two of them still builds every dependency the third
+          # has — the 440 crates that are jolt-moq's alone. Getting those
+          # out of the build is a change in jolt-native, not here: either
+          # jolt-moq leaves that workspace, or its deps artifact stops
+          # being workspace-wide.
+          native =
+            let np = jolt-native.packages.${pkgs.stdenv.hostPlatform.system};
+            in pkgs.symlinkJoin {
+              name = "jolt-native-ui";
+              paths = [ np.libvidya np.libjolttui ];
+            };
 
           # libmoq_ffi — MoQ over QUIC behind UniFFI's C ABI, FETCHED rather
           # than built. This is the object `frq.moq.raw` is generated from.
