@@ -139,7 +139,7 @@
     (let [b (try (tls/tls-read (:tls conn)) (catch Exception _ nil))]
       (when (and b (pos? (count b))) (String. b)))
     (let [buf (:buf conn)
-          n (try (socket/c-recv (:fd conn) buf buffer-size 0) (catch Exception _ -1))]
+          n (try (wire/recv! (:fd conn) buf buffer-size) (catch Exception _ -1))]
       (when (and n (pos? n)) (String. (ffi/read-bytes buf n))))))
 
 (defn send-line!

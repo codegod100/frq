@@ -20,12 +20,6 @@
 
 (def default-broker "https://auth.freeq.at")
 
-;; MSG_NOSIGNAL. A browser opens more connections to a page than it reads —
-;; favicon, preconnect, prefetch — and closes them without ceremony. Writing to
-;; one of those raises SIGPIPE, which with no handler installed ends the
-;; process: the app looked like it wedged the moment the redirect arrived.
-(def ^:private no-signal @#'socket/msg-nosignal)
-
 ;; ------------------------------------------------------------------ urls
 
 (defn url-encode
@@ -100,7 +94,7 @@
 
 (defn- read-request [fd]
   (let [buf (ffi/alloc 16384)
-        n (try (socket/c-recv fd buf 16384 no-signal) (catch Exception _ -1))]
+        n (try (wire/recv! fd buf 16384) (catch Exception _ -1))]
     (if (and n (pos? n)) (String. (ffi/read-bytes buf n)) "")))
 
 (defn- bind-loopback!
@@ -143,7 +137,7 @@
     (try
       (on-url url)
       (loop []
-        (let [fd (socket/c-accept server ffi/null ffi/null)]
+        (let [fd (wire/accept! server)]
           (if (neg? fd)
             (throw (ex-info "Loopback accept failed" {:port port}))
             (let [req (read-request fd)

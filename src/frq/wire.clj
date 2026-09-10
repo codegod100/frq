@@ -21,6 +21,28 @@
   call sites already did — the value is the platform's, not frq's."
   @#'socket/msg-nosignal)
 
+(def ^:private io-call
+  "jolt's own retry wrapper for one blocking-capable socket syscall.
+
+  The `accept`/`recv`/`send` bindings are declared `:capture-native-error`, so
+  they answer `[result errno]` rather than a bare number — a pair that reads as
+  a socket error nowhere and as `class clojure.lang.PersistentVector cannot be
+  cast to class java.lang.Number` the moment a caller asks whether it is
+  positive. Taken from jolt rather than unwrapped here, as with `no-signal`
+  above: the errno is what tells EINTR and EAGAIN from a real failure, and
+  jolt is where that classification lives."
+  @#'socket/io-call)
+
+(defn recv!
+  "One `recv` into `buf`, answering the byte count — negative or zero at end."
+  [fd buf len]
+  (io-call #(socket/c-recv fd buf len 0) fd :read))
+
+(defn accept!
+  "One `accept` on a listening fd, answering the connected fd or a negative."
+  [fd]
+  (io-call #(socket/c-accept fd ffi/null ffi/null) fd :read))
+
 (defn send-all!
   "Write `text` to `fd` until none is left. Throws if the socket does.
 
@@ -35,14 +57,14 @@
         (when (< sent len)
           ;; The pointer advances with the length. `p` is an address, so this
           ;; is ordinary arithmetic on it.
-          (let [n (socket/c-send fd (+ p sent) (- len sent) no-signal)]
+          (let [n (io-call #(socket/c-send fd (+ p sent) (- len sent) no-signal)
+                           fd :write)]
             ;; Anything not positive ends it. Zero especially: recurring on an
             ;; unchanged `sent` is an infinite loop that sends nothing, which
             ;; is worse than the failure it is hiding.
-            ;; ponytail: EINTR is thrown rather than retried — jolt.socket
-            ;; publishes no errno, so telling it from a real error would mean
-            ;; binding __errno_location here. Worth doing if signals ever
-            ;; start interrupting these writes in practice.
+            ;; EINTR and EAGAIN are already gone by here — io-call retries
+            ;; the one and waits out the other — so a non-positive n is the
+            ;; socket's final answer.
             (when-not (pos? n)
               (throw (ex-info "send failed" {:fd fd :sent sent :len len :ret n})))
             (recur (+ sent n))))))))
