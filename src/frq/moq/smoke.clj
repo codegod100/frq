@@ -295,6 +295,42 @@
             (throw (ex-info "not Annex B — no start code" {:first-4 (:first-4 got)})))
           (when-not (:keyframe got)
             (throw (ex-info "first frame is not an IDR" {})))
+
+          ;; And back again. A decode that answered the right SIZE full of
+          ;; the wrong pixels would pass a length check, so the assertion is
+          ;; the picture: flat gray in, flat gray out, opaque.
+          (let [dec (h264/decoder)]
+            (try
+              ;; The frame above was the IDR; this one would be a P-frame
+              ;; referencing it, and a decoder handed that first answers
+              ;; dsNoParamSets (16) — no SPS or PPS to decode against. A
+              ;; subscriber joining mid-call is in exactly that position,
+              ;; which is what force-keyframe! is for.
+              (h264/force-keyframe! enc)
+              (h264/encode! enc px 33333
+                (fn [p len _]
+                  (h264/decode! dec p len
+                    (fn [rgba dw dh]
+                      (println "  decoded ->" dw "x" dh "RGBA")
+                      (when (or (zero? dw) (ffi/null? rgba))
+                        (throw (ex-info "decoder produced no picture" {})))
+                      (when-not (and (= w dw) (= h dh))
+                        (throw (ex-info "decoded size does not match"
+                                        {:want [w h] :got [dw dh]})))
+                      (let [px0 (mapv #(ffi/read (+ rgba %) :uint8) (range 4))
+                            mid (* 4 (+ (* (quot dh 2) dw) (quot dw 2)))
+                            pxm (mapv #(ffi/read (+ rgba mid %) :uint8) (range 4))]
+                        (println "  first pixel" (pr-str px0) "centre" (pr-str pxm))
+                        (when-not (= 255 (nth px0 3))
+                          (throw (ex-info "alpha is not opaque" {:pixel px0})))
+                        ;; 0x80 luma with neutral chroma is mid gray; the
+                        ;; BT.601 maths lands near 125, not exactly 128.
+                        (doseq [c (take 3 pxm)]
+                          (when-not (< 100 c 150)
+                            (throw (ex-info "centre pixel is not gray"
+                                            {:pixel pxm})))))
+                      true))))
+              (finally (h264/close-decoder! dec))))
           true)
         (finally (h264/close! enc))))))
 
@@ -368,6 +404,30 @@
           true)
         (finally (alsa/close! pcm))))))
 
+(defn- check-enumeration
+  "List the devices, which is what av.clj's cameras/microphones/speakers are.
+
+  There is no assertion on the CONTENTS: this container has no camera, and
+  which PCMs ALSA offers is a property of the machine rather than of this
+  code. What is asserted is that enumeration returns without leaking or
+  faulting and that every entry is shaped the way av.clj's `parse-devices`
+  produced them — an :id to pass back, a :name to show, a :default? flag —
+  because that shape is the contract the UI already reads."
+  []
+  (let [shaped? (fn [d] (and (string? (:id d)) (string? (:name d))
+                             (contains? d :default?)))
+        cams    (v4l2/devices)
+        mics    (alsa/devices :capture)
+        outs    (alsa/devices :playback)]
+    (println "  cameras:" (count cams) (pr-str (mapv :name (take 2 cams))))
+    (println "  capture:" (count mics) (pr-str (mapv :name (take 2 mics))))
+    (println "  playback:" (count outs) (pr-str (mapv :name (take 2 outs))))
+    (doseq [[what ds] [["camera" cams] ["capture" mics] ["playback" outs]]]
+      (when-let [bad (first (remove shaped? ds))]
+        (throw (ex-info (str what " device is not shaped like av.clj expects")
+                        {:device bad}))))
+    true))
+
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
@@ -378,7 +438,8 @@
                ["opus"     check-opus]
                ["h264"     check-h264]
                ["v4l2"     check-v4l2-layouts]
-               ["alsa"     check-alsa]]]
+               ["alsa"     check-alsa]
+               ["devices"  check-enumeration]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))

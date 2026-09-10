@@ -18,11 +18,15 @@
   is valid until the buffer goes back, and nothing here copies it. That is
   `frq.av`'s rule arriving from the other end — capture buffer to encoder as a
   pointer, the way the decoder's buffer already reaches a texture."
-  (:require [jolt.ffi :as ffi]))
+  (:require [clojure.string :as str]
+            [jolt.ffi :as ffi]))
 
 ;; --- libc --------------------------------------------------------------------
 
-(ffi/defcfn c-open "open" [:string :int :& :int] :int)
+;; Not variadic: open(2)'s third argument exists only for O_CREAT, which a
+;; device node never wants. Declaring the tail would oblige every call to
+;; pass a mode that the kernel then ignores.
+(ffi/defcfn c-open "open" [:string :int] :int)
 (ffi/defcfn c-close "close" [:int] :int)
 ;; ioctl's third argument is whatever the request says it is; for every
 ;; request here it is a pointer, and the declared tail costs no compile.
@@ -257,6 +261,42 @@
         (try
           (f (:ptr buf) n)
           (finally (queue! fd i)))))))
+
+(defn devices
+  "Every /dev/videoN that can actually capture, as {:id :name :default?}.
+
+  Probed rather than listed: reading the directory would mean binding
+  opendir and readdir for a range the kernel keeps small anyway, and a node
+  that cannot be opened is one this process could not have used regardless.
+
+  The filter matters more than it looks. A single camera usually presents
+  SEVERAL /dev/video nodes — the capture node beside metadata and control
+  nodes — and only one of them streams. Offering the others is how a device
+  list ends up with entries that fail the moment they are picked, so
+  QUERYCAP's device_caps decides rather than the node existing."
+  []
+  (->> (range 64)
+       (keep (fn [i]
+               (let [path (str "/dev/video" i)
+                     fd   (c-open path o-rdwr)]
+                 (when-not (neg? fd)
+                   (try
+                     (let [caps (capabilities fd)]
+                       (when (and (:capture? caps) (:streaming? caps))
+                         (ffi/with-arena [a]
+                           (let [p (ffi/alloc a (ffi/layout-size capability))]
+                             (ioctl! fd VIDIOC_QUERYCAP p "QUERYCAP")
+                             (let [card (ffi/read-bytes
+                                          (+ p (ffi/field-offset capability [:card])) 32)
+                                   ;; The kernel pads `card` with NULs to 32
+                                   ;; bytes; a jolt string of the whole field
+                                   ;; would carry them.
+                                   name (first (str/split card #"\x00"))]
+                               {:id path
+                                :name (if (seq name) name path)
+                                :default? (zero? i)})))))
+                     (finally (c-close fd)))))))
+       vec))
 
 (defn close-device! [fd buffers]
   (doseq [{:keys [ptr len]} buffers] (c-munmap ptr len))

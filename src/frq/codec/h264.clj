@@ -31,6 +31,11 @@
 (ffi/defcfn raw-force-keyframe "frq_h264_force_keyframe" [:pointer] :int)
 (ffi/defcfn raw-close "frq_h264_close" [:pointer] :void)
 
+(ffi/defcfn raw-decoder-open "frq_h264_decoder_open" [:pointer] :int)
+(ffi/defcfn raw-decode-rgba "frq_h264_decode_rgba"
+  [:pointer :pointer :int :pointer :pointer :pointer] :int)
+(ffi/defcfn raw-decoder-close "frq_h264_decoder_close" [:pointer] :void)
+
 (defn i420-size
   "Bytes in one I420 frame: a luma plane, then two at quarter resolution."
   [width height]
@@ -82,3 +87,45 @@
   nil)
 
 (defn close! [enc] (raw-close enc) nil)
+
+;; --- decoding ----------------------------------------------------------------
+
+(defn decoder
+  "Open a decoder. It answers RGBA, not I420 — see `decode!`."
+  []
+  (ffi/with-arena [a]
+    (let [out (ffi/alloc a 8)
+          rc  (raw-decoder-open out)]
+      (when-not (zero? rc)
+        (throw (ex-info "openh264: could not open a decoder" {:code rc})))
+      (ffi/read out :pointer))))
+
+(defn decode!
+  "Decode one Annex B frame and hand the picture to `use-frame`.
+
+  `use-frame` is called with [pointer width height] and its value answered.
+  The pointer is tightly packed RGBA in the decoder's own buffer, valid until
+  the next decode on the same decoder.
+
+  RGBA rather than I420 on purpose: `vidya/frame-rgba!` is where this is
+  going, so the conversion happens once in C rather than dragging three
+  planes and their strides across into jolt to be rearranged. Those strides
+  are also why it happens there — a decoder pads its rows, and `stride` is
+  not `width`.
+
+  A decoder with no picture yet — normal for the first packets of a stream —
+  calls `use-frame` with a NULL pointer and zero dimensions rather than
+  raising."
+  [dec annexb len use-frame]
+  (ffi/with-arena [a]
+    (let [out (ffi/alloc a 8)
+          w   (ffi/alloc a 4)
+          h   (ffi/alloc a 4)
+          rc  (raw-decode-rgba dec annexb len out w h)]
+      (when-not (zero? rc)
+        (throw (ex-info "openh264: decode failed" {:code rc})))
+      (use-frame (ffi/read out :pointer)
+                 (ffi/read w :int32)
+                 (ffi/read h :int32)))))
+
+(defn close-decoder! [dec] (raw-decoder-close dec) nil)
