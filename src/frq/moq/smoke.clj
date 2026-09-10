@@ -32,7 +32,8 @@
   had gone wrong yet.
 
       just repl -m frq.moq.smoke"
-  (:require [frq.moq.uniffi :as uniffi]
+  (:require [clojure.string :as str]
+            [frq.moq.uniffi :as uniffi]
             [frq.moq.raw :as raw]
             [frq.moq.client :as client]
             [frq.moq.media :as media]
@@ -143,12 +144,14 @@
   from a loop like this one."
   ([fut what ms] (settle! fut what ms nil))
   ([fut what ms lift]
+  ;; ms 0 means one look and no waiting — for a caller with its own loop.
   (let [deadline (+ (System/currentTimeMillis) ms)]
     (loop []
       (cond
         (uniffi/settled? fut) (if lift
                                 (uniffi/complete! fut lift)
                                 (uniffi/complete! fut))
+        (zero? ms) nil
         (> (System/currentTimeMillis) deadline)
         (throw (ex-info (str what ": future never settled") {:after-ms ms}))
         :else (do (Thread/sleep 10) (recur)))))))
@@ -594,6 +597,84 @@
             (opus/free-encoder! enc)
             (plane/stop!)))))))
 
+(defn- check-session
+  "The plane over a real QUIC session, not a local origin.
+
+  A relay is stood up in-process — MoqServer with a self-signed certificate
+  and one origin wired as both what it publishes and what it consumes, which
+  is what makes it a relay rather than two unrelated halves. A client dials
+  it over actual QUIC, and the plane runs on that session's publisher() and
+  consumer() rather than on an origin it made itself.
+
+  What this proves that the loopback checks cannot: that publish and
+  discover being two DIFFERENT origins works, that a broadcast survives the
+  wire, and that the announcement comes back through the relay rather than
+  from an object we already had.
+
+  Everything is polled, the relay included. Its accept has to be driven from
+  the same loop as the client's connect, because the client cannot finish
+  connecting until the relay accepts and there is no other thread to do it
+  on — which is a fair model of the real thing, where glimmer's timer is
+  the only clock this code gets."
+  []
+  (ffi/with-arena [a]
+    (let [w 64 h 64
+          [px _]  (i420-halves a w h 0x40 0xC0)
+          relay   (media/new-origin)
+          server  (client/new-server)]
+      (client/server-bind! server "127.0.0.1:0")
+      (client/server-tls-generate! server ["localhost"])
+      (client/server-origin! server relay)
+      (let [addr (settle! (client/server-listen! server) "listen" 10000
+                          uniffi/lift-string)
+            port (last (str/split addr #":"))
+            fps  (client/server-fingerprints server)
+            c    (client/new-client)]
+        (println "  relay on" addr "fingerprint" (subs (first fps) 0 16))
+        (client/set-tls-fingerprints! c fps)
+        (let [connect  (client/connect! c (str "https://localhost:" port "/room"))
+              incoming (client/server-accept! server)
+              deadline (+ (System/currentTimeMillis) 25000)]
+          (loop [req nil accepted nil sess nil]
+            (let [;; The relay side: an incoming request, then accept it.
+                  req      (or req (settle! incoming "accept" 0 media/lift-optional-handle))
+                  accepted (or accepted (when req (client/accept-request! req)))
+                  _        (when accepted (settle! accepted "request accept" 0 nil))
+                  ;; The client side.
+                  sess     (or sess (settle! connect "connect" 0 nil))]
+              (cond
+                sess
+                (do
+                  (println "  connected over QUIC")
+                  (try
+                    (plane/start! {:origin   (client/session-publisher sess)
+                                   :discover (client/session-consumer sess)
+                                   :session  sess
+                                   :path "/us" :source (fn [] [px nil])
+                                   :width w :height h :fps 30 :bitrate 200000})
+                    (let [d2 (+ (System/currentTimeMillis) 20000)]
+                      (loop [pumps 0]
+                        (plane/pump!)
+                        (if-let [f (first (plane/poll-frames!))]
+                          (do (println "  frame back through the relay after" pumps
+                                       "pumps:" (:w f) "x" (:h f) (pr-str (:key f)))
+                              (when-not (and (= w (:w f)) (= h (:h f)))
+                                (throw (ex-info "wrong size over the wire" {:frame f})))
+                              true)
+                          (if (> (System/currentTimeMillis) d2)
+                            (throw (ex-info "no frame came back over the session"
+                                            {:pumps pumps}))
+                            (do (Thread/sleep 10) (recur (inc pumps)))))))
+                    (finally
+                      (plane/stop!)
+                      (client/server-cancel! server))))
+
+                (> (System/currentTimeMillis) deadline)
+                (throw (ex-info "the session never came up"
+                                {:request req :accepted (some? accepted)}))
+
+                :else (do (Thread/sleep 10) (recur req accepted sess))))))))))
+
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
@@ -607,7 +688,8 @@
                ["alsa"     check-alsa]
                ["devices"  check-enumeration]
                ["plane"    check-plane]
-               ["audio"    check-audio]]]
+               ["audio"    check-audio]
+               ["session"  check-session]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))

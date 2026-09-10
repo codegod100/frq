@@ -287,6 +287,12 @@
         (let [k (r-string! c)]
           (recur (inc i) (assoc acc k (read-value c))))))))
 
+(defn r-list!
+  "An i32 count, then that many items."
+  [c read-item]
+  (let [n (r-i32! c)]
+    (mapv (fn [_] (read-item c)) (range n))))
+
 (defn r-optional!
   "A flag byte, then `f` when it is set."
   [c f]

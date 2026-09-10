@@ -111,6 +111,20 @@
     (-> (raw/method-moqannounced-next h)
         (uniffi/start-future :rb))))
 
+(defn lift-optional-handle
+  "Read an Optional<interface> from a settled :rb buffer as a handle.
+
+  An interface crosses as a u64 the far side has already cloned for us, so
+  freeing the buffer it arrived in does not touch it. Announcements,
+  requests and anything else optional-and-opaque come back this way."
+  [rb-ptr]
+  (let [len  (ffi/read-field rb-ptr uniffi/rust-buffer [:len])
+        data (ffi/read-field rb-ptr uniffi/rust-buffer [:data])
+        v    (when (and (pos? len) (not (ffi/null? data)))
+               (uniffi/r-optional! (uniffi/reader data len) uniffi/r-u64!))]
+    (uniffi/with-out-status #(raw/rustbuffer-free rb-ptr %))
+    v))
+
 (defn lift-announcement
   "Read an Optional<MoqAnnouncement> from a settled :rb buffer.
 

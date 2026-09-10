@@ -86,8 +86,134 @@
 
 ;; --- the session -------------------------------------------------------------
 
+;; --- sessions ---------------------------------------------------------------
+
+(defn session-publisher
+  "The origin this session publishes INTO. Broadcasts created here go out
+  over the wire."
+  [session]
+  (uniffi/with-out-status
+    #(raw/method-moqsession-publisher (clone-session session) %)))
+
+(defn session-consumer
+  "The origin this session receives FROM. Peers' broadcasts are announced
+  here."
+  [session]
+  (uniffi/with-out-status
+    #(raw/method-moqsession-consumer (clone-session session) %)))
+
+(defn- lower-strings
+  "A Sequence<String>: an i32 count, then each string length-prefixed."
+  [dest xs]
+  (uniffi/lower-buffer dest (into [[:i32 (count xs)]]
+                                  (map (fn [x] [:string x])) xs)))
+
+(defn set-tls-fingerprints!
+  "Trust exactly these certificate fingerprints.
+
+  What a self-signed relay needs: the certificate is not in any root store,
+  and the alternative — disabling verification altogether — trusts whatever
+  answers the address."
+  [client fingerprints]
+  (ffi/with-arena [a]
+    (let [buf (lower-strings (ffi/alloc a (ffi/layout-size uniffi/rust-buffer))
+                             fingerprints)]
+      (uniffi/with-out-status
+        #(raw/method-moqclient-set-tls-fingerprints (clone-client client) buf %))))
+  nil)
+
+;; --- a relay ----------------------------------------------------------------
+;; Not for production — for having something real to connect TO. A MoQ call
+;; needs a relay in the middle, and standing one up in-process is what lets
+;; the session path be exercised over actual QUIC rather than mocked.
+
+(defn- clone-server [h] (uniffi/with-out-status #(raw/clone-moqserver h %)))
+(defn- clone-request [h] (uniffi/with-out-status #(raw/clone-moqrequest h %)))
+
+(defn new-server [] (uniffi/with-out-status #(raw/constructor-moqserver-new %)))
+
+(defn server-bind! [server addr]
+  (ffi/with-arena [a]
+    (let [buf (uniffi/lower-string (ffi/alloc a (ffi/layout-size uniffi/rust-buffer)) addr)]
+      (uniffi/with-out-status #(raw/method-moqserver-set-bind (clone-server server) buf %))))
+  nil)
+
+(defn server-tls-generate!
+  "Make a self-signed certificate for these hostnames."
+  [server hostnames]
+  (ffi/with-arena [a]
+    (let [buf (lower-strings (ffi/alloc a (ffi/layout-size uniffi/rust-buffer)) hostnames)]
+      (uniffi/with-out-status
+        #(raw/method-moqserver-set-tls-generate (clone-server server) buf %))))
+  nil)
+
+(defn server-origin!
+  "Wire one origin as both what the relay publishes and what it consumes.
+
+  That is what makes it a relay rather than two unrelated halves: a
+  broadcast arriving from one session is announced to every other."
+  [server origin]
+  (ffi/with-arena [a]
+    (let [cell #(ffi/alloc a (ffi/layout-size uniffi/rust-buffer))
+          ;; Optional<MoqOriginProducer>: present, then the handle.
+          ops  [[:u8 1] [:u64 origin]]]
+      (uniffi/with-out-status
+        #(raw/method-moqserver-set-publish
+           (clone-server server) (uniffi/lower-buffer (cell) ops) %))
+      (uniffi/with-out-status
+        #(raw/method-moqserver-set-consume
+           (clone-server server) (uniffi/lower-buffer (cell) ops) %))))
+  nil)
+
+(defn server-listen!
+  "Bind the socket; answers a future settling to the bound address.
+
+  Async, which is easy to miss — `listen` reads like a synchronous bind and
+  answering it without awaiting leaves the server not listening, which the
+  next call reports as `bind: not listening; call listen() first`."
+  [server]
+  (-> (raw/method-moqserver-listen (clone-server server))
+      (uniffi/start-future :rb)))
+
+(defn server-fingerprints
+  [server]
+  (ffi/with-arena [a]
+    (let [out (ffi/alloc a (ffi/layout-size uniffi/rust-buffer))]
+      (uniffi/with-out-status
+        #(raw/method-moqserver-cert-fingerprints out (clone-server server) %))
+      (let [len  (ffi/read-field out uniffi/rust-buffer [:len])
+            data (ffi/read-field out uniffi/rust-buffer [:data])
+            v    (if (pos? len)
+                   (uniffi/r-list! (uniffi/reader data len) uniffi/r-string!)
+                   [])]
+        (uniffi/with-out-status #(raw/rustbuffer-free out %))
+        v))))
+
+(defn server-accept!
+  "Wait for the next incoming session; answers an :rb future settling to an
+  Optional<MoqRequest> handle."
+  [server]
+  (-> (raw/method-moqserver-accept (clone-server server))
+      (uniffi/start-future :rb)))
+
+(defn accept-request!
+  "Accept an incoming session; answers a future settling to a MoqSession."
+  [request]
+  (-> (raw/method-moqrequest-accept (clone-request request))
+      (uniffi/start-future :u64)))
+
+(defn server-cancel! [server]
+  (uniffi/with-out-status #(raw/method-moqserver-cancel (clone-server server) %))
+  nil)
+
 (defn shutdown!
   "Graceful shutdown — equivalent to `(cancel! session 0)`.
+
+  NOT OPTIONAL BEFORE THE HANDLE GOES. A session dropped without one panics
+  the process — `there is no reactor running, must be called from the
+  context of a Tokio 1.x runtime` — because the drop tries to close the
+  QUIC connection from whatever thread happened to free it. Either this or
+  `cancel!` has to run first, and `frq.av.plane` does it in a finally.
 
   Named as upstream names it: UniFFI's Kotlin generator already emits a
   `close()` that releases the FFI handle, so `close` would mean two different

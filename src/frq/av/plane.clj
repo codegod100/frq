@@ -48,6 +48,7 @@
   namespace learning about JNI."
   (:require [clojure.string :as str]
             [frq.av.audio :as audio]
+            [frq.moq.client :as client]
             [frq.moq.media :as media]
             [frq.moq.uniffi :as uniffi]
             [frq.codec.h264 :as h264]
@@ -76,8 +77,8 @@
   Everything that can fail does so HERE rather than at the first frame: the
   encoder validates its size, the decoder opens, and the subscribe settles,
   so a plane that comes up is one that can carry a picture."
-  [{:keys [origin path source mic width height fps bitrate camera? muted?
-           channels]
+  [{:keys [origin discover session path source mic width height fps bitrate
+           camera? muted? channels]
     :or   {path "/frq" width 640 height 480 fps 30 bitrate 800000
            camera? true muted? false channels 1}}]
   (stop!)
@@ -99,11 +100,20 @@
              :producer  producer
              :track     track
              :path      path
+             :session   session
              ;; The announcement watch is the whole of peer discovery. An
              ;; empty prefix takes everything on the origin, because in a
              ;; call every participant is a broadcast and none of their
              ;; paths are known in advance.
-             :announced (media/announced! (media/origin-consumer origin) "")
+             ;;
+             ;; PUBLISH AND DISCOVER ARE TWO ORIGINS, not one. On a local
+             ;; origin they are the same object and it makes no difference;
+             ;; over a session they are `publisher()` and `consumer()`, and
+             ;; conflating them is how a client publishes into the void or
+             ;; watches an origin nobody announces on. The default keeps the
+             ;; local case a one-liner.
+             :announced (media/announced!
+                          (or discover (media/origin-consumer origin)) "")
              :announce  nil
              :peers     {}
              :encoder   (h264/encoder {:width width :height height
@@ -134,6 +144,12 @@
       (when-let [r (:ring peer)] (try (audio/close-ring! r) (catch Exception _ nil))))
     (when-let [e (:mic-encoder p)] (try (opus/free-encoder! e) (catch Exception _ nil)))
     (when-let [m (:mix p)] (try (ffi/free m) (catch Exception _ nil)))
+    ;; The session has to be told, not merely dropped. Freeing its handle
+    ;; without a shutdown panics the process — the drop tries to close the
+    ;; QUIC connection from whatever thread got there, and outside a tokio
+    ;; worker there is no reactor to do it on.
+    (when-let [sess (:session p)]
+      (try (client/shutdown! sess) (catch Exception _ nil)))
     (reset! plane nil))
   nil)
 
