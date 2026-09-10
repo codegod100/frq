@@ -563,7 +563,15 @@
   Twemoji pack, in colour, where a label gets whatever the text font has."
   [channel m]
   (let [reactions (:reactions m)]
-    [:hbox {:key :pills :spacing (chip-gap)}
+    ;; `into` and not a lazy `for` inside the vector. The pills read
+    ;; `hovering-reaction?` — a ratom — and a ratom read while a lazy seq is
+    ;; being realised somewhere other than the render is a read the component
+    ;; never records, so the row went on showing what it showed before the
+    ;; pointer arrived. It is the one place in this file whose ratom read is
+    ;; inside the `for` body rather than above it, which is why it is the one
+    ;; place that needs this.
+    (into
+     [:hbox {:key :pills :spacing (chip-gap)}]
      (for [emoji (sort (keys reactions))]
        [:reaction (cond-> {:key emoji
                            :emoji emoji
@@ -581,7 +589,7 @@
         ;; whatever children the node has, and a channel's worth of unseen
         ;; lists is a tree nobody looks at.
         (when (and (platform/desktop?) (s/hovering-reaction? (:id m) emoji))
-          [reactor-card emoji (get reactions emoji)])])]))
+          [reactor-card emoji (get reactions emoji)])]))))
 
 (def ^:private picker-columns
   "Emoji to a row, at the picker's own size. Narrow enough that the grid fits a
