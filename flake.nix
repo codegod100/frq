@@ -64,7 +64,7 @@
     # drift this comment warns about wearing a different hat: one input, and
     # the window and the terminal are the same library either way.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=95540efd0f928c4680b4c22b4b418954bda79f44";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=2271a9188bb358e15c020f96d9923f906e495c56";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
