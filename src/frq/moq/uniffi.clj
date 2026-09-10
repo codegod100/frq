@@ -220,6 +220,108 @@
     (with-out-status #(raw/rustbuffer-free rb-ptr %))
     s))
 
+;; --- the buffer codec -------------------------------------------------------
+;; Anything that is not a scalar or a handle crosses as a RustBuffer holding
+;; UniFFI's own serialisation: BIG-ENDIAN fixed-width integers, a bool as one
+;; byte, bytes and strings as an i32 length followed by that many bytes, and an
+;; Optional as a 0/1 flag byte followed by the value when present.
+;;
+;; Both directions are written out by hand here rather than reusing `read`
+;; and `write`: jolt's integer types are NATIVE-endian, and this format is not.
+
+(defn- be-u64 [p off]
+  (let [b #(ffi/read (+ p off %) :uint8)]
+    (loop [i 0 acc 0]
+      (if (= i 8) acc (recur (inc i) (+ (* acc 256) (b i)))))))
+
+(defn reader
+  "A cursor over a RustBuffer's bytes."
+  [data len]
+  (atom {:data data :len len :off 0}))
+
+(defn- take! [c n]
+  (let [{:keys [off len]} @c]
+    (when (> (+ off n) len)
+      (throw (ex-info "read past the end of a RustBuffer"
+                      {:off off :want n :len len})))
+    (swap! c update :off + n)
+    (+ (:data @c) off)))
+
+(defn r-u8!   [c] (ffi/read (take! c 1) :uint8))
+(defn r-bool! [c] (not (zero? (r-u8! c))))
+(defn r-i32!  [c] (let [p (take! c 4)] (be-u32 p 0)))
+(defn r-u64!  [c] (let [p (take! c 8)] (be-u64 p 0)))
+
+(defn r-string!
+  "An i32 byte length, then that many UTF-8 bytes."
+  [c]
+  (let [n (r-i32! c)]
+    (if (zero? n) "" (ffi/read-bytes (take! c n) n))))
+
+(defn r-optional!
+  "A flag byte, then `f` when it is set."
+  [c f]
+  (when (= 1 (r-u8! c)) (f c)))
+
+;; -- writing --
+
+(defn lower-buffer
+  "Serialise `ops` and hand the bytes to Rust as a RustBuffer in `dest`.
+
+  `ops` is a sequence of [type value] pairs in wire order, e.g.
+
+      [[:i32 3] [:u8 0]]        ; MoqContainer::LOC, then Optional::None
+
+  Strings are materialised FIRST, in the arena, because their wire length is a
+  UTF-8 byte count and jolt will only tell us one by encoding the string — so
+  the total size is not known until every string has been. `string->ptr`
+  records the size it allocated, which counts the NUL it appends; the wire
+  length is one less, since a length-counted string carries no terminator.
+
+  `from_bytes` copies, so the scratch this builds in may die with the call."
+  [dest ops]
+  (ffi/with-arena [a]
+    (let [;; [op value encoded-pointer byte-count]
+          prepared (mapv (fn [[op v]]
+                           (if (= op :string)
+                             (let [p (ffi/string->ptr a v)]
+                               [op v p (max 0 (dec (ffi/size p)))])
+                             [op v nil nil]))
+                         ops)
+          n (reduce (fn [n [op _ _ k]]
+                      (+ n (case op
+                             (:u8 :bool) 1
+                             :i32 4
+                             :u64 8
+                             :string (+ 4 k))))
+                    0 prepared)
+          buf (ffi/alloc a (max n 1))
+          fbs (ffi/alloc a (ffi/layout-size foreign-bytes))
+          put-int! (fn [off width v]
+                     (dotimes [i width]
+                       (ffi/write (+ buf off i) :uint8
+                                  (bit-and (bit-shift-right v (* 8 (- width 1 i)))
+                                           255))))]
+      (loop [off 0 todo (seq prepared)]
+        (when todo
+          (let [[op v p k] (first todo)]
+            (recur
+              (case op
+                (:u8 :bool)
+                (do (ffi/write (+ buf off) :uint8
+                               (if (= op :bool) (if v 1 0) v))
+                    (inc off))
+
+                :i32    (do (put-int! off 4 v) (+ off 4))
+                :u64    (do (put-int! off 8 v) (+ off 8))
+                :string (do (put-int! off 4 k)
+                            (when (pos? k) (ffi/copy p (+ buf off 4) k))
+                            (+ off 4 k)))
+              (next todo)))))
+      (ffi/write fbs foreign-bytes {:len n :data buf})
+      (with-out-status #(raw/rustbuffer-from-bytes dest fbs %))
+      dest)))
+
 ;; --- futures -----------------------------------------------------------------
 
 (defn- continuation
@@ -280,21 +382,34 @@
   Only valid once `settled?` has answered true — completing early is what
   blocks the calling thread, which on the loop thread is the freeze this whole
   polling shape exists to avoid. The future handle is freed either way, so a
-  raising `complete` still does not leak one."
-  [{:keys [handle kind]}]
-  (try
-    (case kind
-      :u64  (with-out-status #(raw/rust-future-complete-u64 handle %))
-      :void (do (with-out-status #(raw/rust-future-complete-void handle %)) nil)
-      :rb   (ffi/with-arena [a]
-              (let [out (ffi/alloc a (ffi/layout-size rust-buffer))]
-                (with-out-status #(raw/rust-future-complete-rust-buffer out handle %))
-                out)))
-    (finally
-      (case kind
-        :u64  (raw/rust-future-free-u64 handle)
-        :void (raw/rust-future-free-void handle)
-        :rb   (raw/rust-future-free-rust-buffer handle)))))
+  raising `complete` still does not leak one.
+
+  An :rb future REQUIRES a `lift` function, and it is called while the buffer
+  cell is still alive. The cell is arena memory whose lifetime is this call:
+  handing the pointer back to a caller to read afterwards reads memory that
+  has already been released, and what comes back is not a fault but a
+  RustBuffer whose length no longer matches its capacity — which the object
+  then panics on, some way from the mistake."
+  ([fut]
+   (let [{:keys [kind]} fut]
+     (when (= kind :rb)
+       (throw (ex-info "an :rb future needs a lift function — see complete!"
+                       {:kind kind})))
+     (complete! fut nil)))
+  ([{:keys [handle kind]} lift]
+   (try
+     (case kind
+       :u64  (with-out-status #(raw/rust-future-complete-u64 handle %))
+       :void (do (with-out-status #(raw/rust-future-complete-void handle %)) nil)
+       :rb   (ffi/with-arena [a]
+               (let [out (ffi/alloc a (ffi/layout-size rust-buffer))]
+                 (with-out-status #(raw/rust-future-complete-rust-buffer out handle %))
+                 (lift out))))
+     (finally
+       (case kind
+         :u64  (raw/rust-future-free-u64 handle)
+         :void (raw/rust-future-free-void handle)
+         :rb   (raw/rust-future-free-rust-buffer handle))))))
 
 ;; --- the version guard -------------------------------------------------------
 

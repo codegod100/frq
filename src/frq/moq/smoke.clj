@@ -35,6 +35,7 @@
   (:require [frq.moq.uniffi :as uniffi]
             [frq.moq.raw :as raw]
             [frq.moq.client :as client]
+            [frq.moq.media :as media]
             [jolt.ffi :as ffi]))
 
 (defn- check-contract []
@@ -128,12 +129,78 @@
         (client/free-client! c)
         (println "  free_moqclient ok")))))
 
+(defn- settle!
+  "Poll `fut` until it settles, or give up. Returns what it settled to.
+
+  The polling is the point: every nil here has issued another poll, and this
+  is what a caller on the loop thread would be doing from a timer instead of
+  from a loop like this one."
+  ([fut what ms] (settle! fut what ms nil))
+  ([fut what ms lift]
+  (let [deadline (+ (System/currentTimeMillis) ms)]
+    (loop []
+      (cond
+        (uniffi/settled? fut) (if lift
+                                (uniffi/complete! fut lift)
+                                (uniffi/complete! fut))
+        (> (System/currentTimeMillis) deadline)
+        (throw (ex-info (str what ": future never settled") {:after-ms ms}))
+        :else (do (Thread/sleep 10) (recur)))))))
+
+(defn- check-media
+  "Put a payload into a broadcast and take the same payload out of it.
+
+  Entirely in-process: an origin producer is a plain constructor, so the
+  broadcast a subscriber consumes here is the one the producer writes to, with
+  no QUIC in between. That exercises argument lowering (a top-level string, an
+  enum, an optional, a record), both subscribe paths, and the frame decode —
+  everything except the wire itself.
+
+  TWO tracks, because they prove different things. `subscribe_media` is the
+  one frq.av will use, and it is checked as far as it can be checked here: a
+  media track declares a codec, and avc3 means the container really does try
+  to read Annex B out of whatever arrives, so a frame carrying the word hello
+  is never going to come back out of it. The opaque track beside it parses
+  nothing, which is what lets the payload round trip be an actual assertion
+  rather than a hope."
+  []
+  (let [origin    (media/new-origin)
+        broadcast (media/create-broadcast! origin "/smoke")
+        producer  (media/publish-media! broadcast "avc3")
+        track     (media/producer-name producer)
+        consumer  (media/broadcast-consumer broadcast)]
+    (println "  origin, broadcast, media track:" (pr-str track))
+
+    ;; The media path: subscribing is the assertion.
+    (let [mc (settle! (media/subscribe-media! consumer track :loc) "subscribe_media" 10000)]
+      (println "  subscribe_media ->" mc)
+      (when (zero? mc)
+        (throw (ex-info "subscribe_media answered a null handle" {}))))
+
+    ;; The opaque path: the payload is the assertion.
+    (let [tp (media/publish-track! broadcast "data")
+          tc (settle! (media/subscribe-track! consumer "data") "subscribe_track" 10000)]
+      (println "  subscribe_track ->" tc)
+      (media/write-track-frame! tp "hello-from-a-frame" 1234567)
+      (println "  wrote a frame")
+      (let [frame (settle! (media/read-frame! tc) "read_frame" 10000
+                           media/lift-plain-frame)]
+        (println "  got frame:" (pr-str frame))
+        (when-not frame
+          (throw (ex-info "track ended instead of delivering a frame" {})))
+        (when-not (= "hello-from-a-frame" (:payload frame))
+          (throw (ex-info "payload did not survive" {:frame frame})))
+        (when-not (= 1234567 (:timestamp-us frame))
+          (throw (ex-info "timestamp did not survive" {:frame frame})))
+        true))))
+
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
                ["handle"   check-handle]
                ["string"   check-string]
-               ["connect"  check-connect]]]
+               ["connect"  check-connect]
+               ["media"    check-media]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))
