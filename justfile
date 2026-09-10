@@ -214,10 +214,11 @@ repl *args:
 #
 # UniFFI embeds its interface metadata in the object, so `uniffi-bindgen
 # --library` reads the truth out of the .so rather than a header shipped
-# beside it — which for this release is a different build entirely (the Apple
-# artifact has moq-ffi's `audio` and `video` features, Linux and Android do
-# not). Binding the header would link on a Mac and fail on both platforms frq
-# ships to, so the object is the only source this recipe will accept.
+# beside it. For this release those differ three ways at one version number:
+# the published Linux/Android objects are built without moq-ffi's `audio` and
+# `video` features (206 functions, no codecs), the shipped C header describes
+# the Apple build (230), and what our flake builds has the codecs in (230).
+# The object is the only source this recipe will accept.
 #
 # The bindgen must match the uniffi that built the object — 0.32 for moq-ffi
 # 0.3.17 — and it is built once into the scratch dir rather than pinned into

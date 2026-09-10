@@ -82,6 +82,25 @@ def main(path):
         rows.append((n, a, r))
     return rows, unknown, len(names)
 
+def error_variants(path):
+    """The MoqError variant table, read from the same generated bindings.
+
+    Hand-maintaining this is a trap: the variants are not appended to, they are
+    INSERTED into. Turning moq-ffi\'s audio/video features on adds Audio and
+    Video at 5 and 6 and shifts every later variant down two, so a stale table
+    does not report an unknown variant -- it reports a confidently wrong name
+    for a real one.
+    """
+    src = open(path).read()
+    i = src.index("class _UniffiFfiConverterTypeMoqError")
+    blk = src[i:]
+    blk = blk[:blk.index("\nclass ", 10)]
+    pairs = re.findall(r"if variant == (\d+):\s*\n\s*return MoqError\.(\w+)\(", blk)
+    def kebab(n):
+        return re.sub(r"(?<!^)(?=[A-Z])", "-", n).lower()
+    return [(int(n), kebab(name)) for n, name in pairs]
+
+
 if __name__ == "__main__":
     rows, unknown, total = main(sys.argv[1])
     print(f";; {len(rows)} of {total} entry points bound", file=sys.stderr)
@@ -89,6 +108,14 @@ if __name__ == "__main__":
         print(";; UNMAPPED (left unbound rather than guessed):", file=sys.stderr)
         for t, c in unknown.most_common():
             print(f";;   {t}  x{c}", file=sys.stderr)
+    variants = error_variants(sys.argv[1])
+    print(";; MoqError, as UniFFI numbers it in THIS object. Generated with the")
+    print(";; entry points above, and for the same reason: the variants are")
+    print(";; inserted into rather than appended to, so a table written by hand")
+    print(";; against one build names the wrong error in the next.")
+    print("(def moq-error-variants")
+    print("  {" + "\n   ".join("%d :%s" % (n, k) for n, k in variants) + "})")
+    print()
     for n, a, r in rows:
         # Anchored, longest-first: "uniffi_moq_ffi_checksum_" must not be
         # eaten by the "ffi_moq_ffi_" that also matches inside it.

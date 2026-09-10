@@ -245,6 +245,23 @@
         "type": "github"
       }
     },
+    "moq-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788920358,
+        "narHash": "sha256-vgZ0qWPkz8YdlqZoQQC45txXEFUO1xKNj+rv++tgMWo=",
+        "owner": "kixelated",
+        "repo": "moq",
+        "rev": "535d6e434be08edbb143bf93708ac5296e077ebb",
+        "type": "github"
+      },
+      "original": {
+        "owner": "kixelated",
+        "ref": "moq-ffi-v0.3.17",
+        "repo": "moq",
+        "type": "github"
+      }
+    },
     "nix-appimage": {
       "inputs": {
         "flake-compat": "flake-compat",
@@ -312,6 +329,7 @@
         "jolt-native": "jolt-native",
         "jolt-native-android": "jolt-native-android",
         "jolt-src": "jolt-src",
+        "moq-src": "moq-src",
         "nix-appimage": "nix-appimage",
         "nixgl": "nixgl",
         "nixpkgs": "nixpkgs"

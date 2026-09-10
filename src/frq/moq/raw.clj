@@ -5,15 +5,22 @@
 
   These are not transcribed from a header. UniFFI embeds its interface
   metadata in the object itself, and `uniffi-bindgen --library` reads it back
-  out, so what is declared here is what the .so we ship actually exports —
-  which matters more than it sounds. The release's Apple artifact and its
-  Linux/Android ones are *different builds*: moq-ffi's `audio` and `video`
-  features are on by default and were switched off for Linux and Android, so
-  the shipped C header describes 230 entry points where the object we load has
-  403 symbols covering 206 functions, with `publish_audio`, `publish_video`
-  and the whole `moqaudio*`/`moqvideo*` surface absent. Binding the header
-  would have produced calls that link on a Mac and fail on the two platforms
-  frq targets.
+  out, so what is declared here is what the .so we load actually exports.
+
+  That distinction is not academic. moq-ffi has `audio` and `video` features,
+  on by default, that carry Opus and H.264 — and every Linux and Android
+  artifact its release publishes is built WITHOUT them. The C header shipped
+  beside those artifacts describes the Apple build, which has them. Three
+  different surfaces, one version number:
+
+      the published Linux/Android .so   206 functions, no codecs
+      the published C header (Apple)    230 functions
+      what the flake builds             230 functions, codecs in
+
+  Binding the header would have linked on a Mac and failed on both platforms
+  frq ships to; binding the published Linux object would have compiled and
+  then had nowhere to encode a frame. Generating from the object the flake
+  builds is what keeps those three from drifting apart silently.
 
   Nothing here is hand-written and nothing is inferred. The generator maps a
   ctype it does not recognise to nothing at all and reports it, rather than
@@ -31,8 +38,38 @@
   async function has no status and answers a future handle instead — poll it
   through `frq.moq.uniffi/start-future`.
 
-  Generated from moq-ffi 0.3.17, UniFFI contract 30."
+  Generated from moq-ffi 0.3.17 built with default features, UniFFI contract 30."
   (:require [jolt.ffi :as ffi]))
+
+;; MoqError, as UniFFI numbers it in THIS object. Generated with the
+;; entry points above, and for the same reason: the variants are
+;; inserted into rather than appended to, so a table written by hand
+;; against one build names the wrong error in the next.
+(def moq-error-variants
+  {1 :protocol
+   2 :media
+   3 :mux
+   4 :json-track
+   5 :audio
+   6 :video
+   7 :url
+   8 :time-overflow
+   9 :log-level
+   10 :task
+   11 :json
+   12 :cancelled
+   13 :closed
+   14 :connect
+   15 :bind
+   16 :reject
+   17 :already-responded
+   18 :codec
+   19 :unauthorized
+   20 :forbidden
+   21 :not-found
+   22 :unsupported
+   23 :invalid-route
+   24 :log})
 
 (ffi/defcfn rust-future-cancel-f32 "ffi_moq_ffi_rust_future_cancel_f32" [:uint64] :void)
 (ffi/defcfn rust-future-cancel-f64 "ffi_moq_ffi_rust_future_cancel_f64" [:uint64] :void)
@@ -98,10 +135,19 @@
 (ffi/defcfn checksum-method-moqannouncedbroadcast-cancel "uniffi_moq_ffi_checksum_method_moqannouncedbroadcast_cancel" [] :uint16)
 (ffi/defcfn checksum-method-moqannouncement-broadcast "uniffi_moq_ffi_checksum_method_moqannouncement_broadcast" [] :uint16)
 (ffi/defcfn checksum-method-moqannouncement-path "uniffi_moq_ffi_checksum_method_moqannouncement_path" [] :uint16)
+(ffi/defcfn checksum-method-moqaudioconsumer-cancel "uniffi_moq_ffi_checksum_method_moqaudioconsumer_cancel" [] :uint16)
+(ffi/defcfn checksum-method-moqaudioconsumer-next "uniffi_moq_ffi_checksum_method_moqaudioconsumer_next" [] :uint16)
+(ffi/defcfn checksum-method-moqaudioproducer-finish "uniffi_moq_ffi_checksum_method_moqaudioproducer_finish" [] :uint16)
+(ffi/defcfn checksum-method-moqaudioproducer-name "uniffi_moq_ffi_checksum_method_moqaudioproducer_name" [] :uint16)
+(ffi/defcfn checksum-method-moqaudioproducer-reset-epoch "uniffi_moq_ffi_checksum_method_moqaudioproducer_reset_epoch" [] :uint16)
+(ffi/defcfn checksum-method-moqaudioproducer-unused "uniffi_moq_ffi_checksum_method_moqaudioproducer_unused" [] :uint16)
+(ffi/defcfn checksum-method-moqaudioproducer-used "uniffi_moq_ffi_checksum_method_moqaudioproducer_used" [] :uint16)
+(ffi/defcfn checksum-method-moqaudioproducer-write "uniffi_moq_ffi_checksum_method_moqaudioproducer_write" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastconsumer-fetch-group "uniffi_moq_ffi_checksum_method_moqbroadcastconsumer_fetch_group" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastconsumer-fetch-media-group "uniffi_moq_ffi_checksum_method_moqbroadcastconsumer_fetch_media_group" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastconsumer-route "uniffi_moq_ffi_checksum_method_moqbroadcastconsumer_route" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastconsumer-route-updates "uniffi_moq_ffi_checksum_method_moqbroadcastconsumer_route_updates" [] :uint16)
+(ffi/defcfn checksum-method-moqbroadcastconsumer-subscribe-audio "uniffi_moq_ffi_checksum_method_moqbroadcastconsumer_subscribe_audio" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastconsumer-subscribe-catalog "uniffi_moq_ffi_checksum_method_moqbroadcastconsumer_subscribe_catalog" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastconsumer-subscribe-json-snapshot "uniffi_moq_ffi_checksum_method_moqbroadcastconsumer_subscribe_json_snapshot" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastconsumer-subscribe-json-stream "uniffi_moq_ffi_checksum_method_moqbroadcastconsumer_subscribe_json_stream" [] :uint16)
@@ -112,12 +158,14 @@
 (ffi/defcfn checksum-method-moqbroadcastproducer-consume "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_consume" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-dynamic "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_dynamic" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-finish "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_finish" [] :uint16)
+(ffi/defcfn checksum-method-moqbroadcastproducer-publish-audio "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_publish_audio" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-publish-json-snapshot "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_publish_json_snapshot" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-publish-json-stream "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_publish_json_stream" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-publish-media "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_publish_media" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-publish-media-on-track "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_publish_media_on_track" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-publish-media-stream "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_publish_media_stream" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-publish-track "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_publish_track" [] :uint16)
+(ffi/defcfn checksum-method-moqbroadcastproducer-publish-video "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_publish_video" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-remove-catalog-section "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_remove_catalog_section" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-set-announce "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_set_announce" [] :uint16)
 (ffi/defcfn checksum-method-moqbroadcastproducer-set-catalog-section "uniffi_moq_ffi_checksum_method_moqbroadcastproducer_set_catalog_section" [] :uint16)
@@ -231,9 +279,18 @@
 (ffi/defcfn checksum-method-moqtrackrequest-accept "uniffi_moq_ffi_checksum_method_moqtrackrequest_accept" [] :uint16)
 (ffi/defcfn checksum-method-moqtrackrequest-dynamic "uniffi_moq_ffi_checksum_method_moqtrackrequest_dynamic" [] :uint16)
 (ffi/defcfn checksum-method-moqtrackrequest-name "uniffi_moq_ffi_checksum_method_moqtrackrequest_name" [] :uint16)
+(ffi/defcfn checksum-method-moqvideoproducer-cut "uniffi_moq_ffi_checksum_method_moqvideoproducer_cut" [] :uint16)
+(ffi/defcfn checksum-method-moqvideoproducer-finish "uniffi_moq_ffi_checksum_method_moqvideoproducer_finish" [] :uint16)
+(ffi/defcfn checksum-method-moqvideoproducer-name "uniffi_moq_ffi_checksum_method_moqvideoproducer_name" [] :uint16)
+(ffi/defcfn checksum-method-moqvideoproducer-set-bitrate "uniffi_moq_ffi_checksum_method_moqvideoproducer_set_bitrate" [] :uint16)
+(ffi/defcfn checksum-method-moqvideoproducer-unused "uniffi_moq_ffi_checksum_method_moqvideoproducer_unused" [] :uint16)
+(ffi/defcfn checksum-method-moqvideoproducer-used "uniffi_moq_ffi_checksum_method_moqvideoproducer_used" [] :uint16)
+(ffi/defcfn checksum-method-moqvideoproducer-write "uniffi_moq_ffi_checksum_method_moqvideoproducer_write" [] :uint16)
 (ffi/defcfn clone-moqannounced "uniffi_moq_ffi_fn_clone_moqannounced" [:uint64 :pointer] :uint64)
 (ffi/defcfn clone-moqannouncedbroadcast "uniffi_moq_ffi_fn_clone_moqannouncedbroadcast" [:uint64 :pointer] :uint64)
 (ffi/defcfn clone-moqannouncement "uniffi_moq_ffi_fn_clone_moqannouncement" [:uint64 :pointer] :uint64)
+(ffi/defcfn clone-moqaudioconsumer "uniffi_moq_ffi_fn_clone_moqaudioconsumer" [:uint64 :pointer] :uint64)
+(ffi/defcfn clone-moqaudioproducer "uniffi_moq_ffi_fn_clone_moqaudioproducer" [:uint64 :pointer] :uint64)
 (ffi/defcfn clone-moqbroadcastconsumer "uniffi_moq_ffi_fn_clone_moqbroadcastconsumer" [:uint64 :pointer] :uint64)
 (ffi/defcfn clone-moqbroadcastdynamic "uniffi_moq_ffi_fn_clone_moqbroadcastdynamic" [:uint64 :pointer] :uint64)
 (ffi/defcfn clone-moqbroadcastproducer "uniffi_moq_ffi_fn_clone_moqbroadcastproducer" [:uint64 :pointer] :uint64)
@@ -262,6 +319,7 @@
 (ffi/defcfn clone-moqtrackdynamic "uniffi_moq_ffi_fn_clone_moqtrackdynamic" [:uint64 :pointer] :uint64)
 (ffi/defcfn clone-moqtrackproducer "uniffi_moq_ffi_fn_clone_moqtrackproducer" [:uint64 :pointer] :uint64)
 (ffi/defcfn clone-moqtrackrequest "uniffi_moq_ffi_fn_clone_moqtrackrequest" [:uint64 :pointer] :uint64)
+(ffi/defcfn clone-moqvideoproducer "uniffi_moq_ffi_fn_clone_moqvideoproducer" [:uint64 :pointer] :uint64)
 (ffi/defcfn constructor-moqbroadcastproducer-new "uniffi_moq_ffi_fn_constructor_moqbroadcastproducer_new" [:pointer] :uint64)
 (ffi/defcfn constructor-moqclient-new "uniffi_moq_ffi_fn_constructor_moqclient_new" [:pointer] :uint64)
 (ffi/defcfn constructor-moqoriginproducer-new "uniffi_moq_ffi_fn_constructor_moqoriginproducer_new" [[:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :uint64)
@@ -269,6 +327,8 @@
 (ffi/defcfn free-moqannounced "uniffi_moq_ffi_fn_free_moqannounced" [:uint64 :pointer] :void)
 (ffi/defcfn free-moqannouncedbroadcast "uniffi_moq_ffi_fn_free_moqannouncedbroadcast" [:uint64 :pointer] :void)
 (ffi/defcfn free-moqannouncement "uniffi_moq_ffi_fn_free_moqannouncement" [:uint64 :pointer] :void)
+(ffi/defcfn free-moqaudioconsumer "uniffi_moq_ffi_fn_free_moqaudioconsumer" [:uint64 :pointer] :void)
+(ffi/defcfn free-moqaudioproducer "uniffi_moq_ffi_fn_free_moqaudioproducer" [:uint64 :pointer] :void)
 (ffi/defcfn free-moqbroadcastconsumer "uniffi_moq_ffi_fn_free_moqbroadcastconsumer" [:uint64 :pointer] :void)
 (ffi/defcfn free-moqbroadcastdynamic "uniffi_moq_ffi_fn_free_moqbroadcastdynamic" [:uint64 :pointer] :void)
 (ffi/defcfn free-moqbroadcastproducer "uniffi_moq_ffi_fn_free_moqbroadcastproducer" [:uint64 :pointer] :void)
@@ -297,6 +357,7 @@
 (ffi/defcfn free-moqtrackdynamic "uniffi_moq_ffi_fn_free_moqtrackdynamic" [:uint64 :pointer] :void)
 (ffi/defcfn free-moqtrackproducer "uniffi_moq_ffi_fn_free_moqtrackproducer" [:uint64 :pointer] :void)
 (ffi/defcfn free-moqtrackrequest "uniffi_moq_ffi_fn_free_moqtrackrequest" [:uint64 :pointer] :void)
+(ffi/defcfn free-moqvideoproducer "uniffi_moq_ffi_fn_free_moqvideoproducer" [:uint64 :pointer] :void)
 (ffi/defcfn func-moq-log-level "uniffi_moq_ffi_fn_func_moq_log_level" [[:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :void)
 (ffi/defcfn method-moqannounced-cancel "uniffi_moq_ffi_fn_method_moqannounced_cancel" [:uint64 :pointer] :void)
 (ffi/defcfn method-moqannounced-next "uniffi_moq_ffi_fn_method_moqannounced_next" [:uint64] :uint64)
@@ -304,10 +365,19 @@
 (ffi/defcfn method-moqannouncedbroadcast-cancel "uniffi_moq_ffi_fn_method_moqannouncedbroadcast_cancel" [:uint64 :pointer] :void)
 (ffi/defcfn method-moqannouncement-broadcast "uniffi_moq_ffi_fn_method_moqannouncement_broadcast" [:uint64 :pointer] :uint64)
 (ffi/defcfn method-moqannouncement-path "uniffi_moq_ffi_fn_method_moqannouncement_path" [:uint64 :pointer] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]])
+(ffi/defcfn method-moqaudioconsumer-cancel "uniffi_moq_ffi_fn_method_moqaudioconsumer_cancel" [:uint64 :pointer] :void)
+(ffi/defcfn method-moqaudioconsumer-next "uniffi_moq_ffi_fn_method_moqaudioconsumer_next" [:uint64] :uint64)
+(ffi/defcfn method-moqaudioproducer-finish "uniffi_moq_ffi_fn_method_moqaudioproducer_finish" [:uint64 :pointer] :void)
+(ffi/defcfn method-moqaudioproducer-name "uniffi_moq_ffi_fn_method_moqaudioproducer_name" [:uint64 :pointer] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]])
+(ffi/defcfn method-moqaudioproducer-reset-epoch "uniffi_moq_ffi_fn_method_moqaudioproducer_reset_epoch" [:uint64 :pointer] :void)
+(ffi/defcfn method-moqaudioproducer-unused "uniffi_moq_ffi_fn_method_moqaudioproducer_unused" [:uint64] :uint64)
+(ffi/defcfn method-moqaudioproducer-used "uniffi_moq_ffi_fn_method_moqaudioproducer_used" [:uint64] :uint64)
+(ffi/defcfn method-moqaudioproducer-write "uniffi_moq_ffi_fn_method_moqaudioproducer_write" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :void)
 (ffi/defcfn method-moqbroadcastconsumer-fetch-group "uniffi_moq_ffi_fn_method_moqbroadcastconsumer_fetch_group" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]]] :uint64)
 (ffi/defcfn method-moqbroadcastconsumer-fetch-media-group "uniffi_moq_ffi_fn_method_moqbroadcastconsumer_fetch_media_group" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]]] :uint64)
 (ffi/defcfn method-moqbroadcastconsumer-route "uniffi_moq_ffi_fn_method_moqbroadcastconsumer_route" [:uint64 :pointer] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]])
 (ffi/defcfn method-moqbroadcastconsumer-route-updates "uniffi_moq_ffi_fn_method_moqbroadcastconsumer_route_updates" [:uint64 :pointer] :uint64)
+(ffi/defcfn method-moqbroadcastconsumer-subscribe-audio "uniffi_moq_ffi_fn_method_moqbroadcastconsumer_subscribe_audio" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]]] :uint64)
 (ffi/defcfn method-moqbroadcastconsumer-subscribe-catalog "uniffi_moq_ffi_fn_method_moqbroadcastconsumer_subscribe_catalog" [:uint64] :uint64)
 (ffi/defcfn method-moqbroadcastconsumer-subscribe-json-snapshot "uniffi_moq_ffi_fn_method_moqbroadcastconsumer_subscribe_json_snapshot" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]]] :uint64)
 (ffi/defcfn method-moqbroadcastconsumer-subscribe-json-stream "uniffi_moq_ffi_fn_method_moqbroadcastconsumer_subscribe_json_stream" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]]] :uint64)
@@ -318,12 +388,14 @@
 (ffi/defcfn method-moqbroadcastproducer-consume "uniffi_moq_ffi_fn_method_moqbroadcastproducer_consume" [:uint64 :pointer] :uint64)
 (ffi/defcfn method-moqbroadcastproducer-dynamic "uniffi_moq_ffi_fn_method_moqbroadcastproducer_dynamic" [:uint64 :pointer] :uint64)
 (ffi/defcfn method-moqbroadcastproducer-finish "uniffi_moq_ffi_fn_method_moqbroadcastproducer_finish" [:uint64 :pointer] :void)
+(ffi/defcfn method-moqbroadcastproducer-publish-audio "uniffi_moq_ffi_fn_method_moqbroadcastproducer_publish_audio" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :uint64)
 (ffi/defcfn method-moqbroadcastproducer-publish-json-snapshot "uniffi_moq_ffi_fn_method_moqbroadcastproducer_publish_json_snapshot" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :uint64)
 (ffi/defcfn method-moqbroadcastproducer-publish-json-stream "uniffi_moq_ffi_fn_method_moqbroadcastproducer_publish_json_stream" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :uint64)
 (ffi/defcfn method-moqbroadcastproducer-publish-media "uniffi_moq_ffi_fn_method_moqbroadcastproducer_publish_media" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :uint64)
 (ffi/defcfn method-moqbroadcastproducer-publish-media-on-track "uniffi_moq_ffi_fn_method_moqbroadcastproducer_publish_media_on_track" [:uint64 :uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :uint64)
 (ffi/defcfn method-moqbroadcastproducer-publish-media-stream "uniffi_moq_ffi_fn_method_moqbroadcastproducer_publish_media_stream" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :uint64)
 (ffi/defcfn method-moqbroadcastproducer-publish-track "uniffi_moq_ffi_fn_method_moqbroadcastproducer_publish_track" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :uint64)
+(ffi/defcfn method-moqbroadcastproducer-publish-video "uniffi_moq_ffi_fn_method_moqbroadcastproducer_publish_video" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :uint64)
 (ffi/defcfn method-moqbroadcastproducer-remove-catalog-section "uniffi_moq_ffi_fn_method_moqbroadcastproducer_remove_catalog_section" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :void)
 (ffi/defcfn method-moqbroadcastproducer-set-announce "uniffi_moq_ffi_fn_method_moqbroadcastproducer_set_announce" [:uint64 :int8 :pointer] :void)
 (ffi/defcfn method-moqbroadcastproducer-set-catalog-section "uniffi_moq_ffi_fn_method_moqbroadcastproducer_set_catalog_section" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :void)
@@ -437,3 +509,10 @@
 (ffi/defcfn method-moqtrackrequest-accept "uniffi_moq_ffi_fn_method_moqtrackrequest_accept" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :uint64)
 (ffi/defcfn method-moqtrackrequest-dynamic "uniffi_moq_ffi_fn_method_moqtrackrequest_dynamic" [:uint64 :pointer] :uint64)
 (ffi/defcfn method-moqtrackrequest-name "uniffi_moq_ffi_fn_method_moqtrackrequest_name" [:uint64 :pointer] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]])
+(ffi/defcfn method-moqvideoproducer-cut "uniffi_moq_ffi_fn_method_moqvideoproducer_cut" [:uint64 :pointer] :void)
+(ffi/defcfn method-moqvideoproducer-finish "uniffi_moq_ffi_fn_method_moqvideoproducer_finish" [:uint64 :pointer] :void)
+(ffi/defcfn method-moqvideoproducer-name "uniffi_moq_ffi_fn_method_moqvideoproducer_name" [:uint64 :pointer] [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]])
+(ffi/defcfn method-moqvideoproducer-set-bitrate "uniffi_moq_ffi_fn_method_moqvideoproducer_set_bitrate" [:uint64 :uint64 :pointer] :void)
+(ffi/defcfn method-moqvideoproducer-unused "uniffi_moq_ffi_fn_method_moqvideoproducer_unused" [:uint64] :uint64)
+(ffi/defcfn method-moqvideoproducer-used "uniffi_moq_ffi_fn_method_moqvideoproducer_used" [:uint64] :uint64)
+(ffi/defcfn method-moqvideoproducer-write "uniffi_moq_ffi_fn_method_moqvideoproducer_write" [:uint64 [:by-value [:struct [[:capacity :uint64] [:len :uint64] [:data :pointer]]]] :pointer] :void)
