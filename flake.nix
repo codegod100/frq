@@ -60,25 +60,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # moq-ffi's source, for the object frq.moq.* binds.
-    #
-    # Built here rather than taken from the release, and the reason is a
-    # feature flag: `audio` and `video` are moq-ffi's defaults and are OFF in
-    # the Linux and Android artifacts upstream publishes. Those two carry the
-    # codecs — Opus through moq-audio, H.264 through moq-video's vendored
-    # openh264 — so the published object can move a frame but cannot make one.
-    # A call needs an encoder, so the choice is to build this once or to bind
-    # libopus and openh264 separately and reimplement what moq-video already
-    # does. Once, here.
-    #
-    # It is not free: this is the 440-crate build that fetching avoided, which
-    # makes a substituter matter more now rather than less. What it is not is
-    # a per-build cost — the pin below moves when someone moves it.
-    moq-src = {
-      url = "github:kixelated/moq/moq-ffi-v0.3.17";
-      flake = false;
-    };
-
     # The Android objects, prebuilt by jolt-native's CI rather than compiled
     # here: an APK needs libvidya and libjoltmoq for arm64, and building them
     # locally means an NDK, a Rust cross toolchain and the whole crane graph
@@ -136,7 +117,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, jolt-src, jolt-native, jolt-native-android, moq-src, glimmer, chez-src, jolt-android-src, nixgl, nix-appimage }:
+  outputs = { self, nixpkgs, jolt-src, jolt-native, jolt-native-android, glimmer, chez-src, jolt-android-src, nixgl, nix-appimage }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = f:
@@ -201,53 +182,58 @@
           # PipeWire's rather than raw ALSA PCMs.
           native = jolt-native.packages.${pkgs.stdenv.hostPlatform.system}.default;
 
-          # libmoq_ffi — MoQ over QUIC behind UniFFI's C ABI, with the codecs
-          # in it. This is the object `frq.moq.raw` is generated from.
+          # libmoq_ffi — MoQ over QUIC behind UniFFI's C ABI, FETCHED rather
+          # than built. This is the object `frq.moq.raw` is generated from.
           #
-          # Default features, which is the entire reason this is a build and
-          # not a fetchurl: `audio` and `video` are on by default upstream and
-          # off in every Linux and Android artifact the release publishes, and
-          # they are what carry Opus and H.264. 230 entry points here against
-          # the release object's 206 — see the moq-src input.
+          # Fetched because building it is the thing this whole exercise is
+          # about: moq-ffi pulls moq-native, iroh, quinn, rustls and aws-lc-sys
+          # behind it, which is 440 crates that nothing else in this tree
+          # needs. Upstream already publishes the object for both Linux
+          # architectures, so we take those bytes.
           #
-          # No cargoHash and no outputHashes: the workspace has no git
-          # dependencies, so its own Cargo.lock is the whole of the pin.
-          moqFfi = pkgs.rustPlatform.buildRustPackage {
-            pname = "libmoq-ffi";
-            version = "0.3.17";
-            src = moq-src;
-            cargoLock.lockFile = "${moq-src}/Cargo.lock";
-
-            # One crate out of a workspace of thirty. Default features are
-            # deliberate — see above — so there is no --no-default-features
-            # here and there should not be.
-            cargoBuildFlags = [ "-p" "moq-ffi" ];
-
-            # The workspace's tests want a network and a relay.
-            doCheck = false;
-
-            # bindgenHook is not optional: moq-video reaches VAAPI through
-            # libva-sys, whose build script runs bindgen, which needs
-            # LIBCLANG_PATH set. Without it the build fails deep inside a
-            # build script with "Unable to find libclang".
-            nativeBuildInputs = with pkgs; [
-              cmake nasm pkg-config perl rustPlatform.bindgenHook
-            ];
-
-            # libva and libdrm are here for their HEADERS. VAAPI itself is
-            # dlopened at runtime, so the object carries no DT_NEEDED for it
-            # and a machine with no VAAPI driver still loads this — openh264
-            # is the fallback, and it is vendored and static.
-            buildInputs = with pkgs; [ openssl libva libdrm ];
-
-            installPhase = ''
-              runHook preInstall
-              mkdir -p $out/lib
-              find target -name 'libmoq_ffi.so' -print -exec cp {} $out/lib/ \;
-              test -f $out/lib/libmoq_ffi.so
-              runHook postInstall
-            '';
-          };
+          # Pinned to a release and to a hash, and the hashes below are
+          # upstream's own published .sha256 files rather than ones observed
+          # here — a `nix-prefetch` of whatever the URL serves today would
+          # record that it downloaded something, not that it downloaded the
+          # right thing.
+          #
+          # WHAT THIS BUILD IS NOT: moq-ffi's `audio` and `video` features are
+          # on by default upstream and are OFF in these artifacts, so there is
+          # no publish_audio/publish_video and no moqaudio*/moqvideo* here —
+          # 206 functions where the Apple artifact has 230. That is why the
+          # bindings are generated from the object (`just gen-moq`) and not
+          # from the C header the release ships, which describes the Apple one.
+          moqFfi =
+            let
+              version = "0.3.17";
+              target = {
+                "x86_64-linux" = "x86_64-unknown-linux-gnu";
+                "aarch64-linux" = "aarch64-unknown-linux-gnu";
+              }.${pkgs.stdenv.hostPlatform.system};
+              hash = {
+                "x86_64-linux" = "sha256-dzQXpV4JgdtD+g33WX51FFAQdfCUXkNsx1xPbobPfUI=";
+                "aarch64-linux" = "sha256-PdzRwbJFqOZWRgI0HHX2XUH+Ljh4V3jvQ9asfvCuIPA=";
+              }.${pkgs.stdenv.hostPlatform.system};
+            in
+            pkgs.stdenv.mkDerivation {
+              pname = "libmoq-ffi";
+              inherit version;
+              src = pkgs.fetchurl {
+                url = "https://github.com/kixelated/moq/releases/download/moq-ffi-v${version}/moq-ffi-${version}-${target}-libmoq_ffi.so";
+                inherit hash;
+              };
+              dontUnpack = true;
+              # It carries no RUNPATH and needs libgcc_s, libm and libc — the
+              # host's on an ordinary distro, and nothing at all on NixOS
+              # unless they are bound here.
+              nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+              buildInputs = [ pkgs.stdenv.cc.cc.lib ];
+              installPhase = ''
+                mkdir -p $out/lib
+                cp $src $out/lib/libmoq_ffi.so
+                chmod +w $out/lib/libmoq_ffi.so
+              '';
+            };
 
           # One directory for the loader to look in. jolt resolves every
           # :jolt/native name against JOLT_NATIVE_LIB, and the objects now come

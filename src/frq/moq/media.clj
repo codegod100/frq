@@ -240,81 +240,18 @@
     (uniffi/with-out-status #(raw/rustbuffer-free rb-ptr %))
     v))
 
-;; --- video -------------------------------------------------------------------
-;; This is the half the fetched object could not do. `publish_video` opens an
-;; ENCODER — an unsupported codec, resolution or backend fails there rather
-;; than on the first frame — and `write` takes RAW frames, which the track
-;; carries as H.264.
+;; --- encoded frames --------------------------------------------------------
+;; No publish_video or publish_audio here: those are moq-ffi's `video` and
+;; `audio` features, which the release object is built without. Encoding
+;; happens on this side, against libopus and openh264 directly, and what
+;; crosses is an already-encoded frame.
 ;;
-;; Note the container: a video track publishes as LEGACY, and subscribing to
-;; one with LOC answers `mux: loc: malformed loc properties` rather than
-;; anything about containers. The catalog is the honest way to learn it;
-;; `video-container` is what this namespace knows until it reads one.
+;; A video track publishes as LEGACY. Subscribing to one with LOC answers
+;; `mux: loc: malformed loc properties` — a message about properties, from a
+;; mismatch about containers — so it is written down here rather than
+;; rediscovered. Reading the catalog is the honest way to learn it.
 
-(def pixel-formats {:i420 1 :rgba 2})
-(def video-codecs  {:h264 1 :h265 2})
-(def encoder-kinds {:auto 1 :hardware 2 :software 3})
-
-(def video-container
-  "The container `publish_video` publishes into."
-  :legacy)
-
-(defn- enum-ops [table k what]
-  [[:i32 (or (table k)
-             (throw (ex-info (str "unknown " what) {:got k :known (keys table)})))]])
-
-(defn publish-video!
-  "Open an encoder on this broadcast and answer its MoqVideoProducer.
-
-  `input` describes the raw frames going in — pixel format, width, height and
-  framerate. `output` describes the track coming out: codec, an optional track
-  name (nil derives one from the codec), an optional bitrate and GOP, and
-  which encoder to use. :software is openh264, which moq-video vendors and
-  links statically, so it is the one that works everywhere."
-  [broadcast {:keys [format width height framerate]}
-             {:keys [codec kind bitrate gop track]
-              :or   {codec :h264 kind :software}}]
-  (let [h (uniffi/with-out-status #(raw/clone-moqbroadcastproducer broadcast %))]
-    (ffi/with-arena [a]
-      (let [cell #(ffi/alloc a (ffi/layout-size uniffi/rust-buffer))
-            in   (uniffi/lower-buffer (cell)
-                   (concat (enum-ops pixel-formats format "MoqVideoPixelFormat")
-                           [[:u32 width] [:u32 height] [:u32 framerate]]))
-            out  (uniffi/lower-buffer (cell)
-                   (concat (enum-ops video-codecs codec "MoqVideoCodec")
-                           (if track [[:u8 1] [:string track]] [[:u8 0]])
-                           (if bitrate [[:u8 1] [:u64 bitrate]] [[:u8 0]])
-                           (if gop [[:u8 1] [:u32 gop]] [[:u8 0]])
-                           (enum-ops encoder-kinds kind "MoqVideoEncoderKind")))]
-        (uniffi/with-out-status
-          #(raw/method-moqbroadcastproducer-publish-video h in out %))))))
-
-(defn video-name
-  "The track name the encoder chose."
-  [producer]
-  (let [h (uniffi/with-out-status #(raw/clone-moqvideoproducer producer %))]
-    (ffi/with-arena [a]
-      (let [out (ffi/alloc a (ffi/layout-size uniffi/rust-buffer))]
-        (uniffi/with-out-status #(raw/method-moqvideoproducer-name out h %))
-        (uniffi/lift-string out)))))
-
-(defn write-video!
-  "Encode one raw frame. `pixels` is [pointer length] — foreign memory, copied
-  straight into the buffer without ever becoming a jolt value."
-  [producer timestamp-us pixels]
-  (let [h (uniffi/with-out-status #(raw/clone-moqvideoproducer producer %))]
-    (lowered [[:u64 timestamp-us] [:bytes pixels]]
-             (fn [buf]
-               (uniffi/with-out-status
-                 #(raw/method-moqvideoproducer-write h buf %)))))
-  nil)
-
-(defn set-video-bitrate!
-  [producer bits-per-second]
-  (let [h (uniffi/with-out-status #(raw/clone-moqvideoproducer producer %))]
-    (uniffi/with-out-status
-      #(raw/method-moqvideoproducer-set-bitrate h bits-per-second %)))
-  nil)
+(def video-container :legacy)
 
 (defn lift-media-frame
   "Read an Optional<MoqMediaFrame>, handing the payload to `use-payload` as a

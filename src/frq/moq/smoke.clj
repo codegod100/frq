@@ -194,78 +194,13 @@
           (throw (ex-info "timestamp did not survive" {:frame frame})))
         true))))
 
-(defn- gray-i420
-  "A flat mid-gray I420 frame in FOREIGN memory; answers [pointer length].
-
-  I420 is one luma byte per pixel followed by two quarter-resolution chroma
-  planes, so w*h*3/2 in total. 0x80 across all three is neutral gray — an
-  image with nothing in it, which is the point: what is under test is the
-  encoder accepting a well-formed frame, not what it makes of the picture.
-
-  It is built with ffi/write rather than as a jolt value that gets copied in,
-  because that is the shape a real capture buffer arrives in."
-  [a w h]
-  (let [n (+ (* w h) (* 2 (quot (* w h) 4)))
-        p (ffi/alloc a n)]
-    (dotimes [i n] (ffi/write (+ p i) :uint8 0x80))
-    [p n]))
-
-(defn- check-video
-  "Encode a raw frame to H.264 and read the encoded frame back out.
-
-  This is the half the fetched object could not do at all: publish_video opens
-  an encoder, and without the video feature there is no publish_video to
-  call. So this is also the test that says the built object is the built one.
-
-  The assertion is the Annex B start code at the front of the payload. A frame
-  that came back with the right length and the wrong bytes would be a lowering
-  bug wearing a plausible disguise; 00 00 00 01 followed by an SPS NAL is
-  openh264 having actually run."
-  []
-  (ffi/with-arena [a]
-    (let [origin    (media/new-origin)
-          broadcast (media/create-broadcast! origin "/v")
-          producer  (media/publish-video! broadcast
-                                          {:format :i420 :width 64 :height 64
-                                           :framerate 30}
-                                          {:codec :h264 :kind :software})
-          track     (media/video-name producer)
-          consumer  (media/broadcast-consumer broadcast)]
-      (println "  encoder open, video track:" (pr-str track))
-      (let [mc (settle! (media/subscribe-media! consumer track media/video-container)
-                        "subscribe_media" 10000)
-            [px n] (gray-i420 a 64 64)]
-        (println "  subscribed, wrote" n "bytes of I420")
-        (dotimes [i 3]
-          (media/write-video! producer (* i 33333) [px n]))
-        (let [frame (settle! (media/next-frame! mc) "next" 15000
-                             #(media/lift-media-frame
-                                %
-                                ;; The payload never becomes a jolt value:
-                                ;; four bytes are read out of the borrowed
-                                ;; span and the span is done with.
-                                (fn [p _len]
-                                  (mapv (fn [i] (ffi/read (+ p i) :uint8))
-                                        (range 4)))))]
-          (println "  encoded frame:" (pr-str (dissoc frame :payload))
-                   "starts" (pr-str (:payload frame)))
-          (when-not frame
-            (throw (ex-info "no encoded frame arrived" {})))
-          (when-not (= [0 0 0 1] (:payload frame))
-            (throw (ex-info "payload is not Annex B — no start code"
-                            {:first-4 (:payload frame)})))
-          (when-not (:keyframe frame)
-            (throw (ex-info "first encoded frame is not a keyframe" {:frame frame})))
-          true)))))
-
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
                ["handle"   check-handle]
                ["string"   check-string]
                ["connect"  check-connect]
-               ["media"    check-media]
-               ["video"    check-video]]]
+               ["media"    check-media]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))

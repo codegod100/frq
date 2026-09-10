@@ -33,16 +33,23 @@
                {:name "joltmoq"
                 :darwin ["libjoltmoq.dylib"]
                 :linux ["libjoltmoq.so"]}
-               ;; moq-ffi's own object, built by the flake. It is not a
-               ;; second media plane: it is the transport half plus the
-               ;; codecs, behind UniFFI's C ABI, and it is here so `frq.moq.*`
-               ;; has something to load while the port off libjoltmoq
-               ;; happens. Both are declared for now, and the day frq.av
-               ;; stops calling joltmoq_* is the day that entry goes.
+               ;; moq-ffi's own object, fetched from its release. Not a
+               ;; second media plane: it is the TRANSPORT alone — MoQ over
+               ;; QUIC, the one piece of a call with no C implementation
+               ;; anywhere — and it is here so `frq.moq.*` has something to
+               ;; load while the port off libjoltmoq happens. Both are
+               ;; declared for now, and the day frq.av stops calling
+               ;; joltmoq_* is the day that entry goes.
                ;;
-               ;; No :darwin because :systems is not: the flake builds for
-               ;; x86_64-linux and aarch64-linux, and a .dylib named here
-               ;; would name a file nothing produces.
+               ;; The codecs are NOT in it: moq-ffi's audio and video
+               ;; features are off in every Linux artifact upstream
+               ;; publishes, and turning them on means compiling a
+               ;; 1062-crate workspace. Opus and H.264 come from their own C
+               ;; libraries instead, which is the whole point of doing this
+               ;; over FFI rather than over a Rust facade.
+               ;;
+               ;; No :darwin: :systems is x86_64-linux and aarch64-linux, so
+               ;; a .dylib named here would name a file nothing fetches.
                {:name "moq_ffi"
                 :linux ["libmoq_ffi.so"]}]
 
