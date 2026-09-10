@@ -125,7 +125,8 @@ run *args:
     # input that was built rather than deps.edn's git sha — the pin drifting
     # from the library is exactly what the flake input's comment describes.
     deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-vidya {:local/root \"$GLIMMER_VIDYA_SRC\"}}}"
+    deps="$deps nandi/glimmer-jvui {:local/root \"$GLIMMER_JVUI_SRC\"}"
+    deps="$deps jvui/jvui {:local/root \"$JVUI_SRC\"}}}"
 
     export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
@@ -154,7 +155,8 @@ tui *args:
     fi
 
     deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-vidya {:local/root \"$GLIMMER_VIDYA_SRC\"}"
+    deps="$deps nandi/glimmer-jvui {:local/root \"$GLIMMER_JVUI_SRC\"}"
+    deps="$deps jvui/jvui {:local/root \"$JVUI_SRC\"}"
     deps="$deps nandi/glimmer-tui {:local/root \"$GLIMMER_TUI_SRC\"}}}"
 
     export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -181,7 +183,8 @@ nrepl *args:
     fi
 
     deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-vidya {:local/root \"$GLIMMER_VIDYA_SRC\"}"
+    deps="$deps nandi/glimmer-jvui {:local/root \"$GLIMMER_JVUI_SRC\"}"
+    deps="$deps jvui/jvui {:local/root \"$JVUI_SRC\"}"
     deps="$deps nandi/glimmer-tui {:local/root \"$GLIMMER_TUI_SRC\"}}}"
 
     export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -204,7 +207,8 @@ repl *args:
     fi
 
     deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-vidya {:local/root \"$GLIMMER_VIDYA_SRC\"}}}"
+    deps="$deps nandi/glimmer-jvui {:local/root \"$GLIMMER_JVUI_SRC\"}"
+    deps="$deps jvui/jvui {:local/root \"$JVUI_SRC\"}}}"
 
     export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 

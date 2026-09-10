@@ -155,16 +155,16 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1789042358,
-        "narHash": "sha256-n8YSOGKVI9/keASnprfVK/Sd0K+b4IigHLvtRkyi9+8=",
+        "lastModified": 1789045157,
+        "narHash": "sha256-27upQriZInnCZls1Ir6IzS8QuAcO/C0Yy2ZRN9cUHow=",
         "ref": "refs/heads/main",
-        "rev": "2975a4318cc748dd0ee25d6cef64f29c87bb1cf7",
-        "revCount": 65,
+        "rev": "99fabc1d57f0e0d0674b8ef5fbfd5960927abd38",
+        "revCount": 77,
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       },
       "original": {
-        "rev": "2975a4318cc748dd0ee25d6cef64f29c87bb1cf7",
+        "rev": "99fabc1d57f0e0d0674b8ef5fbfd5960927abd38",
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       }
@@ -172,7 +172,7 @@
     "jolt-native-android": {
       "flake": false,
       "locked": {
-        "lastModified": 1788844464,
+        "lastModified": 1789018716,
         "narHash": "sha256-HgVSQR2XiS3De/gP9Z1JZ2Tqj4yPzzN6mx2Xyp6DuRg=",
         "type": "tarball",
         "url": "https://gitlab.com/api/v4/projects/nandithebull%2Fjolt-native/packages/generic/jolt-native/latest/android-arm64-v8a.tar.gz"

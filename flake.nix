@@ -46,9 +46,10 @@
     #
     # Pinned all the same, and pinned to a rev: this input carries both halves of
     # glimmer-vidya — libvidya, and the Jolt side that binds it — so an
-    # Pinned to `no-moq-deps`, which is the rev below plus one commit: it
-    # splits jolt-native's dependency artifact by consumer, so asking for
-    # libvidya and libjolttui no longer builds jolt-moq's 394 crates. It is
+    # Pinned to `jvui-for-frq`: it
+    # carries jvui and glimmer-jvui — the toolkit the window is painted with
+    # now — and, merged in from no-moq-deps, the dependency split and the
+    # JOLT_WITHOUT_MOQ guard on the Android glue. It is
     # branched from the rev this used to name rather than taken off main,
     # because main has moved on to the Zig/dvui backend and a UI change is
     # not what this pin is for.
@@ -63,7 +64,7 @@
     # drift this comment warns about wearing a different hat: one input, and
     # the window and the terminal are the same library either way.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=2975a4318cc748dd0ee25d6cef64f29c87bb1cf7";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=99fabc1d57f0e0d0674b8ef5fbfd5960927abd38";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -187,9 +188,10 @@
           # and says it once. It also builds cpal with the `pipewire` feature,
           # which the restatement did not — so device names in a call are
           # PipeWire's rather than raw ALSA PCMs.
-          # libvidya and libjolttui, NOT libjoltmoq. Its `default` is all
-          # three joined, and the third is the Rust media plane frq no
-          # longer loads — `frq.av.plane` replaced it.
+          # libjolttui only. Not libjoltmoq, whose job `frq.av.plane` does
+          # now, and no longer libvidya either: the window is jvui on SDL,
+          # so the only object left out of that Cargo workspace is the
+          # terminal backend, and only `just tui` loads it.
           #
           # This makes the closure smaller and the APK smaller. It does NOT
           # make the build shorter, and it is worth being exact about why:
@@ -204,7 +206,7 @@
             let np = jolt-native.packages.${pkgs.stdenv.hostPlatform.system};
             in pkgs.symlinkJoin {
               name = "jolt-native-ui";
-              paths = [ np.libvidya np.libjolttui ];
+              paths = [ np.libjolttui ];
             };
 
           # libmoq_ffi — MoQ over QUIC behind UniFFI's C ABI, FETCHED rather
@@ -302,7 +304,14 @@
           # openh264 is here for frqH264's DT_NEEDED; alsa-lib for capture
           # and playback. V4L2 needs nothing: it is ioctls against libc and
           # the kernel, so there is no library to name.
-          codecs = [ pkgs.libopus pkgs.openh264 frqH264 pkgs.alsa-lib ];
+          # SDL is what the UI is now: jvui declares SDL3, SDL3_ttf and
+          # SDL3_image in its own :jolt/native and dlopens them by soname,
+          # so they have to be somewhere the loader looks. sdl3-image keeps
+          # its library in a separate `lib` output — the default one holds
+          # only share/, which is an afternoon nobody needs to repeat.
+          sdl = [ pkgs.sdl3 pkgs.sdl3-ttf (pkgs.sdl3-image.lib or pkgs.sdl3-image) ];
+
+          codecs = [ pkgs.libopus pkgs.openh264 frqH264 pkgs.alsa-lib ] ++ sdl;
 
           # ALSA's PipeWire plugin, which is how `default` resolves to
           # anything on a machine running PipeWire — and every machine frq
@@ -374,7 +383,12 @@
           # glimmer-vidya lives inside the jolt-native checkout, and its own
           # deps.edn asks for glimmer by git — the top-level override below
           # answers for both.
-          glimmerVidya = "${jolt-native}/glimmer-backends/glimmer-vidya";
+          # glimmer-jvui and the toolkit it is a backend for. TWO paths and
+          # not one: glimmer-jvui's own deps.edn names jvui by :local/root,
+          # a relative path that means nothing once nix has copied the
+          # subtree, so the -Sdeps below has to name both.
+          glimmerJvui = "${jolt-native}/glimmer-backends/glimmer-jvui";
+          jvui = "${jolt-native}/jvui";
           glimmerTui = "${jolt-native}/glimmer-backends/glimmer-tui";
 
           runtimeLibs = runtimeLibsFor pkgs;
@@ -401,7 +415,7 @@
             [ -e /run/current-system ] || runner="${nixGL}/bin/nixGLIntel"
 
             exec ''${runner} ${joltRuntime}/bin/jolt \
-              -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-vidya {:local/root "${glimmerVidya}"}}}' \
+              -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-jvui {:local/root "${glimmerJvui}"} jvui/jvui {:local/root "${jvui}"}}}' \
               -M:frq "$@"
           '';
 
@@ -414,7 +428,7 @@
             cd ${frqSource}
 
             exec ${joltRuntime}/bin/jolt \
-              -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-vidya {:local/root "${glimmerVidya}"} nandi/glimmer-tui {:local/root "${glimmerTui}"}}}' \
+              -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-jvui {:local/root "${glimmerJvui}"} jvui/jvui {:local/root "${jvui}"} nandi/glimmer-tui {:local/root "${glimmerTui}"}}}' \
               -m frq.tui "$@"
           '';
 
@@ -542,7 +556,8 @@
             # is a different `let`. See `alsaPluginDir` there for why.
             ALSA_PLUGIN_DIR = "${pkgs.pipewire}/lib/alsa-lib";
             GLIMMER_SRC = glimmer;
-            GLIMMER_VIDYA_SRC = "${jolt-native}/glimmer-backends/glimmer-vidya";
+            GLIMMER_JVUI_SRC = "${jolt-native}/glimmer-backends/glimmer-jvui";
+            JVUI_SRC = "${jolt-native}/jvui";
             GLIMMER_TUI_SRC = "${jolt-native}/glimmer-backends/glimmer-tui";
             FRQ_LIB_PATH = lib.makeLibraryPath (runtimeLibsFor pkgs);
             NIXGL = "${nixGLFor pkgs}/bin/nixGLIntel";

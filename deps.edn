@@ -1,7 +1,11 @@
 {:paths ["src"]
 
  ;; glimmer owns the reactive half (ratom, components, reconciler);
- ;; glimmer-vidya paints it as Vidya/egui through libvidya's retained-tree ABI.
+ ;; glimmer-jvui paints it as jvui, which is dvui's shape written in jolt on
+ ;; SDL3 — no shared object of its own, and no Rust anywhere under the UI.
+ ;; That is the whole reason for the switch off glimmer-vidya: libvidya meant
+ ;; jolt-native's Cargo workspace, and a Cargo workspace meant a build.
+ ;;
  ;; Our fork of glimmer, until the reconciler fixes in it land upstream. A
  ;; component unmounted between a cell firing and the queued render running
  ;; used to render anyway, into widgets the backend had already freed and
@@ -10,15 +14,17 @@
  ;; under it subscribed, so swapping the phone layout for the split one and
  ;; back shredded the chat: one component's props painted onto another's
  ;; widget.
- :deps {jolt-lang/glimmer   {:git/url "https://gitlab.com/nandithebull/glimmer"
-                             :git/sha "399df371c790d690fb6e4560c3d4d7f838502857"}
-        nandi/glimmer-vidya {:git/url "https://gitlab.com/nandithebull/jolt-native"
-                             :git/sha "d970307ccf1fe67e2e971f2837d2282d8ba79a62"
-                             :deps/root "glimmer-backends/glimmer-vidya"}}
+ :deps {jolt-lang/glimmer  {:git/url "https://gitlab.com/nandithebull/glimmer"
+                            :git/sha "399df371c790d690fb6e4560c3d4d7f838502857"}
+        nandi/glimmer-jvui {:git/url "https://gitlab.com/nandithebull/jolt-native"
+                            :git/sha "99fabc1d57f0e0d0674b8ef5fbfd5960927abd38"
+                            :deps/root "glimmer-backends/glimmer-jvui"}}
 
- ;; libvidya comes from gitlab.com/nandithebull/jolt-native:
- ;;
- ;;   libvidya   the retained-tree ABI glimmer-vidya binds, on egui
+ ;; What the UI loads is SDL, and jvui declares it itself — SDL3, SDL3_ttf
+ ;; and SDL3_image, all :optional, so the layout tests run on a machine with
+ ;; none of them. Nothing of jolt-native's Cargo workspace is loaded by the
+ ;; window any more; `just tui` still takes libjolttui, which is the one
+ ;; object left and only for the terminal.
  ;;
  ;; Calls used to be the one thing this client could not do in jolt. The media
  ;; half is `frq.av.plane` now — MoQ over QUIC from libmoq_ffi, Opus from
@@ -26,10 +32,7 @@
  ;; and ALSA. Signaling was always IRC and still lives in src/frq/av.clj.
  ;;
  ;;   just run
- :jolt/native [{:name "vidya"
-                :darwin ["libvidya.dylib"]
-                :linux ["libvidya.so"]}
-               ;; The transport half of a call: MoQ over QUIC, the one
+ :jolt/native [;; The transport half of a call: MoQ over QUIC, the one
                ;; piece with no C implementation anywhere. Fetched from
                ;; moq-ffi's release rather than built — building it means a
                ;; 1062-crate workspace.

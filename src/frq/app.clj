@@ -7,7 +7,7 @@
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
             [glimmer.core :as ui]
-            [glimmer-vidya.core :as vidya]
+            [glimmer-jvui.core :as gui]
             [frq.av :as av]
             [frq.avatars :as avatars]
             [frq.clock :as clock]
@@ -473,11 +473,11 @@
                             (reset! s/highlight id)
                             ;; Off again once the frame that scrolled has
                             ;; been painted, so the reader keeps the view.
-                            (vidya/after! 120 (fn [] (reset! s/jump-to nil)))
+                            (gui/after! 120 (fn [] (reset! s/jump-to nil)))
                             ;; The highlight stays long enough to be read,
                             ;; and only clears itself: a later jump elsewhere
                             ;; owns the highlight from then on.
-                            (vidya/after! 2000
+                            (gui/after! 2000
                                           (fn []
                                             (when (= id @s/highlight)
                                               (reset! s/highlight nil)))))}]
@@ -1551,7 +1551,7 @@
    [:card {}
     [:title-2 {:label "frq"}]
     [:dim-label {:label "freeq client in jolt — glimmer components on the Vidya/egui backend."}]
-    [:button {:label "Quit" :on-click vidya/quit!}]]
+    [:button {:label "Quit" :on-click gui/quit!}]]
    [:separator {}]
    [tab-bar]])
 
@@ -1657,15 +1657,15 @@
   nil)
 
 (defn -main [& _]
-  (start! {:after! vidya/after!
-           :every! vidya/every!
-           :title! vidya/set-title!
+  (start! {:after! gui/after!
+           :every! gui/every!
+           :title! gui/set-title!
            ;; The height comes off the same tick, from `screen-size` rather
            ;; than a second call: it is the window's content size, and the
            ;; pictures in the conversation are sized against it.
            :measure! (fn []
-                       (let [w (vidya/window-width)
-                             h (long (second (vidya/screen-size)))]
+                       (let [w (gui/window-width)
+                             h (long (second (gui/screen-size)))]
                          (when (not= w @s/window-width)
                            (reset! s/window-width w))
                          (when (not= h @s/window-height)

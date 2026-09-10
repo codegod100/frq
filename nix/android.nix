@@ -52,25 +52,21 @@ let
   # used to be written here by hand. `just bump` moves it with
   # `nix flake update jolt-native-android` and nothing in this file changes.
   #
-  # One archive, two libraries: libvidya (the retained-tree UI) and libjoltmoq
-  # (the AV media plane). They are built together and only make sense together
-  # — libjoltapp links both — so there is one pin for the pair rather than two
-  # that could drift apart. It carries include/ and libc++_shared.so besides,
-  # which is why the glue's headers and the C++ runtime come from here too.
+  # One archive. libvidya (the retained-tree UI) is what is taken from it, and
+  # include/ beside it for the glue's headers.
+  #
+  # It also carries libjoltmoq and the libc++_shared that object needs, and
+  # neither is packed any more. frq's media plane is `frq.av.plane` now — MoQ
+  # over QUIC through libmoq_ffi, Opus, H.264 and the devices — and none of
+  # that is built for Android yet, so a phone has no media plane at all and
+  # `frq.av/available?` says so. Shipping the Rust one it no longer loads was
+  # seventeen megabytes of APK for an object nothing opens.
   nativeLibs = jolt-native-android;
 
-  # The C++ runtime, out of the archive rather than the NDK composed here.
-  #
-  # openh264 is C++, and its build script asks to be linked against
-  # `libc++_shared.so` by name — so libjoltmoq carries that as a DT_NEEDED. An
-  # app's linker namespace will not hand out the platform's own copy (there is
-  # no stable one to hand out), so the APK carries it, exactly as it carries
-  # OpenSSL below and for the same reason.
-  #
-  # jolt-native ships it beside the libraries that need it, so this is the copy
-  # they were actually linked against — where the NDK path was whichever
-  # revision `composeAndroidPackages` happened to resolve here.
-  libcxx = "${nativeLibs}/lib/${abi}/libc++_shared.so";
+  # No libc++_shared. It was here because openh264 is C++ and libjoltmoq
+  # carried it as a DT_NEEDED; libvidya links neither — its NEEDED list is
+  # libdl, libandroid, liblog, libm and libc — so with the media plane gone
+  # the C++ runtime has nothing to serve.
 
   # --- Chez's arm64 cross target ------------------------------------------
   # The one piece with no nixpkgs equivalent: `pkgs.chez` builds a Scheme for
@@ -247,9 +243,13 @@ let
   libjoltapp = pkgs.runCommand "libjoltapp.so" { } ''
     mkdir -p lib
     cp ${nativeLibs}/lib/${abi}/libvidya.so lib/libvidya.so
-    cp ${nativeLibs}/lib/${abi}/libjoltmoq.so lib/libjoltmoq.so
 
-    ${cc} -shared -fPIC -O2 -o "$out" \
+    # -DJOLT_WITHOUT_MOQ: the glue registers libjoltmoq's symbols for the
+    # Scheme side, and --no-undefined below turns each of those into a link
+    # error once the object is not linked. The define takes them out, which
+    # is the honest way to say "this app has no Rust media plane" rather
+    # than linking one to satisfy a reference nothing calls.
+    ${cc} -shared -fPIC -O2 -DJOLT_WITHOUT_MOQ -o "$out" \
       ${jolt-native}/android/jolt_main.c \
       ${joltBootObj} \
       -I${joltBoot} \
@@ -257,7 +257,7 @@ let
       -Llib \
       ${chezAndroid}/tarm64le/boot/tarm64le/libkernel.a \
       ${chezAndroid}/lz4/lib/liblz4.a \
-      -lvidya -ljoltmoq -landroid -llog -lz -ldl -lm -Wl,--no-undefined
+      -lvidya -landroid -llog -lz -ldl -lm -Wl,--no-undefined
   '';
 
   # --- the Java half --------------------------------------------------------
@@ -327,8 +327,6 @@ let
     } ''
     mkdir -p stage/lib/${abi}
     cp ${nativeLibs}/lib/${abi}/libvidya.so stage/lib/${abi}/libvidya.so
-    cp ${nativeLibs}/lib/${abi}/libjoltmoq.so stage/lib/${abi}/libjoltmoq.so
-    cp ${libcxx} stage/lib/${abi}/libc++_shared.so
     cp ${libjoltapp} stage/lib/${abi}/libjoltapp.so
     cp ${opensslAndroid.out}/lib/libssl.so stage/lib/${abi}/libssl.so
     cp ${opensslAndroid.out}/lib/libcrypto.so stage/lib/${abi}/libcrypto.so
@@ -337,9 +335,10 @@ let
 
     # Everything the loader needs is in .dynsym, and that is what --strip-all
     # keeps: what goes is .symtab and the debug sections, which are read by a
-    # debugger and by nothing on the phone. Worth about a third of the package
-    # — libjoltmoq and libc++_shared are most of it, and the release libraries
-    # arrive unstripped because jolt-native's own build does not strip them.
+    # debugger and by nothing on the phone. Worth less than it used to be —
+    # libjoltmoq and libc++_shared were most of it and are no longer packed —
+    # but the release libraries still arrive unstripped, because jolt-native's
+    # own build does not strip them.
     #
     # Here rather than in the derivations that produce them: the inputs stay
     # whole (a stripped libjoltapp is a worse thing to hand a debugger, and
@@ -355,8 +354,7 @@ let
       --version-code 1 --version-name ${version}
 
     ( cd stage && \
-      zip -q -0 "$out" lib/${abi}/libvidya.so lib/${abi}/libjoltmoq.so \
-                       lib/${abi}/libc++_shared.so lib/${abi}/libjoltapp.so \
+      zip -q -0 "$out" lib/${abi}/libvidya.so lib/${abi}/libjoltapp.so \
                        lib/${abi}/libssl.so lib/${abi}/libcrypto.so && \
       zip -q "$out" classes.dex )
   '';

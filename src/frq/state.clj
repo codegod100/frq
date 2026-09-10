@@ -18,7 +18,7 @@
             [frq.oauth :as oauth]
             [frq.store :as store]
             [frq.upload :as upload]
-            [glimmer-vidya.core :as vidya]))
+            [glimmer-jvui.core :as gui]))
 
 (def default-host "irc.freeq.at")
 (def default-port "6697")
@@ -1367,7 +1367,7 @@
   []
   (let [path (paste-path)]
     (host/mkdirs! (str (media/cache-dir) "/outgoing"))
-    (if-not (vidya/clipboard-image-png! path)
+    (if-not (gui/clipboard-image-png! path)
       ;; Android has no clipboard of pictures to read at all, which is the
       ;; other half of why the picker below exists.
       (reset! error "No picture on the clipboard.")
@@ -1450,7 +1450,7 @@
   []
   (let [path (paste-path)]
     (host/mkdirs! (str (media/cache-dir) "/outgoing"))
-    (when (vidya/picked-image! path)
+    (when (gui/picked-image! path)
       (reset! choosing nil)
       (attach! path "picture.png")
       true)))
@@ -1460,7 +1460,7 @@
     (when-not (take-chosen!)
       (if (pos? left)
         (do (reset! choosing (dec left))
-            (vidya/after! choose-poll-ms poll-chosen!))
+            (gui/after! choose-poll-ms poll-chosen!))
         (reset! choosing nil)))))
 
 (defn choose-image!
@@ -1473,10 +1473,10 @@
   permission, browsing finds almost nothing to show. False where there is no
   chooser, which is every desktop, and there browsing is the answer."
   []
-  (when (vidya/pick-image!)
+  (when (gui/pick-image!)
     (reset! error nil)
     (reset! choosing choose-poll-limit)
-    (vidya/after! choose-poll-ms poll-chosen!)
+    (gui/after! choose-poll-ms poll-chosen!)
     true))
 
 (defn open-image-picker!

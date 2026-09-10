@@ -1,6 +1,6 @@
 (ns frq.platform
   "The few things that are the platform's job rather than the app's."
-  (:require [glimmer-vidya.core :as vidya]
+  (:require [glimmer-jvui.core :as gui]
             [jolt.host :as host]))
 
 (defn android?
@@ -26,7 +26,7 @@
   \"if the browser did not open\" line to carry the URL across."
   [url]
   (try
-    (vidya/open-url! (or url ""))
+    (gui/open-url! (or url ""))
     (catch Exception _ false)))
 
 (defn return-url
