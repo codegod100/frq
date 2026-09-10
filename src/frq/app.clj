@@ -1499,7 +1499,12 @@
   conversation off the bottom of the window, which reads exactly like a
   conversation that has gone missing."
   []
-  [:hbox {:spacing 0 :wrap false}
+  ;; And the row itself takes the window, for the reason each narrow root
+  ;; gives: a backend that sizes a box by what is in it hands two panes that
+  ;; both asked for the rest of the screen the height of the taller one's
+  ;; contents. Marking the children alone is not enough — what they fill is
+  ;; whatever the row got.
+  [:hbox {:spacing 0 :wrap false :fill-height true}
    [:vbox {:key :list :width-request sidebar-width :fill-height true}
     [chats-screen]]
    [:vbox {:key :chat :fill-height true}
