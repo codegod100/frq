@@ -51,7 +51,38 @@
                ;; No :darwin: :systems is x86_64-linux and aarch64-linux, so
                ;; a .dylib named here would name a file nothing fetches.
                {:name "moq_ffi"
-                :linux ["libmoq_ffi.so"]}]
+                :linux ["libmoq_ffi.so"]}
+
+               ;; The codecs, as C libraries rather than as somebody's
+               ;; bindings to them. Opus first; openh264 beside it when the
+               ;; video half lands.
+               ;;
+               ;; The SONAME, not the bare .so: a `libopus.so` is the -dev
+               ;; symlink and is not what a runtime closure carries. The
+               ;; loader looks these up by name in one directory, which the
+               ;; flake's `nativeAll` is.
+               {:name "opus"
+                :linux ["libopus.so.0"]
+                :darwin ["libopus.0.dylib"]}
+
+               ;; H.264, one step removed. openh264's C API is a vtable —
+               ;; `ISVCEncoder` is `const ISVCEncoderVtbl*` — and jolt.ffi
+               ;; can only call a literal C symbol, never a function
+               ;; pointer. c/frq_h264.c walks the vtable and exports flat
+               ;; symbols; this is that. libopenh264 itself comes along as
+               ;; its DT_NEEDED and is never named here.
+               {:name "frqh264"
+                :linux ["libfrqh264.so"]
+                :darwin ["libfrqh264.dylib"]}
+
+               ;; Audio devices. No :darwin — CoreAudio is the other side of
+               ;; that door and is not this library.
+               ;;
+               ;; V4L2 is deliberately absent from this list: the camera is
+               ;; ioctls against libc and the kernel, so there is nothing to
+               ;; load. See frq.capture.v4l2.
+               {:name "asound"
+                :linux ["libasound.so.2"]}]
 
  :aliases {:frq {:main-opts ["-m" "frq.app"]}
 

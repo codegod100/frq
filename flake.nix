@@ -240,9 +240,48 @@
           # from two places — jolt-native's flake, and the moq-ffi release — so
           # they are joined rather than the path being made a list, which the
           # loader does not take.
+          # The C codecs, from nixpkgs. libmoq_ffi carries the transport and
+          # nothing else — moq-ffi's `audio` and `video` features would have
+          # brought Opus and H.264 with them, at the price of compiling a
+          # 1062-crate workspace — so the codecs are linked here instead,
+          # where they have always lived.
+          #
+          # Named in :jolt/native, so the loader resolves them the same way it
+          # resolves libvidya: by name, out of one directory.
+          # A flat C face for openh264, because openh264 has none. Its
+          # `ISVCEncoder` is `const ISVCEncoderVtbl*` — every method is a
+          # function pointer in a vtable — and jolt.ffi cannot call one: Chez
+          # fixes a foreign procedure's types when it compiles it, and the
+          # target must be a literal C symbol name. So the vtable is walked in
+          # c/frq_h264.c and jolt binds the five plain symbols it exports.
+          #
+          # One translation unit against a library nixpkgs already has. It is
+          # a calling convention adapter, not a second media plane, and the
+          # distinction from the moq-ffi build it replaces is the whole point:
+          # this compiles one .c file, not a 1062-crate workspace.
+          frqH264 = pkgs.stdenv.mkDerivation {
+            pname = "frq-h264";
+            version = "0.1";
+            src = ./c;
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            buildInputs = [ pkgs.openh264 ];
+            buildPhase = ''
+              $CC -O2 -fPIC -shared frq_h264.c -o libfrqh264.so \
+                $(pkg-config --cflags --libs openh264)
+            '';
+            installPhase = ''
+              mkdir -p $out/lib && cp libfrqh264.so $out/lib/
+            '';
+          };
+
+          # openh264 is here for frqH264's DT_NEEDED; alsa-lib for capture
+          # and playback. V4L2 needs nothing: it is ioctls against libc and
+          # the kernel, so there is no library to name.
+          codecs = [ pkgs.libopus pkgs.openh264 frqH264 pkgs.alsa-lib ];
+
           nativeAll = pkgs.symlinkJoin {
             name = "frq-native";
-            paths = [ native moqFfi ];
+            paths = [ native moqFfi ] ++ codecs;
           };
 
           # Jolt itself: Clojure on Chez, built the way its own flake builds it.
@@ -397,7 +436,7 @@
           };
         in
         {
-          inherit native moqFfi nativeAll frq;
+          inherit native moqFfi frqH264 nativeAll frq;
           inherit tui;
           jolt = joltRuntime;
           default = frq;

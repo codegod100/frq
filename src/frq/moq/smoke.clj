@@ -36,6 +36,10 @@
             [frq.moq.raw :as raw]
             [frq.moq.client :as client]
             [frq.moq.media :as media]
+            [frq.codec.opus :as opus]
+            [frq.codec.h264 :as h264]
+            [frq.capture.v4l2 :as v4l2]
+            [frq.capture.alsa :as alsa]
             [jolt.ffi :as ffi]))
 
 (defn- check-contract []
@@ -194,13 +198,187 @@
           (throw (ex-info "timestamp did not survive" {:frame frame})))
         true))))
 
+(defn- triangle-pcm
+  "20ms of a triangle wave at 48kHz mono, as int16 in FOREIGN memory.
+
+  A triangle rather than a sine because it needs no transcendental and no
+  Math namespace, and rather than silence because silence is the one input
+  Opus is entitled to throw away: DTX would answer two bytes and the round
+  trip would prove nothing.
+
+  Answers [pointer samples-per-channel]."
+  [a]
+  (let [n 960                            ; 48000 * 0.020
+        p (ffi/alloc a (* 2 n))]
+    (dotimes [i n]
+      ;; A 100-sample period ramp, +/- 8000 — loud enough that the decoder
+      ;; cannot answer silence and have it look like success.
+      (let [phase (mod i 100)
+            v     (if (< phase 50) (- (* phase 320) 8000) (- 8000 (* (- phase 50) 320)))]
+        (ffi/write (+ p (* 2 i)) :int16 v)))
+    [p n]))
+
+(defn- check-opus
+  "Encode a frame with libopus and decode it back.
+
+  This is the first piece of the port that is a C library rather than
+  somebody's binding to one, and the assertions are chosen to fail if it is
+  only pretending to work. The encoded frame must be more than DTX's two
+  bytes; the decode must answer exactly the frame size it was given; and the
+  decoded audio must carry real amplitude, because a decoder that returned
+  the right COUNT of zeroes would otherwise pass."
+  []
+  (ffi/with-arena [a]
+    (let [enc (opus/encoder 48000 1 :voip)
+          dec (opus/decoder 48000 1)]
+      (try
+        (opus/set-bitrate! enc 24000)
+        (let [[pcm n]  (triangle-pcm a)
+              cap      4000
+              out      (ffi/alloc a cap)
+              written  (opus/encode! enc pcm n out cap)]
+          (println "  encoded" n "samples ->" written "bytes")
+          (when (opus/dtx? written)
+            (throw (ex-info "encoder answered DTX for a loud frame"
+                            {:written written})))
+          (let [back    (ffi/alloc a (* 2 n))
+                decoded (opus/decode! dec out written back n)
+                peak    (reduce (fn [m i]
+                                  (max m (abs (ffi/read (+ back (* 2 i)) :int16))))
+                                0 (range decoded))]
+            (println "  decoded" decoded "samples, peak" peak)
+            (when-not (= n decoded)
+              (throw (ex-info "decoder answered a different frame size"
+                              {:sent n :got decoded})))
+            (when (< peak 1000)
+              (throw (ex-info "decoded audio is silent — a lossy codec is not this lossy"
+                              {:peak peak})))
+            true))
+        (finally
+          (opus/free-encoder! enc)
+          (opus/free-decoder! dec))))))
+
+(defn- check-h264
+  "Encode an I420 frame to H.264 through the openh264 shim.
+
+  The assertion is the Annex B start code. A frame that came back with a
+  plausible length and the wrong bytes would be a vtable walked incorrectly —
+  the shim reading the wrong slot, or flattening the layers wrong — and a
+  length check alone would not catch it. 00 00 00 01 at the front, and an
+  IDR for the first frame, is openh264 having actually encoded something.
+
+  The picture is flat gray, which compresses to almost nothing; what is under
+  test is the calling convention, not the encoder."
+  []
+  (ffi/with-arena [a]
+    (let [w 64 h 64
+          n   (h264/i420-size w h)
+          px  (ffi/alloc a n)
+          enc (h264/encoder {:width w :height h :fps 30 :bitrate 200000})]
+      (dotimes [i n] (ffi/write (+ px i) :uint8 0x80))
+      (try
+        (let [got (h264/encode! enc px 0
+                                (fn [p len key?]
+                                  ;; The span is the encoder's buffer and dies
+                                  ;; at the next encode: read what is needed
+                                  ;; here and let it go.
+                                  {:len len
+                                   :keyframe key?
+                                   :first-4 (mapv #(ffi/read (+ p %) :uint8)
+                                                  (range (min 4 len)))}))]
+          (println "  encoded" n "bytes of I420 ->" (:len got)
+                   "bytes, keyframe" (:keyframe got)
+                   "starts" (pr-str (:first-4 got)))
+          (when (zero? (:len got))
+            (throw (ex-info "encoder skipped the first frame" {})))
+          (when-not (= [0 0 0 1] (:first-4 got))
+            (throw (ex-info "not Annex B — no start code" {:first-4 (:first-4 got)})))
+          (when-not (:keyframe got)
+            (throw (ex-info "first frame is not an IDR" {})))
+          true)
+        (finally (h264/close! enc))))))
+
+(defn- check-v4l2-layouts
+  "Check every V4L2 struct against what a C compiler says.
+
+  There is no camera in this container, so the capture path itself cannot be
+  exercised here. What CAN be checked is the part most likely to be wrong and
+  least likely to announce it: every VIDIOC_ request number encodes the size
+  of the struct it carries, so a layout one byte off does not misread a field
+  — it produces a request the kernel has never heard of, and the driver
+  answers ENOTTY for an ioctl that plainly exists.
+
+  The numbers on the right came from a C program compiled against this
+  kernel's own headers (scratch/v4l2probe.c). They are the ground truth this
+  namespace is transcribed from, so checking against them catches a typo
+  rather than a misunderstanding — the misunderstanding needs a device."
+  []
+  (let [checks [["v4l2_capability size"      (ffi/layout-size v4l2/capability) 104]
+                ["  capabilities@"           (ffi/field-offset v4l2/capability [:capabilities]) 84]
+                ["  device-caps@"            (ffi/field-offset v4l2/capability [:device-caps]) 88]
+                ["v4l2_format size"          (ffi/layout-size v4l2/format-pix) 208]
+                ["  width@"                  (ffi/field-offset v4l2/format-pix [:width]) 8]
+                ["  height@"                 (ffi/field-offset v4l2/format-pix [:height]) 12]
+                ["  pixelformat@"            (ffi/field-offset v4l2/format-pix [:pixelformat]) 16]
+                ["  sizeimage@"              (ffi/field-offset v4l2/format-pix [:sizeimage]) 28]
+                ["v4l2_requestbuffers size"  (ffi/layout-size v4l2/requestbuffers) 20]
+                ["v4l2_buffer size"          (ffi/layout-size v4l2/buffer) 88]
+                ["  bytesused@"              (ffi/field-offset v4l2/buffer [:bytesused]) 8]
+                ["  timestamp@"              (ffi/field-offset v4l2/buffer [:tv-sec]) 24]
+                ["  memory@"                 (ffi/field-offset v4l2/buffer [:memory]) 60]
+                ["  m.offset@"               (ffi/field-offset v4l2/buffer [:offset]) 64]
+                ["  length@"                 (ffi/field-offset v4l2/buffer [:length]) 72]]
+        bad   (remove (fn [[_ got want]] (= got want)) checks)]
+    (doseq [[what got want] checks]
+      (println (str "  " what " " got (when-not (= got want) (str " WANT " want)))))
+    (when (seq bad)
+      (throw (ex-info "V4L2 layouts do not match the kernel headers"
+                      {:mismatched (mapv (fn [[w g want]] {:what w :got g :want want}) bad)})))
+    (println "  (no camera here — the capture path itself is unexercised)")
+    true))
+
+(defn- check-alsa
+  "Open a PCM and push frames through it.
+
+  The device is ALSA's `null` PCM, which swallows everything and is always
+  present — no hardware, no permissions, and nothing that depends on what
+  this container happens to have plugged in. What that proves is the binding:
+  the library loads, the handle out-parameter comes back, set_params accepts
+  the format, and writei answers in FRAMES. What it cannot prove is that a
+  real card behaves, which needs a real card.
+
+  The frame count is the assertion. 960 frames of mono S16 is 1920 bytes, and
+  a writei that answered 1920 would be this code having confused the two —
+  the mistake the namespace docstring warns about, and the one that looks
+  like a slow device rather than a bug."
+  []
+  (ffi/with-arena [a]
+    (let [frames 960
+          buf    (ffi/alloc a (* 2 frames))
+          pcm    (alsa/open-pcm "null" :playback {:rate 48000 :channels 1})]
+      (try
+        (dotimes [i frames] (ffi/write (+ buf (* 2 i)) :int16 0))
+        (let [{:keys [frames written recovered]} (alsa/write! pcm buf frames)
+              n (or frames written)]
+          (println (str "  null pcm: wrote " n " frames"
+                        (when recovered " (recovered from an overrun)")))
+          (when-not (= 960 n)
+            (throw (ex-info "writei answered something other than the frame count"
+                            {:asked 960 :got n})))
+          true)
+        (finally (alsa/close! pcm))))))
+
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
                ["handle"   check-handle]
                ["string"   check-string]
                ["connect"  check-connect]
-               ["media"    check-media]]]
+               ["media"    check-media]
+               ["opus"     check-opus]
+               ["h264"     check-h264]
+               ["v4l2"     check-v4l2-layouts]
+               ["alsa"     check-alsa]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))
