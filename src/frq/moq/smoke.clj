@@ -429,60 +429,97 @@
                         {:device bad}))))
     true))
 
+(defn- i420-halves
+  "An I420 frame whose left half is `lo` and right half `hi`.
+
+  Flat frames are no use as a test: a decode that produced a uniform picture
+  would pass every check a flat frame can make. Two halves also give each
+  peer a distinguishable picture, which is what makes multi-peer testable —
+  if the frames were identical there would be no way to tell a second peer
+  from the first one counted twice."
+  [a w h lo hi]
+  (let [n (h264/i420-size w h)
+        p (ffi/alloc a n)]
+    (dotimes [y h]
+      (dotimes [x w]
+        (ffi/write (+ p (* y w) x) :uint8 (if (< x (quot w 2)) lo hi))))
+    (dotimes [i (* 2 (quot (* w h) 4))]
+      (ffi/write (+ p (* w h) i) :uint8 0x80))
+    [p n]))
+
 (defn- check-plane
-  "A picture end to end through frq.av.plane: source -> H.264 -> MoQ -> RGBA.
+  "Two peers' video, end to end through frq.av.plane.
 
-  This is the whole point of the port in one test. The source is a thunk
-  answering a synthetic I420 frame, which is what a camera will be; the frame
-  goes out through the encoder onto a real MoQ media track, comes back in
-  through a real subscribe, and is decoded to RGBA ready for
-  vidya/frame-rgba!. Nothing is faked in between.
+  Nothing is configured: the plane watches the origin for ANNOUNCEMENTS,
+  reads each peer's catalog for its video track name and container, and
+  subscribes. Our own broadcast is announced back like anyone else's and
+  becomes the self-view.
 
-  The frame is not flat this time. A left half at luma 0x40 and a right half
-  at 0xC0 means a decode that produced a uniform picture — the failure a gray
-  test frame cannot distinguish from success — shows up as two equal halves.
+  The second broadcast stands in for another participant. It is published
+  the same way a remote client would publish it and discovered the same way
+  — the only thing it does not cross is the wire, which the connect check
+  already covers.
 
-  It is pumped rather than awaited, on purpose: pump! is what glimmer's timer
-  will call, so driving it in a loop here is the same code path the app takes,
-  including the several pumps a subscribe and a first keyframe take to
-  settle."
+  Each picture has a different contrast so a peer cannot be confused for the
+  other, and the assertion is per peer: the right key, the right size, and
+  the halves the right way round."
   []
   (ffi/with-arena [a]
     (let [w 64 h 64
-          n   (h264/i420-size w h)
-          px  (ffi/alloc a n)]
-      ;; Left half dark, right half bright; chroma neutral.
-      (dotimes [y h]
-        (dotimes [x w]
-          (ffi/write (+ px (* y w) x) :uint8 (if (< x (quot w 2)) 0x40 0xC0))))
-      (dotimes [i (* 2 (quot (* w h) 4))]
-        (ffi/write (+ px (* w h) i) :uint8 0x80))
-      (let [origin (media/new-origin)]
-        (plane/start! {:origin origin :path "/plane" :source (fn [] [px n])
-                       :width w :height h :fps 30 :bitrate 200000})
+          [ours _]  (i420-halves a w h 0x40 0xC0)
+          [theirs _] (i420-halves a w h 0xC0 0x40)
+          origin    (media/new-origin)]
+      (plane/start! {:origin origin :path "/us" :source (fn [] [ours nil])
+                     :width w :height h :fps 30 :bitrate 200000})
+      ;; A second participant on the same origin, published exactly as a
+      ;; remote one would be.
+      (let [b2  (media/create-broadcast! origin "/them")
+            p2  (media/publish-media! b2 "avc3")
+            enc (h264/encoder {:width w :height h :fps 30 :bitrate 200000})]
         (try
-          (let [deadline (+ (System/currentTimeMillis) 20000)]
-            (loop [pumps 0]
+          (let [deadline (+ (System/currentTimeMillis) 25000)]
+            (loop [pumps 0 seen {}]
+              ;; Keep the other peer publishing: a subscriber that arrives
+              ;; after the first keyframe needs another one.
+              (h264/force-keyframe! enc)
+              (h264/encode! enc theirs (* pumps 33333)
+                            (fn [p len _]
+                              (when (pos? len)
+                                (media/write-video-frame! p2 p len (* pumps 33333)))))
               (plane/pump!)
-              (if-let [f (plane/poll-frame!)]
-                (do
-                  (println "  frame after" pumps "pumps:" (:w f) "x" (:h f) (pr-str (:key f)))
-                  (when-not (and (= w (:w f)) (= h (:h f)))
-                    (throw (ex-info "decoded size is wrong" {:got [(:w f) (:h f)]})))
-                  (let [at   (fn [x y] (ffi/read (+ (:rgba f) (* 4 (+ (* y (:w f)) x))) :uint8))
-                        left (at 8 32)
-                        right (at 56 32)]
-                    (println "  left" left "right" right)
-                    (when-not (< left right)
-                      (throw (ex-info "the two halves came back the same — the picture did not survive"
-                                      {:left left :right right})))
-                    (when (< (- right left) 40)
-                      (throw (ex-info "contrast collapsed" {:left left :right right}))))
-                  true)
-                (if (> (System/currentTimeMillis) deadline)
-                  (throw (ex-info "no frame came back through the plane" {:pumps pumps}))
-                  (do (Thread/sleep 10) (recur (inc pumps)))))))
-          (finally (plane/stop!)))))))
+              (let [seen (reduce (fn [m f]
+                                   (if (contains? m (:key f))
+                                     m
+                                     (let [at #(ffi/read (+ (:rgba f) (* 4 (+ (* 32 (:w f)) %))) :uint8)]
+                                       (assoc m (:key f)
+                                              {:w (:w f) :h (:h f)
+                                               :left (at 8) :right (at 56)}))))
+                                 seen (plane/poll-frames!))]
+                (cond
+                  (>= (count seen) 2)
+                  (do
+                    (doseq [[k v] seen]
+                      (println "  " k (str (:w v) "x" (:h v))
+                               "left" (:left v) "right" (:right v)))
+                    (when-not (contains? seen "__local__")
+                      (throw (ex-info "no self-view" {:keys (keys seen)})))
+                    (let [local (get seen "__local__")
+                          other (val (first (dissoc seen "__local__")))]
+                      (when-not (< (:left local) (:right local))
+                        (throw (ex-info "self-view halves are the wrong way round"
+                                        {:frame local})))
+                      (when-not (> (:left other) (:right other))
+                        (throw (ex-info "peer halves are the wrong way round — the feeds are crossed"
+                                        {:frame other}))))
+                    true)
+
+                  (> (System/currentTimeMillis) deadline)
+                  (throw (ex-info "did not see two peers" {:pumps pumps :seen (keys seen)}))
+
+                  :else (do (Thread/sleep 10) (recur (inc pumps) seen))))))
+          (finally
+            (h264/close! enc)
+            (plane/stop!))))))) 
 
 (defn -main [& _]
   (println "libmoq_ffi smoke test")

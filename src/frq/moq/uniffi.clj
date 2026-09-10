@@ -269,6 +269,24 @@
   (let [n (r-i32! c)]
     {:ptr (take! c n) :len n}))
 
+(defn r-f64!
+  "An IEEE 754 double, big-endian like everything else in a RustBuffer."
+  [c]
+  (let [bits (r-u64! c)]
+    (Double/longBitsToDouble (if (>= bits 9223372036854775808)
+                               (- bits 18446744073709551616)
+                               bits))))
+
+(defn r-map!
+  "An i32 count, then that many key/value pairs. Keys are strings."
+  [c read-value]
+  (let [n (r-i32! c)]
+    (loop [i 0 acc {}]
+      (if (= i n)
+        acc
+        (let [k (r-string! c)]
+          (recur (inc i) (assoc acc k (read-value c))))))))
+
 (defn r-optional!
   "A flag byte, then `f` when it is set."
   [c f]

@@ -76,6 +76,145 @@
   (let [h (uniffi/with-out-status #(raw/clone-moqbroadcastproducer broadcast %))]
     (uniffi/with-out-status #(raw/method-moqbroadcastproducer-consume h %))))
 
+;; --- discovery --------------------------------------------------------------
+;; How a peer is FOUND, rather than known. `subscribe-media!` needs a path and
+;; a track name; announcements are where those come from when the other side
+;; of the call is somebody else's client rather than a broadcast we made.
+
+(defn origin-consumer
+  "The subscriber's side of an origin."
+  [origin]
+  (let [h (uniffi/with-out-status #(raw/clone-moqoriginproducer origin %))]
+    (uniffi/with-out-status #(raw/method-moqoriginproducer-consume h %))))
+
+(defn announced!
+  "Watch for broadcasts whose path starts with `prefix`; answers a MoqAnnounced.
+
+  An empty prefix watches everything on the origin, which in a call is what
+  you want: every participant is a broadcast and none of their paths are
+  known in advance."
+  [origin-consumer prefix]
+  (let [h (uniffi/with-out-status #(raw/clone-moqoriginconsumer origin-consumer %))]
+    (ffi/with-arena [a]
+      (let [buf (uniffi/lower-string
+                  (ffi/alloc a (ffi/layout-size uniffi/rust-buffer)) prefix)]
+        (uniffi/with-out-status
+          #(raw/method-moqoriginconsumer-announced h buf %))))))
+
+(defn next-announcement!
+  "Ask for the next announcement; answers an :rb future.
+
+  It settles to an Optional<MoqAnnouncement> — absent when the origin has
+  closed, which is the end of the watch rather than an error."
+  [announced]
+  (let [h (uniffi/with-out-status #(raw/clone-moqannounced announced %))]
+    (-> (raw/method-moqannounced-next h)
+        (uniffi/start-future :rb))))
+
+(defn lift-announcement
+  "Read an Optional<MoqAnnouncement> from a settled :rb buffer.
+
+  Answers the announcement's HANDLE, which outlives the buffer — an interface
+  crosses as a u64 the far side has already cloned for us, so freeing the
+  buffer it arrived in does not touch it."
+  [rb-ptr]
+  (let [len  (ffi/read-field rb-ptr uniffi/rust-buffer [:len])
+        data (ffi/read-field rb-ptr uniffi/rust-buffer [:data])
+        v    (when (and (pos? len) (not (ffi/null? data)))
+               (let [c (uniffi/reader data len)]
+                 (uniffi/r-optional! c uniffi/r-u64!)))]
+    (uniffi/with-out-status #(raw/rustbuffer-free rb-ptr %))
+    v))
+
+(defn announcement-path
+  [ann]
+  (let [h (uniffi/with-out-status #(raw/clone-moqannouncement ann %))]
+    (ffi/with-arena [a]
+      (let [out (ffi/alloc a (ffi/layout-size uniffi/rust-buffer))]
+        (uniffi/with-out-status #(raw/method-moqannouncement-path out h %))
+        (uniffi/lift-string out)))))
+
+(defn announcement-broadcast
+  "The MoqBroadcastConsumer this announcement is for."
+  [ann]
+  (let [h (uniffi/with-out-status #(raw/clone-moqannouncement ann %))]
+    (uniffi/with-out-status #(raw/method-moqannouncement-broadcast h %))))
+
+;; --- the catalog ------------------------------------------------------------
+;; What a peer's broadcast says it contains. Two things come out of it that
+;; cannot be guessed from the outside: the track NAMES, and each track's
+;; CONTAINER — which is the LOC-versus-LEGACY question that answers
+;; `mux: loc: malformed loc properties` when got wrong.
+
+(def ^:private container-names
+  (into {} (map (fn [[k v]] [v k])) containers))
+
+(defn- r-dimensions [c]
+  {:width (uniffi/r-i32! c) :height (uniffi/r-i32! c)})
+
+(defn- r-container [c]
+  (let [v (uniffi/r-i32! c)]
+    (when (= v (containers :cmaf)) (uniffi/r-bytes-span! c))  ; init blob, skipped
+    (container-names v :unknown)))
+
+(defn- r-video [c]
+  {:codec       (uniffi/r-string! c)
+   :description (uniffi/r-optional! c uniffi/r-bytes-span!)
+   :coded       (uniffi/r-optional! c r-dimensions)
+   :aspect      (uniffi/r-optional! c r-dimensions)
+   :bitrate     (uniffi/r-optional! c uniffi/r-u64!)
+   :stalled     (uniffi/r-bool! c)
+   :framerate   (uniffi/r-optional! c uniffi/r-f64!)
+   :container   (r-container c)})
+
+(defn- r-audio [c]
+  {:codec        (uniffi/r-string! c)
+   :description  (uniffi/r-optional! c uniffi/r-bytes-span!)
+   :sample-rate  (uniffi/r-i32! c)
+   :channels     (uniffi/r-i32! c)
+   :bitrate      (uniffi/r-optional! c uniffi/r-u64!)
+   :container    (r-container c)})
+
+(defn next-catalog!
+  "Ask for the next catalog update; answers an :rb future."
+  [catalog-consumer]
+  (let [h (uniffi/with-out-status #(raw/clone-moqcatalogconsumer catalog-consumer %))]
+    (-> (raw/method-moqcatalogconsumer-next h)
+        (uniffi/start-future :rb))))
+
+(defn lift-catalog
+  "Read an Optional<MoqCatalog> from a settled :rb buffer.
+
+  Every field is read even though only `:video` is used yet: the fields are
+  positional in the buffer, so skipping one means parsing it anyway, and
+  half-parsing a record is how the next field comes out as nonsense."
+  [rb-ptr]
+  (let [len  (ffi/read-field rb-ptr uniffi/rust-buffer [:len])
+        data (ffi/read-field rb-ptr uniffi/rust-buffer [:data])
+        v    (when (and (pos? len) (not (ffi/null? data)))
+               (let [c (uniffi/reader data len)]
+                 (uniffi/r-optional!
+                   c (fn [c]
+                       {:video    (uniffi/r-map! c r-video)
+                        :audio    (uniffi/r-map! c r-audio)
+                        :display  (uniffi/r-optional! c r-dimensions)
+                        :rotation (uniffi/r-optional! c uniffi/r-f64!)
+                        :flip     (uniffi/r-optional! c uniffi/r-bool!)
+                        :sections (uniffi/r-map! c uniffi/r-string!)}))))]
+    (uniffi/with-out-status #(raw/rustbuffer-free rb-ptr %))
+    v))
+
+(defn subscribe-catalog!
+  "Watch a broadcast's catalog; answers a future settling to a
+  MoqCatalogConsumer.
+
+  What names a peer's tracks. `subscribe-media!` wants a track name, and on a
+  broadcast we did not publish there is nothing else to learn it from."
+  [broadcast-consumer]
+  (let [h (uniffi/with-out-status #(raw/clone-moqbroadcastconsumer broadcast-consumer %))]
+    (-> (raw/method-moqbroadcastconsumer-subscribe-catalog h)
+        (uniffi/start-future :u64))))
+
 ;; --- publishing --------------------------------------------------------------
 
 (defn publish-media!
