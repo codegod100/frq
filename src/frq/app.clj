@@ -1204,6 +1204,13 @@
 ;; width that stops short of it.
 (def ^:private users-width 180)
 
+;; How many lines the compose field is currently drawn as. The window backend
+;; says so when it changes — a field with room to grow wraps a long message
+;; onto a second and third line instead of sliding it sideways — and the
+;; reserve below has to hear about it, since nothing in this tree is laid out
+;; by anything but these counts.
+(defonce ^:private draft-rows (atom 1))
+
 ;; What the rows under the conversation need left to them: the jump button's
 ;; row, the separator, the compose bar and the air around it. The columns of
 ;; the row reserve it, and so nothing inside them has to — a `:scroll` that
@@ -1227,7 +1234,16 @@
            (if @s/attachment 76 0)))
      ;; The two extra rows the terminal's compose field wraps into, in points:
      ;; a row down the page is two cells' worth of the scale.
-     (if @terminal? (* 4 (chrome-scale)) 0)))
+     (if @terminal? (* 4 (chrome-scale)) 0)
+     ;; And the lines a window's compose field has GROWN by. Unscaled and
+     ;; outside the terminal's arm on purpose: the field only reports its
+     ;; height where it can change — the terminal's is the fixed block of
+     ;; three rows reserved just above — so `draft-rows` is one there and
+     ;; this term is zero. Twenty points a line is a 16-point face's line
+     ;; box rounded up: the reserve has to be at least what the field took,
+     ;; because a point too few does not crop the list, it slides the
+     ;; compose bar off the bottom of the window.
+     (* 20 (dec @draft-rows))))
 
 (defn- messages-width
   "How wide the message list may be with the people panel beside it.
@@ -1476,6 +1492,13 @@
                ;; the minimum it always was.
                :hexpand true
                :rows (if @terminal? 3 1)
+               ;; In a window the field starts as one line and takes another
+               ;; every time the message stops fitting, up to five — past
+               ;; which it scrolls, keeping the caret in view. A paragraph
+               ;; typed into a one-line box was readable a dozen characters
+               ;; at a time, which is not how anybody writes one.
+               :max-rows 5
+               :on-rows #(reset! draft-rows %)
                ;; The break is worth saying out loud where it is new: Enter
                ;; sends, as it always has, and the box under it takes a
                ;; paragraph now — which nobody would think to try unasked.
