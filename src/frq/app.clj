@@ -1461,7 +1461,12 @@
       ;; into three rows rather than scrolling one line sideways.
       [:entry {:text @s/draft
                :width-request 260
-               :hexpand @terminal?
+               ;; Always, not only in a terminal. A window is the case that
+               ;; needs it more: 260 points is most of a phone's row and a
+               ;; third of a pane's, and the field sat stranded in the middle
+               ;; of the bar with the rest of it empty. The number stays as
+               ;; the minimum it always was.
+               :hexpand true
                :rows (if @terminal? 3 1)
                :placeholder "Message"
                :on-change #(reset! s/draft %)
@@ -1505,7 +1510,16 @@
   ;; contents. Marking the children alone is not enough — what they fill is
   ;; whatever the row got.
   [:hbox {:spacing 0 :wrap false :fill-height true}
-   [:vbox {:key :list :width-request sidebar-width :fill-height true}
+   ;; :expand :cross so the width-request is the width. Both panes fill the
+   ;; height, and a pane that fills the height is also told to take a share
+   ;; of the row's spare WIDTH — which two panes split between them, so the
+   ;; list came out half the window with its cards clipped at the fold and
+   ;; the conversation squeezed beside it. Down a row, :cross is the vertical
+   ;; axis alone: the height without the share. The conversation keeps
+   ;; :fill-height and so keeps the slack, which is what the note above says
+   ;; it takes.
+   [:vbox {:key :list :width-request sidebar-width :fill-height true
+           :expand :cross}
     [chats-screen]]
    [:vbox {:key :chat :fill-height true}
     (if @s/current
