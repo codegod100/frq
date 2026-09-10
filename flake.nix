@@ -590,6 +590,69 @@
             ];
             FRQ_LIB_PATH = lib.makeLibraryPath (runtimeLibsFor pkgs);
             NIXGL = "${nixGLFor pkgs}/bin/nixGLIntel";
+
+            # A checkout of jolt-native beside this one, in place of the pin.
+            #
+            # The pin is a rev on a server, so the loop for a change to the
+            # terminal backend was commit, push, re-pin, re-lock — four steps
+            # and an upload for a line of Rust. With a working copy beside this
+            # one the loop is `cargo build` and `just tui`, and the shell finds
+            # that copy itself: ../jolt-native from the checkout this was run
+            # in, which is where it is on the machines this is developed on.
+            # A worktree under .claude/worktrees counts as the same checkout —
+            # the sibling is the main one's, not the worktree's.
+            #
+            # Found rather than named, but not silently: it says which tree it
+            # took on the way in, because `just tui` running something other
+            # than the pin is the sort of thing you have to be able to see.
+            #
+            # It has to be a built one. A checkout with no target/release/
+            # libjolttui.so in it would mean the Jolt half of the backend from
+            # the working copy and the shared object from the pin — two halves
+            # of two different libraries, which fail in ways that look like
+            # neither. So an unbuilt sibling is left alone and the pin stands.
+            #
+            # FRQ_JOLT_NATIVE overrides the search, and is taken even unbuilt
+            # (with a word about what to run): naming a tree is asking for it.
+            # Empty is how you say the pin, on a machine that has a sibling and
+            # wants what everyone else is running.
+            #
+            # Only the sources and libjolttui move either way. Everything else
+            # on the library path — libopus, libmoq_ffi, the ALSA plugins —
+            # stays the pin's, since a checkout has no build of those to offer.
+            shellHook = ''
+              frq_named=1
+              if [ -z "''${FRQ_JOLT_NATIVE+named}" ]; then
+                frq_named=
+                frq_git="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+                frq_near="''${frq_git:+$(dirname "$(dirname "$frq_git")")/jolt-native}"
+                if [ -n "$frq_near" ] && [ -e "$frq_near/target/release/libjolttui.so" ]; then
+                  FRQ_JOLT_NATIVE="$frq_near"
+                else
+                  FRQ_JOLT_NATIVE=""
+                fi
+              fi
+              if [ -n "$FRQ_JOLT_NATIVE" ]; then
+                if [ -d "$FRQ_JOLT_NATIVE/crates/jolt-tui" ]; then
+                  FRQ_JOLT_NATIVE="$(cd "$FRQ_JOLT_NATIVE" && pwd)"
+                  export FRQ_JOLT_NATIVE
+                  export GLIMMER_TUI_SRC="$FRQ_JOLT_NATIVE/glimmer-backends/glimmer-tui"
+                  export GLIMMER_JVUI_SRC="$FRQ_JOLT_NATIVE/glimmer-backends/glimmer-jvui"
+                  export JVUI_SRC="$FRQ_JOLT_NATIVE/jvui"
+                  # First, so a cargo build wins over the pin's copy of the
+                  # same object. The rest of the pin's lib directory is still
+                  # behind it.
+                  export JOLT_NATIVE_LIB="$FRQ_JOLT_NATIVE/target/release:$JOLT_NATIVE_LIB"
+                  echo "frq: jolt-native from $FRQ_JOLT_NATIVE, not the pin (FRQ_JOLT_NATIVE= for the pin)" >&2
+                  if [ ! -e "$FRQ_JOLT_NATIVE/target/release/libjolttui.so" ]; then
+                    echo "frq: no libjolttui.so there yet — cargo build --release --features terminal -p jolt-tui" >&2
+                  fi
+                elif [ -n "$frq_named" ]; then
+                  echo "frq: FRQ_JOLT_NATIVE=$FRQ_JOLT_NATIVE is not a jolt-native checkout; using the pin" >&2
+                fi
+              fi
+              unset frq_named frq_git frq_near
+            '';
           };
         });
 
