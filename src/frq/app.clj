@@ -297,7 +297,14 @@
     ;; What goes with the page is its centring at 620, on a window between that
     ;; and the split view's 900: the list is full-bleed there now, which is
     ;; what the conversation beside it has always been.
-    [:vbox {:spacing 8 :margin 12}
+    ;; `:fill-height` on the outermost box, not only on the band inside it.
+    ;; A backend that gives a column the height of what is in it hands the
+    ;; band below a window's worth of nothing to divide: the list asks for
+    ;; the rest of the screen, is told the rest is forty points, and the
+    ;; whole screen paints into a strip along the top with the window empty
+    ;; under it. Every screen that pins something to the bottom says this on
+    ;; its own root — the split view already said it, one wrapper further out.
+    [:vbox {:spacing 8 :margin 12 :fill-height true}
      [:vbox {:key :head :spacing 8}
        ;; Your nick in the title, where "Chats" alone said nothing you did not
       ;; already know. It is what every channel calls you and what your own
@@ -345,8 +352,9 @@
      ;; the tabs' strip out of what it may take.
      ;; Named, so it is the same list — and the same scroll position — when the
      ;; reader comes back from a conversation.
-     [:vbox {:key :list :fill-height true :reserve (below-list)}
-      [:scroll {:scroll-key "chats-list" :orientation :vertical}
+     [:vbox {:key :list :fill-height true}
+      [:scroll {:scroll-key "chats-list" :orientation :vertical
+                :reserve (below-list)}
        (if (seq buffers)
          ;; Keyed on the name, because this list reorders: opening a
          ;; conversation bumps it to the top, and unkeyed children reconcile by
@@ -1309,7 +1317,10 @@
     ;; plain End for its own caret and leaves this one alone — so it arrives
     ;; here by bubbling up from whatever had the focus. The window backend
     ;; registers the handler and never calls it: keys there belong to egui.
-    [:vbox {:spacing 8 :margin 12
+    ;; `:fill-height` for the reason the chats screen gives on its own root:
+    ;; without it this column is as tall as what is in it, and the compose bar
+    ;; sits wherever the backlog happens to end rather than at the bottom.
+    [:vbox {:spacing 8 :margin 12 :fill-height true
             :on-key (fn [k]
                       (when (= k "ctrl+end") (s/jump-to-present!)))}
      [:hbox {:spacing 8}
@@ -1361,10 +1372,10 @@
      ;; it every time the panel was toggled.
      [:hbox {:spacing 8 :wrap false}
       [:vbox {:key :messages :fill-height true
-              :reserve (below-messages)
               :width-request (if show-users? (messages-width) 0)}
        [:scroll {:scroll-key (messages-scroll-key)
                  :orientation :vertical
+                 :reserve (below-messages)
                  :stick-to-bottom true
                  :scroll-to-bottom @s/jump-tick
                  :on-change #(reset! s/at-present? (= "end" %))
