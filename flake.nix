@@ -182,6 +182,69 @@
           # PipeWire's rather than raw ALSA PCMs.
           native = jolt-native.packages.${pkgs.stdenv.hostPlatform.system}.default;
 
+          # libmoq_ffi — MoQ over QUIC behind UniFFI's C ABI, FETCHED rather
+          # than built. This is the object `frq.moq.raw` is generated from.
+          #
+          # Fetched because building it is the thing this whole exercise is
+          # about: moq-ffi pulls moq-native, iroh, quinn, rustls and aws-lc-sys
+          # behind it, which is 440 crates that nothing else in this tree
+          # needs. Upstream already publishes the object for both Linux
+          # architectures, so we take those bytes.
+          #
+          # Pinned to a release and to a hash, and the hashes below are
+          # upstream's own published .sha256 files rather than ones observed
+          # here — a `nix-prefetch` of whatever the URL serves today would
+          # record that it downloaded something, not that it downloaded the
+          # right thing.
+          #
+          # WHAT THIS BUILD IS NOT: moq-ffi's `audio` and `video` features are
+          # on by default upstream and are OFF in these artifacts, so there is
+          # no publish_audio/publish_video and no moqaudio*/moqvideo* here —
+          # 206 functions where the Apple artifact has 230. That is why the
+          # bindings are generated from the object (`just gen-moq`) and not
+          # from the C header the release ships, which describes the Apple one.
+          moqFfi =
+            let
+              version = "0.3.17";
+              target = {
+                "x86_64-linux" = "x86_64-unknown-linux-gnu";
+                "aarch64-linux" = "aarch64-unknown-linux-gnu";
+              }.${pkgs.stdenv.hostPlatform.system};
+              hash = {
+                "x86_64-linux" = "sha256-dzQXpV4JgdtD+g33WX51FFAQdfCUXkNsx1xPbobPfUI=";
+                "aarch64-linux" = "sha256-PdzRwbJFqOZWRgI0HHX2XUH+Ljh4V3jvQ9asfvCuIPA=";
+              }.${pkgs.stdenv.hostPlatform.system};
+            in
+            pkgs.stdenv.mkDerivation {
+              pname = "libmoq-ffi";
+              inherit version;
+              src = pkgs.fetchurl {
+                url = "https://github.com/kixelated/moq/releases/download/moq-ffi-v${version}/moq-ffi-${version}-${target}-libmoq_ffi.so";
+                inherit hash;
+              };
+              dontUnpack = true;
+              # It carries no RUNPATH and needs libgcc_s, libm and libc — the
+              # host's on an ordinary distro, and nothing at all on NixOS
+              # unless they are bound here.
+              nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+              buildInputs = [ pkgs.stdenv.cc.cc.lib ];
+              installPhase = ''
+                mkdir -p $out/lib
+                cp $src $out/lib/libmoq_ffi.so
+                chmod +w $out/lib/libmoq_ffi.so
+              '';
+            };
+
+          # One directory for the loader to look in. jolt resolves every
+          # :jolt/native name against JOLT_NATIVE_LIB, and the objects now come
+          # from two places — jolt-native's flake, and the moq-ffi release — so
+          # they are joined rather than the path being made a list, which the
+          # loader does not take.
+          nativeAll = pkgs.symlinkJoin {
+            name = "frq-native";
+            paths = [ native moqFfi ];
+          };
+
           # Jolt itself: Clojure on Chez, built the way its own flake builds it.
           # A function, because there are two of them — upstream for the
           # desktop, and the Bionic-addrinfo fork for the boot image the APK
@@ -253,7 +316,7 @@
           # read-only directory and jolt treats that as a quiet cache miss, so
           # the only cost is re-resolving the (already local) graph per start.
           frqScript = pkgs.writeShellScript "frq" ''
-            export LD_LIBRARY_PATH="${native}/lib:${lib.makeLibraryPath runtimeLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${nativeAll}/lib:${lib.makeLibraryPath runtimeLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             cd ${frqSource}
 
             # On NixOS the store's Mesa is the system's and the window opens.
@@ -271,7 +334,7 @@
           # a terminal is the one surface that needs nothing from the host but
           # a terminal, which is the reason this output exists.
           tuiScript = pkgs.writeShellScript "frq-tui" ''
-            export LD_LIBRARY_PATH="${native}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${nativeAll}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             cd ${frqSource}
 
             exec ${joltRuntime}/bin/jolt \
@@ -334,7 +397,7 @@
           };
         in
         {
-          inherit native frq;
+          inherit native moqFfi nativeAll frq;
           inherit tui;
           jolt = joltRuntime;
           default = frq;
@@ -380,7 +443,7 @@
       devShells = forEachSystem (pkgs:
         let
           inherit (pkgs) lib;
-          inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) jolt native;
+          inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) jolt native nativeAll;
         in
         {
           default = pkgs.mkShellNoCC {
@@ -397,7 +460,7 @@
             # source `just run` runs is the working tree, so the launcher has
             # to live in that tree and the shell has to hand it its answers.
             # Naming these is also what makes the shell build them.
-            JOLT_NATIVE_LIB = "${native}/lib";
+            JOLT_NATIVE_LIB = "${nativeAll}/lib";
             GLIMMER_SRC = glimmer;
             GLIMMER_VIDYA_SRC = "${jolt-native}/glimmer-backends/glimmer-vidya";
             GLIMMER_TUI_SRC = "${jolt-native}/glimmer-backends/glimmer-tui";

@@ -209,3 +209,48 @@ repl *args:
     export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
     exec jolt -Sdeps "$deps" "$@"
+
+# Regenerate src/frq/moq/raw.clj from the libmoq_ffi we actually load.
+#
+# UniFFI embeds its interface metadata in the object, so `uniffi-bindgen
+# --library` reads the truth out of the .so rather than a header shipped
+# beside it — which for this release is a different build entirely (the Apple
+# artifact has moq-ffi's `audio` and `video` features, Linux and Android do
+# not). Binding the header would link on a Mac and fail on both platforms frq
+# ships to, so the object is the only source this recipe will accept.
+#
+# The bindgen must match the uniffi that built the object — 0.32 for moq-ffi
+# 0.3.17 — and it is built once into the scratch dir rather than pinned into
+# the flake: nothing in a normal build needs it, and a regeneration is a thing
+# done when the moq-ffi pin moves, by hand, on purpose.
+#
+#   just gen-moq                     # the loaded library
+#   just gen-moq path/to/libmoq_ffi.so
+#
+# Regenerate the libmoq_ffi bindings from the object's own embedded metadata.
+gen-moq lib="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lib="${1:-${JOLT_NATIVE_LIB:-}/libmoq_ffi.so}"
+    [ -f "$lib" ] || { echo "no libmoq_ffi.so at $lib — pass one: just gen-moq <path>" >&2; exit 1; }
+    work="${TMPDIR:-/tmp}/frq-gen-moq"
+    mkdir -p "$work/ubg/src"
+    cat > "$work/ubg/Cargo.toml" <<'TOML'
+    [package]
+    name = "ubg"
+    version = "0.1.0"
+    edition = "2021"
+    [[bin]]
+    name = "uniffi-bindgen"
+    path = "src/main.rs"
+    [dependencies]
+    uniffi = { version = "0.32", features = ["cli"] }
+    TOML
+    echo 'fn main() { uniffi::uniffi_bindgen_main() }' > "$work/ubg/src/main.rs"
+    ( cd "$work/ubg" && cargo build --release -q )
+    ( cd "$work/ubg" && ./target/release/uniffi-bindgen generate \
+        --library "$lib" --language python --out-dir "$work/py" --no-format )
+    python3 tools/py2jolt.py "$work"/py/*.py > "$work/body.clj"
+    { sed -n '1,/^  (:require \[jolt.ffi :as ffi\]))$/p' src/frq/moq/raw.clj; echo; cat "$work/body.clj"; } > "$work/raw.clj"
+    mv "$work/raw.clj" src/frq/moq/raw.clj
+    echo "wrote src/frq/moq/raw.clj ($(grep -c '^(ffi/defcfn' src/frq/moq/raw.clj) entry points)"

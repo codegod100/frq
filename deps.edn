@@ -32,7 +32,21 @@
                 :linux ["libvidya.so"]}
                {:name "joltmoq"
                 :darwin ["libjoltmoq.dylib"]
-                :linux ["libjoltmoq.so"]}]
+                :linux ["libjoltmoq.so"]}
+               ;; moq-ffi's own object, fetched from its release rather than
+               ;; built — see the flake. It is not a second media plane: it is
+               ;; the transport half alone, behind UniFFI's C ABI, and it is
+               ;; here so `frq.moq.*` has something to load while the port off
+               ;; libjoltmoq happens. Both are declared for now, and the day
+               ;; frq.av stops calling joltmoq_* is the day that entry goes.
+               ;;
+               ;; No :darwin — the release's Mac artifact is a DIFFERENT BUILD
+               ;; (moq-ffi's audio/video features are on there and off here),
+               ;; so naming a .dylib would load an object with 24 entry points
+               ;; the generated bindings do not describe. Linux and Android
+               ;; only, until they are built the same way.
+               {:name "moq_ffi"
+                :linux ["libmoq_ffi.so"]}]
 
  :aliases {:frq {:main-opts ["-m" "frq.app"]}
 
