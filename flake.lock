@@ -155,16 +155,16 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1789048748,
-        "narHash": "sha256-2dYuqbHAd72ulSJjvqjvmpy6Sie4btvs30p6HLz8TRE=",
+        "lastModified": 1789061335,
+        "narHash": "sha256-NXhDHUZFjAm17z/EsnUy2YDv63KnsXMIhXT//QJyrdA=",
         "ref": "refs/heads/main",
-        "rev": "7d907d008b66abc03da83dc36411cf13f3085a35",
-        "revCount": 85,
+        "rev": "5145c3b332ec94862a49f0de18056217f55483d7",
+        "revCount": 88,
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       },
       "original": {
-        "rev": "7d907d008b66abc03da83dc36411cf13f3085a35",
+        "rev": "5145c3b332ec94862a49f0de18056217f55483d7",
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       }
