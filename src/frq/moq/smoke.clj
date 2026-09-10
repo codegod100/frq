@@ -716,6 +716,106 @@
         ((:close! c)))))
   true)
 
+(defn- check-status
+  "The three transitions frq.av reads: live, failed, ended.
+
+  :live is asserted on a plain local plane — it carries has-camera? and
+  has-mic?, which is what the UI shows before a single frame arrives.
+
+  :ended and :failed need a session to lose, so the relay from the session
+  check is stood up again and then CANCELLED underneath a running plane.
+  That is the case that matters: not a call the person hung up, but one
+  that went away, which is the whole reason poll-status! exists rather than
+  frq.av inferring things from frames stopping.
+
+  Whether the drop reads as :ended or :failed depends on how the far side
+  goes — a relay cancelled mid-session may close cleanly or not — so both
+  are accepted here. What is NOT accepted is silence: a call that ends with
+  no transition at all is one where the person is left looking at a frozen
+  picture."
+  []
+  (ffi/with-arena [a]
+    ;; 1. :live, with the flags.
+    (let [origin (media/new-origin)]
+      (plane/start! {:origin origin :path "/us"
+                     :source (fn [] nil) :mic (fn [] nil)
+                     :width 64 :height 64 :channels 1})
+      (let [[ev] (plane/poll-status!)]
+        (println "  live event:" (pr-str ev))
+        (when-not (= :live (:code ev))
+          (throw (ex-info "no :live on start" {:event ev})))
+        (when-not (and (:has-camera? ev) (:has-mic? ev))
+          (throw (ex-info "flags do not reflect the sources given" {:event ev})))
+        (when (seq (plane/poll-status!))
+          (throw (ex-info "poll-status! did not drain" {}))))
+      (plane/stop!))
+
+    ;; 2. a session lost underneath us.
+    (let [[px _]  (i420-halves a 64 64 0x40 0xC0)
+          relay   (media/new-origin)
+          server  (client/new-server)]
+      (client/server-bind! server "127.0.0.1:0")
+      (client/server-tls-generate! server ["localhost"])
+      (client/server-origin! server relay)
+      (let [addr (settle! (client/server-listen! server) "listen" 10000
+                          uniffi/lift-string)
+            port (last (str/split addr #":"))
+            fps  (client/server-fingerprints server)
+            c    (client/new-client)]
+        (client/set-tls-fingerprints! c fps)
+        (let [connect  (client/connect! c (str "https://localhost:" port "/room"))
+              incoming (client/server-accept! server)
+              deadline (+ (System/currentTimeMillis) 25000)]
+          (loop [req nil accepted nil srv nil sess nil]
+            (let [req      (or req (settle! incoming "accept" 0 media/lift-optional-handle))
+                  accepted (or accepted (when req (client/accept-request! req)))
+                  ;; The relay's OWN side of the session, kept rather than
+                  ;; dropped: cancelling the server only stops it accepting
+                  ;; new connections, and an established QUIC session then
+                  ;; sits there until its idle timeout — half a minute of
+                  ;; a frozen picture. What a peer hanging up actually
+                  ;; looks like is this session being cancelled.
+                  srv      (or srv (when accepted
+                                     (settle! accepted "request accept" 0 nil)))
+                  sess     (or sess (settle! connect "connect" 0 nil))]
+              (cond
+                (and sess srv)
+                (do
+                  (plane/start! {:origin   (client/session-publisher sess)
+                                 :discover (client/session-consumer sess)
+                                 :session  sess
+                                 :path "/us" :source (fn [] [px nil])
+                                 :width 64 :height 64 :fps 30 :bitrate 200000})
+                  (plane/poll-status!)              ; drain the :live
+                  (dotimes [_ 10] (plane/pump!) (Thread/sleep 10))
+                  (println "  dropping the far side under a live plane")
+                  (client/cancel! srv 0)
+                  (client/server-cancel! server)
+                  (let [d2 (+ (System/currentTimeMillis) 20000)]
+                    (loop [pumps 0]
+                      (plane/pump!)
+                      (let [evs (plane/poll-status!)]
+                        (cond
+                          (seq evs)
+                          (do (println "  after the drop:" (pr-str evs))
+                              (when-not (some #{:ended :failed} (map :code evs))
+                                (throw (ex-info "the drop produced no ending"
+                                                {:events evs})))
+                              (plane/stop!)
+                              true)
+
+                          (> (System/currentTimeMillis) d2)
+                          (do (plane/stop!)
+                              (throw (ex-info "the session went away silently"
+                                              {:pumps pumps})))
+
+                          :else (do (Thread/sleep 10) (recur (inc pumps))))))))
+
+                (> (System/currentTimeMillis) deadline)
+                (throw (ex-info "the session never came up" {}))
+
+                :else (do (Thread/sleep 10) (recur req accepted srv sess))))))))))
+
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
@@ -731,7 +831,8 @@
                ["plane"    check-plane]
                ["audio"    check-audio]
                ["session"  check-session]
-               ["wired"    check-wired-devices]]]
+               ["wired"    check-wired-devices]
+               ["status"   check-status]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))

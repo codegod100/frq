@@ -206,6 +206,16 @@
   (uniffi/with-out-status #(raw/method-moqserver-cancel (clone-server server) %))
   nil)
 
+(defn watch-closed!
+  "A :void future that settles when the session closes.
+
+  Settles QUIETLY on a clean close and RAISES on a dirty one, with the
+  MoqError saying why — so completing it is how the reason for a dropped
+  call is learned, rather than by noticing that frames stopped."
+  [session]
+  (-> (raw/method-moqsession-closed (clone-session session))
+      (uniffi/start-future :void)))
+
 (defn shutdown!
   "Graceful shutdown — equivalent to `(cancel! session 0)`.
 

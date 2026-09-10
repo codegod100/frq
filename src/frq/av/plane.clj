@@ -11,6 +11,13 @@
       start! stop! live?          joltmoq_start / _stop / _is_live
       poll-status!                joltmoq_poll_status + _status_text
       poll-frames!                joltmoq_frame_poll + _frame_rgba
+      poll-audio!                 (no equivalent; joltmoq played it itself)
+
+  STATUS IS A QUEUE, drained rather than sampled. joltmoq's poll_status
+  answered one code per call and was looped until it said none, and the
+  reason is worth keeping: a call can fail and end between two pumps, and a
+  caller that only ever sees the latest state would show the wrong one.
+  `frq.av` already loops on it.
 
   WHY IT IS PUMPED AND NOT THREADED. jolt has fibers, but a fiber is bound to
   its carrier for life and a blocking foreign call pins that carrier and
@@ -117,6 +124,12 @@
              :track     track
              :path      path
              :session   session
+             ;; A session that closes says so through a future rather than
+             ;; a callback. Completing it is how the REASON for a dropped
+             ;; call is learned — it settles quietly on a clean close and
+             ;; raises the MoqError on a dirty one — where noticing that
+             ;; frames stopped would only ever say "something".
+             :closed    (when session (client/watch-closed! session))
              ;; The announcement watch is the whole of peer discovery. An
              ;; empty prefix takes everything on the origin, because in a
              ;; call every participant is a broadcast and none of their
@@ -147,7 +160,9 @@
              :size      [width height]
              :camera?   camera?
              :frames    []
-             :status    (atom [])
+             :status    (atom [{:code :live
+                                :has-camera? (some? source)
+                                :has-mic?    (some? mic)}])
              :pts       (atom 0)
              :fps       fps})
     true))
@@ -415,13 +430,44 @@
 
 ;; --- the pump ----------------------------------------------------------------
 
+(defn- note!
+  "Queue a status transition for the next `poll-status!`."
+  [p event]
+  (when-let [q (:status p)] (swap! q conj event))
+  nil)
+
+(defn- pump-closed!
+  "Notice the session going away, and why.
+
+  A clean shutdown settles the future with nothing; a dropped connection
+  raises the MoqError that caused it. Both mean the call is over, and both
+  have to be announced — the difference is only what the person is told."
+  [p]
+  (if-let [w (:closed p)]
+    (if (uniffi/settled? w)
+      (do (try
+            (uniffi/complete! w)
+            (note! p {:code :ended})
+            (catch Exception e
+              (note! p {:code :failed
+                        :text (or (:message (ex-data e)) (ex-message e))})))
+          (assoc p :closed nil))
+      p)
+    p))
+
 (defn pump!
-  "Drive both halves once. Called from the same timer as `frq.av/pump!`."
+  "Drive both halves once. Called from the same timer as `frq.av/pump!`.
+
+  Everything inside is wrapped: a raise from the media plane is a call that
+  failed, not a UI that stops repainting. glimmer calls this from the loop
+  thread, and an exception escaping here would take the window with it."
   []
   (when-let [p @plane]
-    (pump-out! p)
-    (pump-mic! p)
-    (let [p' (pump-in! p)
+   (try
+    (let [p (pump-closed! p)]
+     (pump-out! p)
+     (pump-mic! p)
+     (let [p' (pump-in! p)
           ;; Mix everyone EXCEPT ourselves: hearing your own voice back is
           ;; the thing headphones exist to prevent.
           rings (keep (fn [[_ peer]] (when-not (:self? peer) (:ring peer)))
@@ -437,6 +483,14 @@
         (when (and mixed (:speaker p'))
           ((:play! (:speaker p')) mixed))
         (reset! plane (assoc p' :mixed mixed)))))
+    (catch Exception e
+      (note! p {:code :failed
+                :text (or (:message (ex-data e)) (ex-message e))})
+      ;; The plane stays UP after a failure. joltmoq did the same, and the
+      ;; reason is the person: tearing it down here would take the message
+      ;; saying what went wrong off the screen along with it. `frq.av`
+      ;; decides when to stop.
+      (reset! plane (assoc p :frames [] :mixed nil)))))
   nil)
 
 (defn poll-frames!
@@ -468,7 +522,15 @@
   (some-> @plane :peers keys vec))
 
 (defn poll-status!
-  "Drain what the plane has learned, as [code text] pairs, oldest first."
+  "Drain what the plane has learned since the last call, oldest first.
+
+  Each event is {:code :live|:ended|:failed} with `:text` on a failure and
+  `:has-camera?`/`:has-mic?` on :live — which is joltmoq's poll_status,
+  status_text and status_has_camera/_mic in one value instead of four
+  calls that had to be made in the right order.
+
+  Drained, not sampled: a call can fail and end between two pumps, and a
+  caller shown only the latest would show the wrong one."
   []
   (when-let [p @plane]
     (let [q (:status p)
