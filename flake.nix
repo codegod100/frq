@@ -64,7 +64,7 @@
     # drift this comment warns about wearing a different hat: one input, and
     # the window and the terminal are the same library either way.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=03365291c9e6631f7f0e447fdb236b7e02479146";
+      url = "git+file:///tmp/claude-1000/-home-nandi-code-frq--claude-worktrees-moq-jolt-lang-port-dd3165/477edbd0-1739-4107-b542-c23b5bbd9430/scratchpad/jv?ref=jvui-for-frq";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -323,6 +323,26 @@
           # alsa-lib looks plugins up by directory, not by soname.
           alsaPluginDir = "${pkgs.pipewire}/lib/alsa-lib";
 
+          # The faces jvui draws with, from here rather than from whatever
+          # the host happens to have installed. jvui hunts a list of the
+          # usual system paths and, failing that, draws the missing-glyph
+          # box — which is what "the glyphs are broke" has been every time
+          # it has come up. An Arch container has NotoColorEmoji and no
+          # monochrome Noto Emoji, and NotoColorEmoji is a bitmap face with
+          # one 128-pixel strike that jvui rejects on purpose, so the chips
+          # in a message row had nothing left to be drawn from.
+          #
+          # NotoEmoji is the outline companion to NotoColorEmoji: scalable,
+          # monochrome, and full coverage of the emoji the chrome uses.
+          # Symbols2 behind it for the arrows and technical marks that are
+          # not emoji at all.
+          uiFont = "${pkgs.noto-fonts}/share/fonts/noto/NotoSans.ttf";
+          fallbackFonts = lib.concatStringsSep ":" [
+            "${pkgs.noto-fonts-monochrome-emoji}/share/fonts/noto/NotoEmoji.ttf"
+            "${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols2-Regular.otf"
+            "${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols.ttf"
+          ];
+
           nativeAll = pkgs.symlinkJoin {
             name = "frq-native";
             paths = [ native moqFfi ] ++ codecs;
@@ -406,6 +426,8 @@
           frqScript = pkgs.writeShellScript "frq" ''
             export LD_LIBRARY_PATH="${nativeAll}/lib:${lib.makeLibraryPath runtimeLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             export ALSA_PLUGIN_DIR="${alsaPluginDir}"
+            export JVUI_FONT="${uiFont}"
+            export JVUI_FALLBACK_FONTS="${fallbackFonts}"
             cd ${frqSource}
 
             # On NixOS the store's Mesa is the system's and the window opens.
@@ -559,6 +581,16 @@
             GLIMMER_JVUI_SRC = "${jolt-native}/glimmer-backends/glimmer-jvui";
             JVUI_SRC = "${jolt-native}/jvui";
             GLIMMER_TUI_SRC = "${jolt-native}/glimmer-backends/glimmer-tui";
+            # See `uiFont` in the packages block for why these are named
+            # here rather than left to whatever the host has installed.
+            # Spelled out again for the same reason ALSA_PLUGIN_DIR is: a
+            # different `let`.
+            JVUI_FONT = "${pkgs.noto-fonts}/share/fonts/noto/NotoSans.ttf";
+            JVUI_FALLBACK_FONTS = lib.concatStringsSep ":" [
+              "${pkgs.noto-fonts-monochrome-emoji}/share/fonts/noto/NotoEmoji.ttf"
+              "${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols2-Regular.otf"
+              "${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols.ttf"
+            ];
             FRQ_LIB_PATH = lib.makeLibraryPath (runtimeLibsFor pkgs);
             NIXGL = "${nixGLFor pkgs}/bin/nixGLIntel";
           };
