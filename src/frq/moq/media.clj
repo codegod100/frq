@@ -253,6 +253,21 @@
 
 (def video-container :legacy)
 
+(defn write-video-frame!
+  "Write an ALREADY-ENCODED frame to a media producer, from foreign memory.
+
+  The `write-frame!` above takes a jolt string, which is fine for a test
+  payload and wrong for H.264. This takes [pointer length] and copies the
+  bytes straight into the buffer, so an encoded frame goes from the
+  encoder's output to the wire without becoming a jolt value."
+  [producer ptr len timestamp-us]
+  (let [h (uniffi/with-out-status #(raw/clone-moqmediaproducer producer %))]
+    (lowered [[:bytes [ptr len]] [:u64 timestamp-us]]
+             (fn [buf]
+               (uniffi/with-out-status
+                 #(raw/method-moqmediaproducer-write-frame h buf %)))))
+  nil)
+
 (defn lift-media-frame
   "Read an Optional<MoqMediaFrame>, handing the payload to `use-payload` as a
   BORROWED [pointer length] span.

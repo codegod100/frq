@@ -40,6 +40,7 @@
             [frq.codec.h264 :as h264]
             [frq.capture.v4l2 :as v4l2]
             [frq.capture.alsa :as alsa]
+            [frq.av.plane :as plane]
             [jolt.ffi :as ffi]))
 
 (defn- check-contract []
@@ -428,6 +429,61 @@
                         {:device bad}))))
     true))
 
+(defn- check-plane
+  "A picture end to end through frq.av.plane: source -> H.264 -> MoQ -> RGBA.
+
+  This is the whole point of the port in one test. The source is a thunk
+  answering a synthetic I420 frame, which is what a camera will be; the frame
+  goes out through the encoder onto a real MoQ media track, comes back in
+  through a real subscribe, and is decoded to RGBA ready for
+  vidya/frame-rgba!. Nothing is faked in between.
+
+  The frame is not flat this time. A left half at luma 0x40 and a right half
+  at 0xC0 means a decode that produced a uniform picture — the failure a gray
+  test frame cannot distinguish from success — shows up as two equal halves.
+
+  It is pumped rather than awaited, on purpose: pump! is what glimmer's timer
+  will call, so driving it in a loop here is the same code path the app takes,
+  including the several pumps a subscribe and a first keyframe take to
+  settle."
+  []
+  (ffi/with-arena [a]
+    (let [w 64 h 64
+          n   (h264/i420-size w h)
+          px  (ffi/alloc a n)]
+      ;; Left half dark, right half bright; chroma neutral.
+      (dotimes [y h]
+        (dotimes [x w]
+          (ffi/write (+ px (* y w) x) :uint8 (if (< x (quot w 2)) 0x40 0xC0))))
+      (dotimes [i (* 2 (quot (* w h) 4))]
+        (ffi/write (+ px (* w h) i) :uint8 0x80))
+      (let [origin (media/new-origin)]
+        (plane/start! {:origin origin :path "/plane" :source (fn [] [px n])
+                       :width w :height h :fps 30 :bitrate 200000})
+        (try
+          (let [deadline (+ (System/currentTimeMillis) 20000)]
+            (loop [pumps 0]
+              (plane/pump!)
+              (if-let [f (plane/poll-frame!)]
+                (do
+                  (println "  frame after" pumps "pumps:" (:w f) "x" (:h f) (pr-str (:key f)))
+                  (when-not (and (= w (:w f)) (= h (:h f)))
+                    (throw (ex-info "decoded size is wrong" {:got [(:w f) (:h f)]})))
+                  (let [at   (fn [x y] (ffi/read (+ (:rgba f) (* 4 (+ (* y (:w f)) x))) :uint8))
+                        left (at 8 32)
+                        right (at 56 32)]
+                    (println "  left" left "right" right)
+                    (when-not (< left right)
+                      (throw (ex-info "the two halves came back the same — the picture did not survive"
+                                      {:left left :right right})))
+                    (when (< (- right left) 40)
+                      (throw (ex-info "contrast collapsed" {:left left :right right}))))
+                  true)
+                (if (> (System/currentTimeMillis) deadline)
+                  (throw (ex-info "no frame came back through the plane" {:pumps pumps}))
+                  (do (Thread/sleep 10) (recur (inc pumps)))))))
+          (finally (plane/stop!)))))))
+
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
@@ -439,7 +495,8 @@
                ["h264"     check-h264]
                ["v4l2"     check-v4l2-layouts]
                ["alsa"     check-alsa]
-               ["devices"  check-enumeration]]]
+               ["devices"  check-enumeration]
+               ["plane"    check-plane]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))
