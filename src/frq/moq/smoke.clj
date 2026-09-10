@@ -14,12 +14,27 @@
     3. a string out and back, which is the RustBuffer layout and the
        alloc/free ownership rule.
 
-  It deliberately does NOT connect. A connect is a future, a tokio worker and
-  a network, and none of those tell you anything if the layouts are wrong.
+    4. a connect, which is the only one of these that involves a tokio worker
+       and therefore the only one that exercises the continuation callback —
+       the piece with the most ways to be quietly wrong, since it runs on a
+       thread jolt never started.
+
+  The connect is aimed at a port nothing is listening on. That is on purpose:
+  what is under test is the future protocol and the error path, and both of
+  those are the same whether the far side refuses or is simply not there —
+  where a real relay would make this test depend on somebody else's uptime.
+
+  It takes THIRTY SECONDS, and that is not this code being slow. QUIC runs
+  over UDP, so a closed port produces no connection-refused to notice: there
+  is only the handshake timeout, which moq-native sets to 30s. The deadline
+  below has to sit above it, and a test that gave up at 15s reported a
+  continuation that had never fired when what had happened was that nothing
+  had gone wrong yet.
 
       just repl -m frq.moq.smoke"
   (:require [frq.moq.uniffi :as uniffi]
             [frq.moq.raw :as raw]
+            [frq.moq.client :as client]
             [jolt.ffi :as ffi]))
 
 (defn- check-contract []
@@ -63,11 +78,62 @@
                             {:sent s :got got})))
           true)))))
 
+(defn- check-connect
+  "Connect to a closed port and watch the future fail.
+
+  Everything interesting is in the loop: `poll-connect!` answers nil while the
+  far side has not settled, and each nil has issued another poll. That the
+  answer eventually changes at all is the continuation callback firing from a
+  tokio thread and this thread seeing it — which is the whole reason for the
+  atom in `frq.moq.uniffi/continuation`.
+
+  A raise is the PASS here. What would be a failure is a hang (the
+  continuation never fires) or a success (a connect to a closed port cannot
+  succeed, so a session handle would mean the future protocol handed us
+  something that is not a session)."
+  []
+  (let [c (client/new-client)]
+    (try
+      (let [fut (client/connect! c "https://127.0.0.1:1/smoke")
+            deadline (+ (System/currentTimeMillis) 45000)]
+        (println "  connect started, polling")
+        (loop [polls 0]
+          (cond
+            (> (System/currentTimeMillis) deadline)
+            (throw (ex-info "connect future never settled — the continuation did not fire"
+                            {:polls polls}))
+
+            :else
+            (let [r (try
+                      {:ok (client/poll-connect! fut)}
+                      (catch clojure.lang.ExceptionInfo e {:err e}))]
+              (cond
+                (:err r)
+                (let [d (ex-data (:err r))]
+                  (println "  settled after" polls "polls")
+                  (println "  variant:" (:variant d))
+                  (println "  message:" (pr-str (:message d)))
+                  (when-not (:variant d)
+                    (throw (ex-info "error carried no MoqError variant — the buffer did not decode"
+                                    {:data d})))
+                  true)
+
+                (:ok r)
+                (throw (ex-info "connect to a closed port answered a session"
+                                {:handle (:ok r)}))
+
+                :else
+                (do (Thread/sleep 20) (recur (inc polls))))))))
+      (finally
+        (client/free-client! c)
+        (println "  free_moqclient ok")))))
+
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
                ["handle"   check-handle]
-               ["string"   check-string]]]
+               ["string"   check-string]
+               ["connect"  check-connect]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))
