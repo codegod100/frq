@@ -231,6 +231,20 @@
                 (uniffi/with-out-status
                   #(raw/method-moqbroadcastproducer-publish-media h buf %)))))))
 
+(defn publish-media-bytes!
+  "Publish a media track whose init blob is RAW bytes.
+
+  `publish-media!` above takes the blob as a string, which is fine for the
+  empty one a video track uses and wrong for an OpusHead — that is 19 bytes
+  of little-endian header with interior zeros, and routing it through a jolt
+  string would not survive."
+  [broadcast format ptr len]
+  (let [h (uniffi/with-out-status #(raw/clone-moqbroadcastproducer broadcast %))]
+    (lowered [[:string format] [:bytes [ptr len]] [:u8 0]]
+             (fn [buf]
+               (uniffi/with-out-status
+                 #(raw/method-moqbroadcastproducer-publish-media h buf %))))))
+
 (defn producer-name
   "The track name the object chose for this producer — what a subscriber asks
   for by name."

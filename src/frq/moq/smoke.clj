@@ -41,6 +41,7 @@
             [frq.capture.v4l2 :as v4l2]
             [frq.capture.alsa :as alsa]
             [frq.av.plane :as plane]
+            [frq.av.audio :as audio]
             [jolt.ffi :as ffi]))
 
 (defn- check-contract []
@@ -521,6 +522,78 @@
             (h264/close! enc)
             (plane/stop!))))))) 
 
+(defn- tone
+  "20ms of a triangle at `amp`, int16 mono, in foreign memory."
+  [a amp]
+  (let [n audio/frame-samples
+        p (ffi/alloc a (* 2 n))]
+    (dotimes [i n]
+      (let [phase (mod i 100)
+            v (if (< phase 50)
+                (- (* phase (quot (* 2 amp) 50)) amp)
+                (- amp (* (- phase 50) (quot (* 2 amp) 50))))]
+        (ffi/write (+ p (* 2 i)) :int16 v)))
+    [p n]))
+
+(defn- check-audio
+  "A voice through the plane: Opus -> MoQ -> jitter buffer -> mix.
+
+  The voice belongs to a SECOND peer, and it has to: the mixer excludes our
+  own ring, because hearing your own microphone back is the thing headphones
+  exist to prevent. A test that published only its own audio would be
+  asserting on silence and calling it a bug.
+
+  The assertion is amplitude. Opus is lossy and a triangle comes back
+  rounded, but silence is unmistakable — and silence is exactly what a
+  broken jitter buffer produces, whether it fills and never drains or drains
+  before it fills.
+
+  The pump count matters too: the ring holds `target-depth` frames before it
+  plays anything, so a mix appearing on the first pump would mean the depth
+  was not being honoured."
+  []
+  (ffi/with-arena [a]
+    (let [[pcm _] (tone a 8000)
+          origin  (media/new-origin)
+          head-p  (ffi/alloc a 19)]
+      (audio/opus-head! head-p 1)
+      (plane/start! {:origin origin :path "/us"
+                     :source (fn [] nil)          ; no camera in this check
+                     :mic    (fn [] [pcm audio/frame-samples])
+                     :width 64 :height 64 :channels 1})
+      (let [b2  (media/create-broadcast! origin "/them")
+            p2  (media/publish-media-bytes! b2 "opus" head-p 19)
+            enc (opus/encoder audio/sample-rate 1 :voip)
+            out (ffi/alloc a 4000)]
+        (try
+          (let [deadline (+ (System/currentTimeMillis) 25000)]
+            (loop [pumps 0]
+              ;; The other participant keeps talking.
+              (let [n (opus/encode! enc pcm audio/frame-samples out 4000)]
+                (when-not (opus/dtx? n)
+                  (media/write-video-frame! p2 out n (* pumps 20000))))
+              (plane/pump!)
+              (let [mixed (plane/poll-audio!)]
+                (cond
+                  (and mixed (pos? (:peak mixed)))
+                  (do (println "  mixed audio after" pumps "pumps, peak" (:peak mixed)
+                               "over" (:samples mixed) "samples")
+                      (when (< (:peak mixed) 500)
+                        (throw (ex-info "the mix is effectively silent"
+                                        {:peak (:peak mixed)})))
+                      (when (< pumps 2)
+                        (throw (ex-info "played before the jitter buffer filled"
+                                        {:pumps pumps})))
+                      true)
+
+                  (> (System/currentTimeMillis) deadline)
+                  (throw (ex-info "no audio came back through the plane" {:pumps pumps}))
+
+                  :else (do (Thread/sleep 5) (recur (inc pumps)))))))
+          (finally
+            (opus/free-encoder! enc)
+            (plane/stop!)))))))
+
 (defn -main [& _]
   (println "libmoq_ffi smoke test")
   (let [steps [["contract" check-contract]
@@ -533,7 +606,8 @@
                ["v4l2"     check-v4l2-layouts]
                ["alsa"     check-alsa]
                ["devices"  check-enumeration]
-               ["plane"    check-plane]]]
+               ["plane"    check-plane]
+               ["audio"    check-audio]]]
     (doseq [[name f] steps]
       (println (str name ":"))
       (f))

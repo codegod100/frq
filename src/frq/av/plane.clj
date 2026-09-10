@@ -47,9 +47,11 @@
   also how the phone will pass a Camera2 buffer in later without this
   namespace learning about JNI."
   (:require [clojure.string :as str]
+            [frq.av.audio :as audio]
             [frq.moq.media :as media]
             [frq.moq.uniffi :as uniffi]
             [frq.codec.h264 :as h264]
+            [frq.codec.opus :as opus]
             [jolt.ffi :as ffi]))
 
 ;; --- state -------------------------------------------------------------------
@@ -74,13 +76,24 @@
   Everything that can fail does so HERE rather than at the first frame: the
   encoder validates its size, the decoder opens, and the subscribe settles,
   so a plane that comes up is one that can carry a picture."
-  [{:keys [origin path source width height fps bitrate camera?]
-    :or   {path "/frq" width 640 height 480 fps 30 bitrate 800000 camera? true}}]
+  [{:keys [origin path source mic width height fps bitrate camera? muted?
+           channels]
+    :or   {path "/frq" width 640 height 480 fps 30 bitrate 800000
+           camera? true muted? false channels 1}}]
   (stop!)
   (let [broadcast (media/create-broadcast! origin path)
         producer  (media/publish-media! broadcast "avc3")
         track     (media/producer-name producer)
-        consumer  (media/broadcast-consumer broadcast)]
+        consumer  (media/broadcast-consumer broadcast)
+        ;; The audio track rides the same publish_media as video — this
+        ;; object has no publish_audio, that being moq-ffi's `audio`
+        ;; feature. What it needs instead is an OpusHead up front: video
+        ;; resolves its parameters in band and audio does not.
+        [head-p head-n] (audio/opus-head! (ffi/alloc 19) channels)
+        mic-producer (when mic
+                       (media/publish-media-bytes! broadcast "opus"
+                                                   head-p head-n))]
+    (ffi/free head-p)
     (reset! plane
             {:broadcast broadcast
              :producer  producer
@@ -95,6 +108,13 @@
              :peers     {}
              :encoder   (h264/encoder {:width width :height height
                                        :fps fps :bitrate bitrate})
+             :mic-producer mic-producer
+             :mic-encoder  (when mic (opus/encoder audio/sample-rate channels :voip))
+             :mic          mic
+             :muted?       muted?
+             :channels     channels
+             :mix          (ffi/alloc (* 2 audio/frame-samples channels))
+             :mixed        nil
              :source    source
              :size      [width height]
              :camera?   camera?
@@ -110,7 +130,10 @@
   (when-let [p @plane]
     (try (h264/close! (:encoder p)) (catch Exception _ nil))
     (doseq [[_ peer] (:peers p)]
-      (try (h264/close-decoder! (:decoder peer)) (catch Exception _ nil)))
+      (try (h264/close-decoder! (:decoder peer)) (catch Exception _ nil))
+      (when-let [r (:ring peer)] (try (audio/close-ring! r) (catch Exception _ nil))))
+    (when-let [e (:mic-encoder p)] (try (opus/free-encoder! e) (catch Exception _ nil)))
+    (when-let [m (:mix p)] (try (ffi/free m) (catch Exception _ nil)))
     (reset! plane nil))
   nil)
 
@@ -122,6 +145,13 @@
   would have to rediscover it."
   [on?]
   (swap! plane #(when % (assoc % :camera? (boolean on?))))
+  nil)
+
+(defn set-muted!
+  "Stop feeding the encoder. The track stays published — a peer who saw it
+  vanish would have to rediscover it to hear you unmute."
+  [muted?]
+  (swap! plane #(when % (assoc % :muted? (boolean muted?))))
   nil)
 
 (defn force-keyframe!
@@ -197,6 +227,42 @@
                                    (normalise-path (:path p)))})))
       p)))
 
+(defn- pump-peer-audio!
+  "Advance one peer's audio: catalog says the track, then subscribe, then
+  decode into that peer's ring.
+
+  Separate from the video walk because the two are independent — a peer with
+  a camera off still has a voice, and blocking one on the other is how a
+  muted-video participant goes silent too."
+  [peer channels]
+  (cond
+    (nil? (get-in peer [:catalog :audio-track])) peer
+
+    (nil? (:audio-media peer))
+    (let [peer (if (:audio-subscribe peer)
+                 peer
+                 (assoc peer :audio-subscribe
+                        (media/subscribe-media! (:broadcast peer)
+                                                (get-in peer [:catalog :audio-track])
+                                                (get-in peer [:catalog :audio-container]))))]
+      (if-let [mc (settle (:audio-subscribe peer) nil)]
+        (assoc peer :audio-media mc :audio-subscribe nil
+                    :ring (audio/ring channels))
+        peer))
+
+    :else
+    (let [peer (if (:audio-pending peer)
+                 peer
+                 (assoc peer :audio-pending (media/next-frame! (:audio-media peer))))
+          got  (settle (:audio-pending peer)
+                       #(media/lift-media-frame
+                          %
+                          (fn [ptr len]
+                            (when (pos? len)
+                              (audio/push-packet! (:ring peer) ptr len)
+                              true))))]
+      (if got (assoc peer :audio-pending nil) peer))))
+
 (defn- pump-peer!
   "Walk one peer from announced to a decoded picture.
 
@@ -216,19 +282,31 @@
         (:consumer sub)
         (let [cp (or (:next sub) (media/next-catalog! (:consumer sub)))]
           (if-let [cat (settle cp media/lift-catalog)]
-            (if-let [[track video] (first (:video cat))]
-              (assoc peer :catalog {:track track :container (:container video)}
-                          :catalog-pending nil)
-              ;; A catalog with no video is a peer who is not sending a
-              ;; picture — audio only, or not yet publishing. Wait rather
-              ;; than treat it as an error.
-              (assoc peer :catalog-pending {:consumer (:consumer sub) :next nil}))
+            (let [[track video]  (first (:video cat))
+                  [atrack aud]   (first (:audio cat))]
+              ;; EITHER is enough. Requiring video here is how an audio-only
+              ;; peer waits for ever: with no picture coming the catalog is
+              ;; never accepted, so the audio track named in the same
+              ;; catalog is never read either, and someone with their camera
+              ;; off goes silent as well as dark.
+              (if (or track atrack)
+                (assoc peer :catalog {:track track
+                                      :container (:container video)
+                                      :audio-track atrack
+                                      :audio-container (:container aud)}
+                            :catalog-pending nil)
+                ;; Nothing published yet. Ask again.
+                (assoc peer :catalog-pending {:consumer (:consumer sub) :next nil})))
             (assoc peer :catalog-pending {:consumer (:consumer sub) :next cp})))
 
         :else
         (if-let [cc (settle (:sub sub) nil)]
           (assoc peer :catalog-pending {:consumer cc :next nil})
           peer)))
+
+    ;; No picture from this peer — audio only, or camera off. Not a state
+    ;; to advance out of; their audio walks on its own.
+    (nil? (get-in peer [:catalog :track])) peer
 
     ;; 2. Subscribe to the track the catalog named.
     (nil? (:media peer))
@@ -268,11 +346,27 @@
         (assoc peer :pending nil :frame (:payload decoded))
         (assoc peer :frame nil)))))
 
+(defn- pump-mic!
+  "One 20ms frame from the microphone, encoded and published."
+  [{:keys [mic mic-encoder mic-producer muted? pts channels]}]
+  (when (and mic mic-encoder mic-producer (not muted?))
+    (when-let [[pcm _] (mic)]
+      (ffi/with-arena [a]
+        (let [out (ffi/alloc a 4000)
+              n   (opus/encode! mic-encoder pcm audio/frame-samples out 4000)]
+          ;; DTX is the encoder saying this frame is silence and need not be
+          ;; sent. Sending it anyway would be bytes for nothing.
+          (when-not (opus/dtx? n)
+            (media/write-video-frame! mic-producer out n @pts)))))))
+
 (defn- pump-in!
   "Discover peers, then advance every one of them."
   [p]
   (let [p     (pump-announce! p)
-        peers (reduce-kv (fn [m path peer] (assoc m path (pump-peer! peer)))
+        peers (reduce-kv (fn [m path peer]
+                           (assoc m path (-> peer
+                                             pump-peer!
+                                             (pump-peer-audio! (:channels p)))))
                          {} (:peers p))]
     (assoc p
            :peers peers
@@ -289,7 +383,18 @@
   []
   (when-let [p @plane]
     (pump-out! p)
-    (reset! plane (pump-in! p)))
+    (pump-mic! p)
+    (let [p' (pump-in! p)
+          ;; Mix everyone EXCEPT ourselves: hearing your own voice back is
+          ;; the thing headphones exist to prevent.
+          rings (keep (fn [[_ peer]] (when-not (:self? peer) (:ring peer)))
+                      (:peers p'))
+          peak  (when (seq rings)
+                  (audio/mix-into! rings (:mix p') (:channels p')))]
+      (reset! plane (assoc p' :mixed (when peak
+                                       {:ptr (:mix p')
+                                        :samples audio/frame-samples
+                                        :peak peak})))))
   nil)
 
 (defn poll-frames!
@@ -306,6 +411,14 @@
   picture decoded."
   []
   (:frames @plane))
+
+(defn poll-audio!
+  "The mixed 20ms frame from the last `pump!`, or nil.
+
+  {:ptr :samples :peak} — interleaved int16 ready for `alsa/write!`, and
+  BORROWED like everything else here: the next pump mixes over it."
+  []
+  (:mixed @plane))
 
 (defn peers
   "The broadcast paths currently known, self included."
