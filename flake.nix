@@ -44,16 +44,13 @@
     # fetches those prebuilt — so this input is what `just run` builds against
     # and what an APK's Clojure side is read from, both at this rev.
     #
-    # Pinned all the same, and pinned to a rev: this input carries both halves of
-    # glimmer-vidya — libvidya, and the Jolt side that binds it — so an
-    # Pinned to `jvui-for-frq`: it
-    # carries jvui and glimmer-jvui — the toolkit the window is painted with
-    # now — and, merged in from no-moq-deps, the dependency split and the
-    # JOLT_WITHOUT_MOQ guard on the Android glue. It is
-    # branched from the rev this used to name rather than taken off main,
-    # because main has moved on to the Zig/dvui backend and a UI change is
-    # not what this pin is for.
+    # It carries jvui and glimmer-jvui — the toolkit the window is painted
+    # with now — and, from no-moq-deps, the dependency split and the
+    # JOLT_WITHOUT_MOQ guard on the Android glue. Both were on the
+    # `jvui-for-frq` branch while they were being written and are merged into
+    # main now, which is why this names a rev on main again.
     #
+    # Pinned all the same, and pinned to a rev, because an
     # unpinned `main` is a build whose native half is free to sit at a
     # different commit from the tree that talks to it. It did, and what the
     # drift cost was silence: the Jolt half sent a reaction pill's hover card
@@ -64,7 +61,7 @@
     # drift this comment warns about wearing a different hat: one input, and
     # the window and the terminal are the same library either way.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=d6b9f3af2f4baac285b441150ec08d86a29b701d";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=ce4d910f39e70b3954a64cc88499480d0ac4bab9";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
