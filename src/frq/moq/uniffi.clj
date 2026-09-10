@@ -256,6 +256,19 @@
   (let [n (r-i32! c)]
     (if (zero? n) "" (ffi/read-bytes (take! c n) n))))
 
+(defn r-bytes-span!
+  "An i32 byte length, then that many RAW bytes — answered as a BORROWED span,
+  {:ptr :len}, not copied.
+
+  `r-string!` is the wrong tool for a payload: it decodes UTF-8, and H.264 is
+  not text. It is also the wrong SHAPE. frq.av's rule is that a video frame
+  goes from the decoder's buffer to the texture as a pointer and never becomes
+  a jolt value, so what belongs here is the address, valid exactly as long as
+  the RustBuffer it points into."
+  [c]
+  (let [n (r-i32! c)]
+    {:ptr (take! c n) :len n}))
+
 (defn r-optional!
   "A flag byte, then `f` when it is set."
   [c f]
@@ -270,6 +283,9 @@
 
       [[:i32 3] [:u8 0]]        ; MoqContainer::LOC, then Optional::None
 
+  A :bytes op takes [pointer length] and copies those bytes as they are, which
+  is how a raw frame crosses without becoming a jolt string on the way.
+
   Strings are materialised FIRST, in the arena, because their wire length is a
   UTF-8 byte count and jolt will only tell us one by encoding the string — so
   the total size is not known until every string has been. `string->ptr`
@@ -281,17 +297,21 @@
   (ffi/with-arena [a]
     (let [;; [op value encoded-pointer byte-count]
           prepared (mapv (fn [[op v]]
-                           (if (= op :string)
-                             (let [p (ffi/string->ptr a v)]
-                               [op v p (max 0 (dec (ffi/size p)))])
+                           (case op
+                             :string (let [p (ffi/string->ptr a v)]
+                                       [op v p (max 0 (dec (ffi/size p)))])
+                             ;; [pointer length], copied straight out of
+                             ;; foreign memory — never through a jolt value.
+                             :bytes  [op v (first v) (second v)]
                              [op v nil nil]))
                          ops)
           n (reduce (fn [n [op _ _ k]]
                       (+ n (case op
                              (:u8 :bool) 1
-                             :i32 4
+                             (:i32 :u32) 4
                              :u64 8
-                             :string (+ 4 k))))
+                             ;; Both carry an i32 length and then k bytes.
+                             (:string :bytes) (+ 4 k))))
                     0 prepared)
           buf (ffi/alloc a (max n 1))
           fbs (ffi/alloc a (ffi/layout-size foreign-bytes))
@@ -310,11 +330,12 @@
                                (if (= op :bool) (if v 1 0) v))
                     (inc off))
 
-                :i32    (do (put-int! off 4 v) (+ off 4))
+                (:i32 :u32) (do (put-int! off 4 v) (+ off 4))
                 :u64    (do (put-int! off 8 v) (+ off 8))
-                :string (do (put-int! off 4 k)
-                            (when (pos? k) (ffi/copy p (+ buf off 4) k))
-                            (+ off 4 k)))
+                (:string :bytes)
+                (do (put-int! off 4 k)
+                    (when (pos? k) (ffi/copy p (+ buf off 4) k))
+                    (+ off 4 k)))
               (next todo)))))
       (ffi/write fbs foreign-bytes {:len n :data buf})
       (with-out-status #(raw/rustbuffer-from-bytes dest fbs %))
