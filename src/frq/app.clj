@@ -157,6 +157,46 @@
   []
   (and @terminal? @terminal-graphics?))
 
+(defonce ^:private derived-cells
+  ;; One cell per question, kept for the session: a cell made afresh on every
+  ;; render would add a watch to its source each time and never take it off.
+  (clojure.core/atom {}))
+
+(defn- derived
+  "A reactive cell for one row's answer to a question about shared state, made
+  once per `k` and kept.
+
+  A message row that read `s/highlight` itself was re-rendered whenever the
+  highlight moved anywhere — every row in the backlog, for one jump — and the
+  same for a hover, an open picker, or any face or picture finishing a fetch.
+  A reaction is recomputed on each such change, which is a comparison, but it
+  wakes the rows that read it only when its answer changes: the two rows a
+  jump moves between, the one face under the pointer.
+
+  Kept rather than collected: glimmer's reactions have no way to unsubscribe,
+  so a cell per message lasts as long as the session does."
+  [k f]
+  (or (get @derived-cells k)
+      (let [cell (r/reaction (f))]
+        (swap! derived-cells assoc k cell)
+        cell)))
+
+(defn- avatar-path
+  "The cell answering where `actor`'s face is on disk, once it is."
+  [actor]
+  (derived [:avatar actor] #(do @s/media-tick (avatars/path-when-ready actor))))
+
+(defn- image-path
+  "The cell answering where the picture behind `url` is on disk, once it is."
+  [url]
+  (derived [:image url] #(do @s/media-tick (media/path-when-ready url))))
+
+(defonce ^:private hovered-face
+  ;; Which message's face the pointer is on. `profile/hovering` says whose, and
+  ;; the same person's face is on every message they sent: asked by name alone,
+  ;; one hover woke every one of those rows and hung a card off each face.
+  (atom nil))
+
 ;; How big a face is on a message, in points — the size the window has always
 ;; drawn one at. A terminal's cell is eight points across and sixteen down, so
 ;; the same number is four columns by two rows there: a cached 128-pixel
@@ -562,14 +602,19 @@
   than a button with the emoji as its label — the chip draws the glyph from the
   Twemoji pack, in colour, where a label gets whatever the text font has."
   [channel m]
-  (let [reactions (:reactions m)]
+  (let [reactions (:reactions m)
+        ;; Which of this message's pills the pointer is on, if any. Asked once
+        ;; per message, so moving between pills wakes the rows involved and not
+        ;; every row that has a reaction on it.
+        hovered @(derived [:pill-hover (:id m)]
+                          #(let [h @s/reaction-hover]
+                             (when (= (:id m) (:id h)) (:emoji h))))]
     ;; `into` and not a lazy `for` inside the vector. The pills read
-    ;; `hovering-reaction?` — a ratom — and a ratom read while a lazy seq is
-    ;; being realised somewhere other than the render is a read the component
-    ;; never records, so the row went on showing what it showed before the
-    ;; pointer arrived. It is the one place in this file whose ratom read is
-    ;; inside the `for` body rather than above it, which is why it is the one
-    ;; place that needs this.
+    ;; `my-reaction?` — a ratom — and a ratom read while a lazy seq is being
+    ;; realised somewhere other than the render is a read the component never
+    ;; records, so the row went on showing what it showed before. The pictures
+    ;; in `message-body` are the other place a ratom is read inside a `for`,
+    ;; and are made eager for the same reason.
     (into
      [:hbox {:key :pills :spacing (chip-gap)}]
      (for [emoji (sort (keys reactions))]
@@ -588,7 +633,7 @@
         ;; Only the hovered pill carries a card: the panel is painted from
         ;; whatever children the node has, and a channel's worth of unseen
         ;; lists is a tree nobody looks at.
-        (when (and (platform/desktop?) (s/hovering-reaction? (:id m) emoji))
+        (when (and (platform/desktop?) (= emoji hovered))
           [reactor-card emoji (get reactions emoji)])]))))
 
 (def ^:private picker-columns
@@ -766,7 +811,7 @@
        ;; Always an avatar, picture or not: the initial stands in until the
        ;; fetch lands, and for the guests who have no profile at all, which
        ;; is what keeps the column of faces straight down the left.
-       ;; Reading the tick subscribes this row to a fetch finishing.
+       ;; `avatar-path` is what wakes this row when that fetch lands.
        ;; The face is also the way to the person behind it: Vidya's plain
        ;; label does not answer the pointer, so the tap sleek puts on the
        ;; nick lives here, on the one thing in the row that does.
@@ -779,18 +824,21 @@
        ;; terminal can draw a picture there is a face after all, hung beside
        ;; the whole message rather than off its heading — `message-row` has it.
        (when-not @terminal?
-         (let [_ @s/media-tick]
+         (let [src @(avatar-path (:actor m))]
            [:avatar (cond-> {:label (:from m)
-                             :src (or (avatars/path-when-ready (:actor m)) "")
+                             :src (or src "")
                              :size face-size
                              :on-click #(profile/open! (:from m) (:actor m))}
                       (platform/desktop?)
-                      (assoc :on-hover #(profile/hover! (:from m) (:actor m))
+                      (assoc :on-hover #(do (reset! hovered-face (:id m))
+                                            (profile/hover! (:from m) (:actor m)))
                              :on-unhover #(profile/unhover! (:from m))))
             ;; Only the hovered face carries one: a card is painted when its
             ;; node has children, and the pointer is on one face at a time.
             (when (and (platform/desktop?)
-                       (= (:from m) (:nick @profile/hovering)))
+                       @(derived [:hovering (:id m) (:from m)]
+                                 #(and (= (:id m) @hovered-face)
+                                       (= (:from m) (:nick @profile/hovering)))))
               [hover-card (:from m) (:actor m)])]))
        ;; The name carries the row, so it is set at body size in the plain
        ;; text colour: dimmed caption made the one thing you scan a column
@@ -837,7 +885,7 @@
    ;; has no msgid, and neither does a closed picker — so `nil = nil` was
    ;; every one of those messages opening a picker of its own at startup.
    [:vbox {:key :picker :margin-bottom 4}
-    (when (and (:id m) (= (:id m) (:id @s/reacting)))
+    (when (and (:id m) @(derived [:reacting (:id m)] #(= (:id m) (:id @s/reacting))))
       [emoji-picker])]
    ;; Pictures under the line that linked them. The link stays: it is what a
    ;; failed fetch, an unsupported format, or a phone with no TLS leaves you.
@@ -845,15 +893,17 @@
     :images
     [:vbox {:key :images :spacing 4}
      (when (seq (:images m))
-       ;; Reading the tick is what subscribes this row to a fetch finishing.
-       (let [_ @s/media-tick]
-         (for [url (:images m)]
-           (when-let [path (media/path-when-ready url)]
-             [:image {:key url
-                      :src path
-                      :max-height (preview-height)
-                      :max-width (preview-width)
-                      :on-click #(reset! s/lightbox {:path path :url url})}]))))])
+       ;; Eager, so each read happens during the render and is recorded — see
+       ;; `reaction-row`. Each picture is read through `image-path`, which
+       ;; wakes this row for its own pictures landing and not for everyone's.
+       (doall
+        (for [url (:images m)]
+          (when-let [path @(image-path url)]
+            [:image {:key url
+                     :src path
+                     :max-height (preview-height)
+                     :max-width (preview-width)
+                     :on-click #(reset! s/lightbox {:path path :url url})}]))))])
    ;; Reactions go last, under whatever the message turned out to be: a
    ;; line with a picture on it is the picture, and pills between the words
    ;; and the image they introduce read as reactions to the words alone.
@@ -880,7 +930,12 @@
   (let [;; What a jump landed on wears a surface of its own for a moment, so
         ;; the answer to "which one was I sent to" is on the screen rather
         ;; than in the reader's count of rows.
-        highlit? (boolean (and (:id m) (= (:id m) @s/highlight)))]
+        ;; Through `derived`, as is everything below that asks about shared
+        ;; state: a row that read the highlight itself re-rendered for every
+        ;; jump anywhere in the backlog.
+        highlit? (boolean (and (:id m)
+                               @(derived [:highlit (:id m)]
+                                         #(= (:id m) @s/highlight))))]
     [:vbox {:key i :spacing 2 :margin 0
             ;; Clear of the right edge: the actions ride that edge, and the
             ;; list's scrollbar rides it too — without this the ↩ is what the
@@ -891,7 +946,9 @@
             ;; closed-up line to belong to.
             :margin-top 10
             ;; The jump target is what a "go to message" click scrolls to.
-            :scroll-here (boolean (and (:id m) (= (:id m) @s/jump-to)))}
+            :scroll-here (boolean (and (:id m)
+                                       @(derived [:jump (:id m)]
+                                                 #(= (:id m) @s/jump-to))))}
      ;; The gap above, where the margin cannot be one. `:margin-top 10` is
      ;; most of a row in a window and nothing at all in a terminal — ten points
      ;; against a row of sixteen, rounded down, because a gap that thin is what
@@ -907,12 +964,11 @@
      (if (terminal-face?)
        [:hbox {:key :faced :spacing 8}
         [:vbox {:key :face :width-request face-size}
-         (let [_ @s/media-tick]
-           (when-let [path (avatars/path-when-ready (:actor m))]
-             [:image {:key :picture
-                      :src path
-                      :max-width face-size
-                      :max-height face-size}]))]
+         (when-let [path @(avatar-path (:actor m))]
+           [:image {:key :picture
+                    :src path
+                    :max-width face-size
+                    :max-height face-size}])]
         [message-body m highlit?]]
        [message-body m highlit?])]))
 
