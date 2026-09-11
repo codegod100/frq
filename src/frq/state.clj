@@ -18,8 +18,7 @@
             [frq.oauth :as oauth]
             [frq.platform :as platform]
             [frq.store :as store]
-            [frq.upload :as upload]
-            [glimmer-jvui.core :as gui]))
+            [frq.upload :as upload]))
 
 (def default-host "irc.freeq.at")
 (def default-port "6697")
@@ -1368,7 +1367,7 @@
   []
   (let [path (paste-path)]
     (host/mkdirs! (str (media/cache-dir) "/outgoing"))
-    (if-not (gui/clipboard-image-png! path)
+    (if-not (platform/clipboard-image-png! path)
       ;; Android has no clipboard of pictures to read at all, which is the
       ;; other half of why the picker below exists.
       (reset! error "No picture on the clipboard.")

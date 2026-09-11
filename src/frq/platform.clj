@@ -37,7 +37,7 @@
 
 (defn override!
   "Replace some of what the platform does, for a backend other than jvui.
-  Keys: :after! :quit! :pick-image! :picked-image!."
+  Keys: :after! :quit! :pick-image! :picked-image! :clipboard-image-png!."
   [m]
   (swap! overrides merge m)
   nil)
@@ -62,6 +62,12 @@
   "Write the chosen picture to `path`; true once, when one has been chosen."
   [path]
   ((get @overrides :picked-image! gui/picked-image!) path))
+
+(defn clipboard-image-png!
+  "Write the picture on the clipboard to `path` as PNG; true when there was one.
+  jvui reads it through its own window, so another backend lends its own."
+  [path]
+  ((get @overrides :clipboard-image-png! gui/clipboard-image-png!) path))
 
 (defn return-url
   "The link that brings the app back to the front once the browser is done, or

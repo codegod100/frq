@@ -36,11 +36,12 @@
 (defn -main [& _]
   ;; What frq asks of glimmer-jvui directly, answered by this backend instead:
   ;; jvui's timers only run inside jvui's loop, its quit closes jvui's window,
-  ;; and it has no picture chooser on a desktop.
+  ;; its picture chooser and its clipboard of pictures belong to jvui's window.
   (platform/override! {:after! cosmic/after!
                        :quit! cosmic/quit!
                        :pick-image! cosmic/pick-image!
-                       :picked-image! cosmic/picked-image!})
+                       :picked-image! cosmic/picked-image!
+                       :clipboard-image-png! cosmic/clipboard-image-png!})
   (when-let [path (not-empty (System/getenv "FRQ_COSMIC_DUMP"))]
     (dump-tree-to! path))
   (app/start! {:after! cosmic/after!
