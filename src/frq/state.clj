@@ -16,6 +16,7 @@
             [frq.avatars :as avatars]
             [frq.media :as media]
             [frq.oauth :as oauth]
+            [frq.platform :as platform]
             [frq.store :as store]
             [frq.upload :as upload]
             [glimmer-jvui.core :as gui]))
@@ -1450,7 +1451,7 @@
   []
   (let [path (paste-path)]
     (host/mkdirs! (str (media/cache-dir) "/outgoing"))
-    (when (gui/picked-image! path)
+    (when (platform/picked-image! path)
       (reset! choosing nil)
       (attach! path "picture.png")
       true)))
@@ -1460,7 +1461,7 @@
     (when-not (take-chosen!)
       (if (pos? left)
         (do (reset! choosing (dec left))
-            (gui/after! choose-poll-ms poll-chosen!))
+            (platform/after! choose-poll-ms poll-chosen!))
         (reset! choosing nil)))))
 
 (defn choose-image!
@@ -1473,10 +1474,10 @@
   permission, browsing finds almost nothing to show. False where there is no
   chooser, which is every desktop, and there browsing is the answer."
   []
-  (when (gui/pick-image!)
+  (when (platform/pick-image!)
     (reset! error nil)
     (reset! choosing choose-poll-limit)
-    (gui/after! choose-poll-ms poll-chosen!)
+    (platform/after! choose-poll-ms poll-chosen!)
     true))
 
 (defn open-image-picker!

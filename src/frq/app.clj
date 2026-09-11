@@ -217,6 +217,16 @@
   [:button {:label "Close"
             :on-click #(s/leave-channel! name)}])
 
+(defn- preview-line
+  "The last line of a conversation, as one line: a pasted shell script or a
+  long link is a card's worth of text otherwise, and the cards stop reading as
+  a list of rooms."
+  [text]
+  (let [line (str/replace (str text) #"\s+" " ")]
+    (if (> (count line) 90)
+      (str (subs line 0 89) "…")
+      line)))
+
 (defn conversation-row [buffer]
   (let [name (:name buffer)
         ;; Defaulted rather than assumed. Everything that builds a buffer
@@ -257,7 +267,7 @@
       ;; neither — a room with your name in it always has a line to count.
       (when (pos? unread)
         [:label {:label (str (if (:mention? buffer) "◆ @ " "● ") unread)}])]
-     [:dim-label {:label (s/last-preview buffer)}]
+     [:dim-label {:label (preview-line (s/last-preview buffer))}]
      (when-not @terminal?
        [:hbox {:spacing 8 :wrap false}
         [open-button name]
@@ -521,11 +531,11 @@
                             (reset! s/highlight id)
                             ;; Off again once the frame that scrolled has
                             ;; been painted, so the reader keeps the view.
-                            (gui/after! 120 (fn [] (reset! s/jump-to nil)))
+                            (platform/after! 120 (fn [] (reset! s/jump-to nil)))
                             ;; The highlight stays long enough to be read,
                             ;; and only clears itself: a later jump elsewhere
                             ;; owns the highlight from then on.
-                            (gui/after! 2000
+                            (platform/after! 2000
                                           (fn []
                                             (when (= id @s/highlight)
                                               (reset! s/highlight nil)))))}]
@@ -1258,7 +1268,7 @@
 ;; be told to leave. A column with `:fill-height` and no width takes the whole
 ;; row — so the panel is only ever on screen if the message list is given a
 ;; width that stops short of it.
-(def ^:private users-width 180)
+(def ^:private users-width 150)
 
 ;; How many lines the compose field is currently drawn as. The window backend
 ;; says so when it changes — a field with room to grow wraps a long message
@@ -1324,7 +1334,10 @@
   ;; The name is a button because a person is somewhere to go: pressing one
   ;; opens a conversation with them.
   [:hbox {:key nick :spacing 6 :wrap false}
-   [:dim-label {:label (if (seq prefix) prefix " ")}]
+   ;; In a slot of its own width, so an "@" and a space take the same room and
+   ;; the names line up whatever mode is in front of them.
+   [:vbox {:key :mode :width-request 14}
+    [:dim-label {:label (if (seq prefix) prefix " ")}]]
    [:button {:label nick :on-click #(s/open-dm! nick)}]])
 
 (defn users-panel
@@ -1618,9 +1631,28 @@
 
 ;; ---------------------------------------------------------------- discover
 
+(defn- tab-screen
+  "One of the three screens the tab bar moves between, in the chats screen's
+  shape: the title at the top, the tabs pinned at the bottom, and `body`
+  scrolling between them.
+
+  The same shape for all three, so switching tabs moves nothing but the
+  middle. As pages they were centred columns of their own widths with the tabs
+  wherever the content happened to end, and every switch resized the screen
+  under the pointer."
+  [title scroll-key & body]
+  [:vbox {:spacing 8 :margin 12 :fill-height true}
+   [:title {:label title}]
+   [:vbox {:key :list :fill-height true}
+    (into [:scroll {:scroll-key scroll-key :orientation :vertical
+                    :reserve (below-list) :spacing 8}]
+          body)]
+   [:vbox {:key :foot :spacing 8}
+    [:separator {}]
+    [tab-bar]]])
+
 (defn discover-screen []
-  [:page {:max-width 620}
-   [:title {:label "Discover"}]
+  (tab-screen "Discover" "discover-list"
    [:dim-label {:label "Popular channels on freeq."}]
    [error-note]
    (for [[name blurb] s/popular-channels]
@@ -1630,15 +1662,12 @@
         [:dim-label {:label blurb}]
         [:button {:label (if joined? "Open" "Join")
                   :kind :primary
-                  :on-click #(if joined? (s/open-channel! name) (s/join! name))}]]))
-   [:separator {}]
-   [tab-bar]])
+                  :on-click #(if joined? (s/open-channel! name) (s/join! name))}]]))))
 
 ;; ---------------------------------------------------------------- settings
 
 (defn settings-screen []
-  [:page {:max-width 520}
-   [:title {:label "Settings"}]
+  (tab-screen "Settings" "settings-list"
    [:card {}
     [:title-2 {:label "Connection"}]
     [:status {:label @s/status :live (s/connected?)}]
@@ -1671,9 +1700,7 @@
    [:card {}
     [:title-2 {:label "frq"}]
     [:dim-label {:label "freeq client in jolt — glimmer components on the Vidya/egui backend."}]
-    [:button {:label "Quit" :on-click gui/quit!}]]
-   [:separator {}]
-   [tab-bar]])
+    [:button {:label "Quit" :on-click platform/quit!}]]))
 
 ;; ---------------------------------------------------------------- shell
 

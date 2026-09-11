@@ -29,6 +29,40 @@
     (gui/open-url! (or url ""))
     (catch Exception _ false)))
 
+(defonce ^:private overrides
+  ;; What a backend other than glimmer-jvui does in place of jvui's own. Filled
+  ;; in by the entry point that installs that backend — `frq.cosmic` — before
+  ;; the app starts; empty means the window's.
+  (atom {}))
+
+(defn override!
+  "Replace some of what the platform does, for a backend other than jvui.
+  Keys: :after! :quit! :pick-image! :picked-image!."
+  [m]
+  (swap! overrides merge m)
+  nil)
+
+(defn after!
+  "Run `f` on the UI thread in about `ms` milliseconds. jvui's timers only run
+  inside jvui's loop, so a backend with a loop of its own has to lend its own."
+  [ms f]
+  ((get @overrides :after! gui/after!) ms f))
+
+(defn quit!
+  "Close the window."
+  []
+  ((get @overrides :quit! gui/quit!)))
+
+(defn pick-image!
+  "Open the platform's picture chooser; true when there is one and it opened."
+  []
+  ((get @overrides :pick-image! gui/pick-image!)))
+
+(defn picked-image!
+  "Write the chosen picture to `path`; true once, when one has been chosen."
+  [path]
+  ((get @overrides :picked-image! gui/picked-image!) path))
+
 (defn return-url
   "The link that brings the app back to the front once the browser is done, or
   nil where the browser never covered it. `frq://auth` is the manifest's own

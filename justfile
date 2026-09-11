@@ -163,6 +163,46 @@ tui *args:
 
     exec jolt -Sdeps "$deps" -m frq.tui "$@"
 
+# `run` with glimmer-cosmic under it, libcosmic doing the painting. There is
+# no pin to fall back on: the flake's jolt-native builds no libjoltcosmic, so
+# this needs a jolt-native checkout with one built, named by FRQ_JOLT_NATIVE
+# or found beside this tree the way the shell always looks.
+#
+#     nix develop --command cargo build --release -p jolt-cosmic    in that checkout
+#
+# Inside jolt-native's shell and not with the host's cargo: jolt runs on the
+# store's glibc, and an object linked against a newer host one (Arch's, here)
+# asks for symbol versions that glibc does not have — dlopen refuses it, and
+# jolt reports that as the library not being found at all.
+#
+# nixGL for the same reason as `run`: libcosmic paints through wgpu.
+#
+# The same screens, painted by libcosmic. A spike: most tags paint as columns.
+cosmic *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${JOLT_NATIVE_LIB:-}" ]; then
+        exec {{nix}} develop . --max-jobs {{jobs}} --command just cosmic "$@"
+    fi
+
+    if [ -z "${FRQ_JOLT_NATIVE:-}" ] || [ ! -e "$FRQ_JOLT_NATIVE/target/release/libjoltcosmic.so" ]; then
+        echo "frq: no libjoltcosmic.so in ${FRQ_JOLT_NATIVE:-the pin} — nix develop --command cargo build --release -p jolt-cosmic in a jolt-native checkout, then FRQ_JOLT_NATIVE=<it> just cosmic" >&2
+        exit 1
+    fi
+
+    deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
+    deps="$deps nandi/glimmer-jvui {:local/root \"$GLIMMER_JVUI_SRC\"}"
+    deps="$deps jvui/jvui {:local/root \"$JVUI_SRC\"}"
+    deps="$deps nandi/glimmer-cosmic {:local/root \"$FRQ_JOLT_NATIVE/glimmer-backends/glimmer-cosmic\"}}}"
+
+    export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+    runner=()
+    [ -e /run/current-system ] || runner=("$NIXGL")
+
+    exec "${runner[@]}" jolt -Sdeps "$deps" -m frq.cosmic "$@"
+
 # The same classpath as `tui`, with an nREPL on it instead of a `-main`: a
 # session that can require `frq.tui` and then redefine a component while it is
 # on screen, which is a second and not the minute a rebuild costs.
