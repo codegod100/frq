@@ -1548,7 +1548,21 @@
       ;; something else on it".
       ;; And the same picture chosen rather than pasted, for a phone — which has
       ;; no Ctrl+V, and no clipboard of pictures to read if it had.
-      [:button {:label "🖼" :on-click s/open-image-picker!}]
+      ;; In a window, a picture on a Delight 2 tile (src/frq/icons, on the
+      ;; geometry delight-icons generates its tiles with): grey frame, dark
+      ;; square, cream glyph — where the emoji was a colour photo that matched
+      ;; nothing else in the bar. Its path is read from the working directory,
+      ;; which is the tree under `just run` and `just cosmic` and the store
+      ;; copy under the flake's launcher. A terminal has no pixels to put
+      ;; it in, and an APK carries no src/ to read it from — both keep the glyph.
+      (if (and (platform/desktop?) (not @terminal?))
+        [:image {:src "src/frq/icons/insert-image.png"
+                 :size [36 36]
+                 ;; for a backend that sizes a picture by its bounds instead
+                 :max-width 36
+                 :max-height 36
+                 :on-click s/open-image-picker!}]
+        [:button {:label "🖼" :on-click s/open-image-picker!}])
       ;; In a terminal the row is the width of the screen and a message is
       ;; longer than 260 points of it: the field takes the surplus and wraps
       ;; into three rows rather than scrolling one line sideways.
