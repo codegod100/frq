@@ -172,7 +172,7 @@
     "jolt-native-android": {
       "flake": false,
       "locked": {
-        "lastModified": 1789018716,
+        "lastModified": 1789098143,
         "narHash": "sha256-HgVSQR2XiS3De/gP9Z1JZ2Tqj4yPzzN6mx2Xyp6DuRg=",
         "type": "tarball",
         "url": "https://gitlab.com/api/v4/projects/nandithebull%2Fjolt-native/packages/generic/jolt-native/latest/android-arm64-v8a.tar.gz"
