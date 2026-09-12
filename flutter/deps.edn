@@ -4,9 +4,14 @@
  ;; everything shared is .cljc and everything jolt-only stays .clj: the
  ;; extension is the boundary, enforced by the compiler rather than by
  ;; convention.
- :paths ["src" "../common"]
+ :paths ["src"]
 
- :deps {tensegritics/clojuredart
+ ;; `../common` is a dependency and not a path: tools.deps deprecated `:paths`
+ ;; pointing outside the project, and `:local/root` is what it deprecated them
+ ;; in favour of. common/deps.edn puts the same directory on the classpath.
+ :deps {frq/common {:local/root "../common"}
+
+        tensegritics/clojuredart
         {:git/url "https://github.com/Tensegritics/ClojureDart.git"
          ;; ClojureDart HEAD as of 2026-09-12. It has no releases; a sha is
          ;; the only pin there is.

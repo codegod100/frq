@@ -521,11 +521,13 @@
                 export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 mkdir -p "$HOME" "$PUB_CACHE" "$GITLIBS" "$cache/m2"
 
-                # The stub: our dependency files, nothing of our source. `:paths`
-                # still names ../common, so that has to exist for tools.deps to
-                # build a classpath — empty is enough.
+                # The stub: our dependency files, nothing of our source.
+                # ../common is a :local/root dependency now, so it has to exist
+                # *and* carry a deps.edn for tools.deps to resolve — an empty
+                # directory with that one file in it is enough.
                 proj="$NIX_BUILD_TOP/stub"
                 mkdir -p "$proj/src/stub" "$NIX_BUILD_TOP/common"
+                cp ${./common/deps.edn} "$NIX_BUILD_TOP/common/deps.edn"
                 cp ${./flutter/deps.edn} "$proj/deps.edn"
                 cp ${./flutter/pubspec.yaml} "$proj/pubspec.yaml"
                 chmod u+w "$proj/deps.edn" "$proj/pubspec.yaml"

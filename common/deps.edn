@@ -1,0 +1,9 @@
+{;; This directory is a dependency rather than a source path, and only because
+ ;; tools.deps has deprecated `:paths` that leave the project: `../common` in
+ ;; flutter/deps.edn warned on every build. `:local/root` is the supported way
+ ;; to say the same thing, and it needs a deps.edn here to point at.
+ ;;
+ ;; Nothing else: the deps of the two halves that compile this belong to those
+ ;; halves. `.` is the whole directory, so frq.clock, frq.store and frq.io land
+ ;; on the classpath exactly as they did.
+ :paths ["."]}
