@@ -13,14 +13,15 @@
   (:require [clojure.string :as str]))
 
 (defn parse-line
-  "An IRC line into {:tags :prefix :command :params}. The trailing parameter
+  "An IRC line into {:raw :tags :prefix :command :params}. The trailing parameter
   (after \" :\") keeps its spaces; everything before it splits on whitespace.
 
   IRCv3 tags come first when there are any. A connection that negotiates CAP
   gets them where a bare one does not — which is why a client that ignores them
   looks fine as a guest and goes silent once it authenticates."
   [line]
-  (let [line (str/trimr line)
+  (let [raw (str/trimr line)
+        line raw
         [tags line] (if (str/starts-with? line "@")
                       (let [i (str/index-of line " ")]
                         [(subs line 1 i) (str/triml (subs line i))])
@@ -33,7 +34,11 @@
         head (if i (subs rest-line 0 i) rest-line)
         trailing (when i (subs rest-line (+ i 2)))
         parts (remove str/blank? (str/split head #" "))]
-    {:tags tags
+    {;; The line this was read off, kept so a reader can say what actually
+     ;; arrived rather than what we made of it — a tag the server dropped is
+     ;; invisible in every field below.
+     :raw raw
+     :tags tags
      :account (when tags
                 (second (re-find #"(?:^|;)account=([^;]*)" tags)))
      :prefix prefix

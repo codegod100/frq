@@ -759,6 +759,47 @@
                                                 (actions/open-channel! last-room)
                                                 (actions/join! auto-join)))
 
+                                          ;; IRCv3 standard replies. The
+                                          ;; server's way of refusing
+                                          ;; something it took in and did not
+                                          ;; do — a signature it would not
+                                          ;; verify, a tag it would not
+                                          ;; accept, a command it would not
+                                          ;; run. Nothing read these, so every
+                                          ;; such refusal arrived, parsed, and
+                                          ;; was dropped: the send looked like
+                                          ;; it worked and the line never
+                                          ;; reached the room. FAIL is an
+                                          ;; error because the thing did not
+                                          ;; happen; WARN is the same shape
+                                          ;; and did, so it only goes to the
+                                          ;; log.
+                                          ;;
+                                          ;; `FAIL <command> <code> [context…]
+                                          ;; :description`. Worded as
+                                          ;; `frq.state` words it — the same
+                                          ;; refusal should read the same on
+                                          ;; both halves — with the code kept,
+                                          ;; because "refused" is what a
+                                          ;; reader needs and the code is what
+                                          ;; a bug report does.
+                                          (= "FAIL" cmd)
+                                          (let [ps (vec (:params m))
+                                                why (str (or (first ps) "Request")
+                                                         " refused — "
+                                                         (if (seq text)
+                                                           text "no reason given")
+                                                         " (" (second ps) ")")]
+                                            ;; A refusal before 001 is a
+                                            ;; connect that will not finish, so
+                                            ;; it takes the connect screen
+                                            ;; down with it rather than
+                                            ;; leaving the spinner up behind
+                                            ;; the message.
+                                            (if @cells/connecting?
+                                              (fail! why)
+                                              (reset! cells/error why)))
+
                                           (contains? registration-failed cmd)
                                           (fail! (if (= "433" cmd)
                                                    (str "Nick " @cells/form-nick

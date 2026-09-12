@@ -15,8 +15,28 @@
   What comes out is `frq.irc.parse/parse-line`'s maps — the same parser the
   desktop runs, out of common/."
   (:require ["dart:convert" :as conv]
+            ["dart:developer" :as dev]
             ["dart:io" :as io]
             [frq.irc.parse :as parse]))
+
+;; Whether to log every line in and out, under the name `frq.wire`.
+;;
+;; On by default because the questions it answers are the ones a client cannot
+;; answer any other way: what a tag looked like when it left, and whether the
+;; server sent it back. A field on a parsed message says what we made of a
+;; line; only the line says what arrived.
+;;
+;; `dart:developer` rather than stdout, so it reaches both targets the same
+;; way — a terminal under `just flutter-desktop`, and `adb logcat` on a phone.
+;;
+;; A comment rather than a docstring because `defonce` takes none: it is
+;; `(defonce name expr)` and nothing else, and the extra form is an arity
+;; error the compiler reports against the namespace rather than the line.
+(defonce wire-log? (atom true))
+
+(defn- wire! [direction line]
+  (when @wire-log?
+    (dev/log (str direction " " line) .name "frq.wire")))
 
 (defn ^:async connect!
   "Open a connection and start reading it.
@@ -54,13 +74,19 @@
                      (doseq [raw whole]
                        (let [line (.trim (str raw))]
                          (when (and on-msg (pos? (count line)))
+                           (wire! "<" line)
                            (let [m (parse/parse-line line)]
                              ;; PING is answered here rather than upstairs: a
                              ;; client that leaves it to the reducer is one
                              ;; queue away from a timeout, and nothing about
                              ;; the answer is a decision.
                              (when (= "PING" (:command m))
-                               (.write sock (str "PONG :" (first (:params m)) "\r\n")))
+                               ;; Logged like any other write even though it is
+                               ;; keepalive noise: a log that quietly omits a
+                               ;; line is worse than a long one.
+                               (let [pong (str "PONG :" (first (:params m)))]
+                                 (wire! ">" pong)
+                                 (.write sock (str pong "\r\n"))))
                              (on-msg m)))))))
                  .onDone (fn [] (when on-close (on-close nil)))
                  .onError (fn [e _] (when on-close (on-close (str e))))
@@ -68,6 +94,7 @@
     sock))
 
 (defn send-line! [^io/Socket sock line]
+  (wire! ">" line)
   (.write sock (str line "\r\n")))
 
 (defn close! [^io/Socket sock]
