@@ -115,6 +115,20 @@
     (doseq [url urls] (media/fetch! url bump!))
     urls))
 
+(defn- edit-message!
+  "Rewrite a message in place, and say so.
+
+  `frq.edits` is the fold and what it answers; the cell and the picture links
+  are this half's. The links are read again off the new text because a
+  revision can add one or take one away, and a row drawing the picture its
+  line no longer mentions is the shape that gave it away. The desktop's
+  `frq.state/edit-message!` is the same function over its own atom."
+  [room msgid from text]
+  (let [out (edits/apply-edit @cells/channels room msgid from text
+                              #(assoc % :images (images-in text)))]
+    (reset! cells/channels (:channels out))
+    (:result out)))
+
 (def ^:private history-limit
   "How many lines of backlog to ask a room for, as `frq.state` asks for them."
   100)
@@ -205,17 +219,15 @@
           ;; that line's own id and never the revision's own wire msgid, which
           ;; nothing else refers to. One older than the backlog we hold has
           ;; nothing here to replace, and is shown as itself rather than lost.
-          (let [out (edits/apply-edit @cells/channels name edit-of who text)]
-            (reset! cells/channels (:channels out))
-            (when (= :absent (:result out))
-              (swap! cells/channels update name
-                     #(-> (merge {:name name :messages [] :unread 0} %)
-                          (update :messages conj {:from who
-                                                  :text text
-                                                  :images (images-in text)
-                                                  :did (:account m)
-                                                  :id edit-of
-                                                  :edited? true})))))
+          (when (= :absent (edit-message! name edit-of who text))
+            (swap! cells/channels update name
+                   #(-> (merge {:name name :messages [] :unread 0} %)
+                        (update :messages conj {:from who
+                                                :text text
+                                                :images (images-in text)
+                                                :did (:account m)
+                                                :id edit-of
+                                                :edited? true}))))
           (swap! cells/channels update name
                #(-> (merge {:name name :messages [] :unread 0} %)
                     (update :messages conj
@@ -636,17 +648,47 @@
         room (str @cells/current)
         edit @cells/editing]
     (cond
+      (empty? room) nil
+
+      ;; A rewrite replaces what was said, and what was said is a line of
+      ;; text: there is no wire form for adding a picture to a message already
+      ;; sent, so the attachment is held back rather than silently dropped.
+      ;; `frq.state/send-draft!` refuses the same pair for the same reason.
+      (and edit @cells/attachment)
+      (reset! cells/error "Finish the edit before sending a picture.")
+
+      ;; An edit of nothing is not a way to unsay a line: there is no delete
+      ;; on the wire here, and blanking the message is not what emptying the
+      ;; box asks for. Send waits for something to say instead.
+      (and edit (empty? (.trim text))) nil
+
       ;; A rewrite replaces what was said. It carries no new msgid of its own
       ;; — the server files it under the original's id — so nothing is added
-      ;; here and the echo folds it in where the line already is.
-      (and edit (seq text) (seq room) @conn)
-      (do (net/send-line!
-           @conn
+      ;; here and the echo folds it in where the line already is. The room is
+      ;; the edit's own and not whichever one is open: they are the same room
+      ;; while the banner is up, because leaving cancels the edit, and naming
+      ;; the one being rewritten is what makes that true rather than assumed.
+      edit
+      (if-let [c @conn]
+        (let [room (str (:channel edit))
+              text (.trim text)]
+          (net/send-line!
+           c
            (mutate/edit-line room (:id edit) text
                              (reactions/peer-did @cells/channels room
                                                  (str @cells/form-nick))))
+          ;; Same reason as a new message: the server's echo is the copy every
+          ;; other client sees, and folding this one in as well would rewrite
+          ;; the line twice. Without `echo-message` nothing comes back, so the
+          ;; rewrite has to be applied here or it never shows.
+          (when-not (handshake/acked? @caps "echo-message")
+            (edit-message! room (:id edit) (str @cells/form-nick) text))
           (reset! cells/editing nil)
           (reset! cells/draft ""))
+        ;; The draft stays in the box, with the banner still over it: the
+        ;; rewrite is still what the reader wants to send once there is
+        ;; somewhere to send it.
+        (reset! cells/error "Not connected."))
 
       ;; A picture still on its way up holds the send rather than losing it:
       ;; the line stays in the box, said so, and the reader presses send again
@@ -655,7 +697,7 @@
       (= :uploading (:status @cells/attachment))
       (reset! cells/error "The picture is still uploading.")
 
-      (and (or (seq text) (:url @cells/attachment)) (seq room) @conn)
+      (and (or (seq text) (:url @cells/attachment)) @conn)
       (let [url (:url @cells/attachment)
             ;; The picture becomes its link, at the end of the line: what goes
             ;; on the wire is the text the reader wrote and a URL after it,
@@ -913,6 +955,15 @@
       :jump-to-present! (fn [] (reset! cells/at-present? true))
       :open-channel! (fn [name]
                        (reset! cells/current name)
+                       ;; An edit belongs to a line in the buffer being left:
+                       ;; carried across, the next Send would rewrite a
+                       ;; message nobody in this room can see. The box empties
+                       ;; with it, because what is in it is a copy of that
+                       ;; line — `frq.state/open-channel!` does this too.
+                       (when (and @cells/editing
+                                  (not= name (:channel @cells/editing)))
+                         (reset! cells/editing nil)
+                         (reset! cells/draft ""))
                        ;; `frq.state/open-channel!` does this and more: it
                        ;; marks the buffer read, remembers the room list and
                        ;; asks for NAMES. What it also does, and what made
