@@ -65,7 +65,11 @@
   nowhere to go."
   []
   (let [cols (max 20 (quot (- @cells/window-width (* 22 8)) 8))
-        wrapped (fn [line] (max 1 (long (Math/ceil (/ (count line) (double cols))))))]
+        ;; Ceiling division, written out: `Math/ceil` is Java and there is no
+        ;; Math under ClojureDart — the same reason `frq.clock` spells out
+        ;; floor-div. Integers throughout, so no float rounds a line the wrong
+        ;; way at the boundary either.
+        wrapped (fn [line] (max 1 (quot (+ (count line) cols -1) cols)))]
     (min draft-max-rows
          (max 1 (reduce + (map wrapped (str/split-lines (or @cells/draft ""))))))))
 
