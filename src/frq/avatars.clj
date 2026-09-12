@@ -38,23 +38,16 @@
 (defn path-when-ready [handle]
   (when (= :ready (get @state handle)) (cached-path handle)))
 
-(defn- thumbnail-url
-  "The CDN's full-size avatar URL as a 128-pixel PNG. Asking for the size we
-  paint keeps a 170KB portrait from being downloaded to draw at 24 points."
-  [url]
-  (when (seq url)
-    (-> url
-        (str/replace "/img/avatar/plain/" "/img/avatar_thumbnail/plain/")
-        (str/replace #"@[a-z]+$" "")
-        (str "@png"))))
-
 (defn- profile-avatar
-  "The avatar URL on someone's profile, or nil if they have none."
+  "The avatar URL on someone's profile, or nil if they have none.
+
+  The rewrite to a thumbnail is `frq.profile`'s, not this file's: the Flutter
+  half reads the same field off the same body and has no jolt under it."
   [handle]
-  (let [body (atproto/request directory-host
-                              (str "/xrpc/app.bsky.actor.getProfile?actor=" handle)
-                              nil)]
-    (thumbnail-url (atproto/json-str body "avatar"))))
+  (profile/avatar-url
+   (atproto/request directory-host
+                    (str "/xrpc/app.bsky.actor.getProfile?actor=" handle)
+                    nil)))
 
 (defn fetch!
   "Ensure this person's avatar is on disk, in the background. Returns without

@@ -73,11 +73,32 @@
   {:host directory-host
    :path (str "/xrpc/app.bsky.actor.getProfile?actor=" actor)})
 
+(defn thumbnail-url
+  "The CDN's full-size avatar URL as a 128-pixel PNG. Asking for the size we
+  paint keeps a 170KB portrait from being downloaded to draw at 24 points.
+
+  Here rather than in `frq.avatars` because `frq.avatars` is jolt's: the phone
+  needs the same rewrite off the same `getProfile` body, and the rule for a
+  string transformation both halves need is that it lives in `common/`."
+  [url]
+  (when (seq (str (or url "")))
+    (-> url
+        (str/replace "/img/avatar/plain/" "/img/avatar_thumbnail/plain/")
+        (str/replace #"@[a-z]+$" "")
+        (str "@png"))))
+
+(defn avatar-url
+  "The thumbnail URL on this `app.bsky.actor.getProfile` body, or nil when the
+  person has no picture."
+  [body]
+  (thumbnail-url (atproto/json-str body "avatar")))
+
 (defn parse
   "The fields the screen paints, out of an `app.bsky.actor.getProfile` body."
   [body]
   {:status :ready
    :did (atproto/json-str body "did")
+   :avatar (avatar-url body)
    :handle (atproto/json-str body "handle")
    :display-name (some-> (atproto/json-str body "displayName")
                          atproto/json-unescape

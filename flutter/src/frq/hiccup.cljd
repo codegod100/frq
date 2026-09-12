@@ -629,12 +629,27 @@
        :avatar
        (let [s (dbl (:size p) 32.0)
              src (:src p)
+             ;; Either kind of source, as `:image` takes either kind: the
+             ;; desktop's `avatar-path` is a file it downloaded and this
+             ;; half's is the CDN URL itself, and the screen hands over
+             ;; whichever its host answered with.
+             bg (when (and src (not= "" src))
+                  (if (or (.startsWith (str src) "http://")
+                          (.startsWith (str src) "https://"))
+                    (m/NetworkImage (str src))
+                    (m/FileImage (io/File. (str src)))))
              face (m/CircleAvatar
                    .radius (/ s 2.0)
                    .backgroundColor t/component
-                   .backgroundImage (when (and src (not= "" src))
-                                      (m/NetworkImage src))
-                   .child (when (or (nil? src) (= "" src))
+                   .backgroundImage bg
+                   ;; A picture that will not load is a face that stays its
+                   ;; initial, and nothing else: without this the failure goes
+                   ;; to `FlutterError.onError`, which this app points at
+                   ;; debugPrint — one deleted avatar, one line of log per
+                   ;; frame. CircleAvatar asserts if this is given without an
+                   ;; image, hence the `when`.
+                   .onBackgroundImageError (when bg (fn [_ _] nil))
+                   .child (when (nil? bg)
                             (txt ctx (let [l (str (:label p ""))]
                                        (if (pos? (count l))
                                          (.toUpperCase (subs l 0 1))

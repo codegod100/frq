@@ -43,6 +43,7 @@
             [frq.reactions :as reactions]
             [frq.edits :as edits]
             [frq.profile :as profile]
+            [frq.avatars.dart :as avatars]
             [frq.irc.mutate :as mutate]
             [frq.oauth.core :as oauth]
             [frq.oauth.dart :as oauth-dart]
@@ -53,6 +54,25 @@
 (defonce ^:private conn (atom nil))
 
 (defonce ^:private last-line (atom nil))
+
+;; Ticked whenever any cell changes, so one `:watch` covers all of them.
+;;
+;; What this replaced was a list of cells named by hand in the widget below,
+;; and everything not on it was a control that flipped its cell and repainted
+;; nothing — People, Overview and hide join/part all did.
+;;
+;; Up here rather than beside `watch-cells!` because it is no longer only
+;; cells that tick it: an avatar landing is a change to nothing under
+;; `frq.cells` — the URL is in `frq.avatars.dart` — and `room!`, which is the
+;; one that asks for it, is defined below this and above that.
+(defonce ^:private repaint (atom 0))
+
+(defn- bump!
+  "Repaint whatever is on screen. What a background fetch calls when its answer
+  has arrived and the rows that read it do not know."
+  []
+  (swap! repaint inc)
+  nil)
 
 (def ^:private history-limit
   "How many lines of backlog to ask a room for, as `frq.state` asks for them."
@@ -133,6 +153,12 @@
             name (if (rooms/dm? target) who target)
             edit-of (or (irc/tag-value tags "+draft/edit")
                         (irc/tag-value tags "+edit"))]
+        ;; The face, asked for as the line arrives rather than when the row is
+        ;; built: a row is built during a Flutter frame, and a fetch started
+        ;; there would be state changed mid-build. `frq.avatars.dart` asks the
+        ;; directory once per person however many lines they write, and
+        ;; `bump!` is what wakes the rows already on screen when it answers.
+        (avatars/fetch! (profile/actor (:account m) who) bump!)
         (if edit-of
           ;; A revision is not a new line: it replaces the one it names, under
           ;; that line's own id and never the revision's own wire msgid, which
@@ -219,13 +245,6 @@
     "ERROR"})
 
 (defonce ^:private attempt (atom 0))
-
-;; Ticked whenever any cell changes, so one `:watch` covers all of them.
-;;
-;; What this replaced was a list of cells named by hand in the widget below,
-;; and everything not on it was a control that flipped its cell and repainted
-;; nothing — People, Overview and hide join/part all did.
-(defonce ^:private repaint (atom 0))
 
 (defn- watch-cells!
   "Every cell in `frq.cells` ticking `repaint` when it changes.
@@ -650,7 +669,12 @@
 
       ;; Who someone is, behind the nick on a line. `frq.profile` holds the
       ;; cache and the fields; this is the tapping.
-      :profile-open! profile/open!
+      ;; Opening a profile asks for the picture too: the dialog paints it at 72
+      ;; points, and someone whose lines are all above the fold in another room
+      ;; may never have had a face fetched for them.
+      :profile-open! (fn [nick actor]
+                       (avatars/fetch! actor bump!)
+                       (profile/open! nick actor))
       :profile-close! profile/close!
       :profile-dismiss! profile/close!
       :profile-entry profile/entry
@@ -691,6 +715,13 @@
                        (->> (get-in @cells/channels [room :messages])
                             (filter #(= id (:id %)))
                             first))
+      ;; Where a face is. A URL and not a path, which is what the desktop
+      ;; answers — see `frq.avatars.dart`, and `:avatar` in `frq.hiccup`,
+      ;; which is the one place that has to know which it got. Both names
+      ;; answer the same thing here: the desktop's `avatar-ready` is
+      ;; "downloaded already", and nothing is downloaded here.
+      :avatar-path (fn [actor] (avatars/url actor))
+      :avatar-ready (fn [actor] (avatars/url actor))
       :member-count (fn [room] (members/member-count @cells/channels room))
       :member-list (fn [room] (members/member-list @cells/channels room))
       :toggle-users! (fn [] (swap! cells/show-users? not))
