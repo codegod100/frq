@@ -30,6 +30,8 @@
             [frq.net.dart :as net]
             [frq.atproto.dart :as atproto]
             [frq.clock :as clock]
+            [frq.media.core :as media-core]
+            [frq.media.dart :as media]
             [frq.store :as store]
             [frq.actions :as actions]
             [frq.cells :as cells]
@@ -73,6 +75,42 @@
   []
   (swap! repaint inc)
   nil)
+
+(defn- note-window-size!
+  "Tell `frq.cells` how big the window is, from the build that knows.
+
+  The shared screens size a picture against it — `preview-height` is four
+  fifths of the window and falls back to a fixed 260 while nobody has said —
+  so without this a phone drew every screenshot as the same stamp a terminal
+  gets. The desktop sets these from libcosmic's resize event; Flutter's
+  equivalent is MediaQuery, which is only readable from a build.
+
+  After the frame, and only when it changed. A cell written during a build is
+  a setState during a build, which Flutter refuses; and every cell here is
+  watched, so writing the same number back on every frame would be an endless
+  rebuild rather than a wasted one."
+  [^m/Size size]
+  (let [w (long (.-width size))
+        h (long (.-height size))]
+    (when (or (not= w @cells/window-width) (not= h @cells/window-height))
+      (.addPostFrameCallback
+       (.-instance m/WidgetsBinding)
+       (fn [_]
+         (reset! cells/window-width w)
+         (reset! cells/window-height h)
+         nil)))))
+
+(defn- images-in
+  "The picture links in a message, fetched as they are noticed.
+
+  Both at once on purpose: the list is what the row draws and the fetch is
+  what turns a link into a path, and a line whose images were recorded and
+  never fetched is a row that waits for ever. `frq.media.dart` is the once-only
+  half — this is called again for every replayed line on every reconnect."
+  [text]
+  (let [urls (media-core/image-urls text)]
+    (doseq [url urls] (media/fetch! url bump!))
+    urls))
 
 (def ^:private history-limit
   "How many lines of backlog to ask a room for, as `frq.state` asks for them."
@@ -171,6 +209,7 @@
                      #(-> (merge {:name name :messages [] :unread 0} %)
                           (update :messages conj {:from who
                                                   :text text
+                                                  :images (images-in text)
                                                   :did (:account m)
                                                   :id edit-of
                                                   :edited? true})))))
@@ -183,6 +222,9 @@
                             ;; nothing can be said about it.
                             {:from who
                              :text text
+                             ;; Any .png link on the line, and the fetch that
+                             ;; makes one a picture rather than a link.
+                             :images (images-in text)
                              :did (:account m)
                              ;; Who to look a profile up by: the DID the
                              ;; server put on the line, or the nick when that
@@ -694,6 +736,17 @@
       ;; Their profile on the web, handed to the browser the same way the
       ;; sign-in link is.
       :open-url! (fn [url] (fio/open-url! url))
+
+      ;; Where a picture is on disk, once it is. A plain lookup and not the
+      ;; desktop's reaction: glimmer wakes the one row that read it, and this
+      ;; half repaints the tree — `images-in` ticks `repaint` when a fetch
+      ;; lands, and Flutter's own reconciler decides what that costs.
+      ;;
+      ;; A path and not the URL `:avatar-path` below answers with, and the
+      ;; difference is what is behind them: a face is a CDN URL the network
+      ;; will serve again, a picture in a message is whatever host a stranger
+      ;; put a link to.
+      :image-path (fn [url] (media/path-when-ready url))
       :wide? (fn [] false)
       :desktop? (fn [] false)
       :mine? (fn [m] (rooms/mine? m (str @cells/form-nick)))
@@ -778,11 +831,12 @@
       .body
       m/SafeArea
       (f/widget
+       :context ctx
        ;; One watch, not twenty. `lines` is a local atom and not a cell, so it
        ;; is named beside the tick; everything under `frq.cells` arrives
        ;; through `repaint`.
        :watch [tick repaint ls lines]
-       (h/render
-        ;; `frq.screens.app` decides which screen shows, the same way it does
-        ;; on the desktop. The phone was switching by hand until this moved.
-        [screens/app])))))
+       (let [_ (note-window-size! (.-size (m/MediaQuery.of ctx)))]
+         ;; `frq.screens.app` decides which screen shows, the same way it does
+         ;; on the desktop. The phone was switching by hand until this moved.
+         (h/render [screens/app]))))))

@@ -244,6 +244,9 @@
              p (second node)]
          (or (contains? #{:scroll :page} tag)
              (and (map? p) (:fill-height p))
+             ;; The lightbox's one picture, which is `:fit` and means the same
+             ;; thing: every point of the window below the row that closes it.
+             (and (= :image tag) (map? p) (:fit p))
              ;; A `:page` fills for the same reason a `:scroll` does — it is
              ;; one — but it does not pass the question *up* from its
              ;; children, because nothing inside a scroll can take what is
@@ -665,14 +668,30 @@
        (let [src (or (:src p) (:path p))
              w (:max-width p)
              h (:max-height p)
+             ;; A half-written cache file, or one deleted under us: the
+             ;; decoder throws during the build, and an exception in a build
+             ;; is a red screen for the whole conversation rather than a gap
+             ;; where one picture was.
+             oops (fn [_ _ _] (m/SizedBox .width 0.0 .height 0.0))
              img (cond
                    (nil? src) (m/SizedBox .width 0.0 .height 0.0)
                    (or (.startsWith (str src) "http://")
                        (.startsWith (str src) "https://"))
-                   (m/Image.network (str src) .fit m/BoxFit.contain)
-                   :else (m/Image.file (io/File. (str src)) .fit m/BoxFit.contain))
+                   (m/Image.network (str src) .fit m/BoxFit.contain
+                                    .errorBuilder oops)
+                   :else (m/Image.file (io/File. (str src)) .fit m/BoxFit.contain
+                                       .errorBuilder oops))
              img (m/ClipRRect .borderRadius (m/BorderRadius.circular t/radius-s)
                               .child img)
+             ;; `:fit` is the lightbox: the picture takes what the column has
+             ;; left, which `fills-column?` has already asked Flutter for, and
+             ;; spreads across the width inside it. Without the SizedBox the
+             ;; Expanded gives it the height and its own intrinsic width, and
+             ;; a portrait screenshot is a strip up the middle.
+             img (if (:fit p)
+                   (m/SizedBox .width double/infinity .height double/infinity
+                               .child img)
+                   img)
              img (if (or w h)
                    (m/ConstrainedBox
                     .constraints (m/BoxConstraints
