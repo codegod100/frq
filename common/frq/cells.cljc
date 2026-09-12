@@ -160,6 +160,18 @@
 ;; list and the conversation are both on screen instead of taking turns.
 (defonce window-width (atom 0))
 
+;; Where the second pane starts paying for itself. Below this a 320pt list
+;; beside a conversation leaves the messages narrower than the phone layout
+;; they were written for.
+;;
+;; Here rather than in a backend because both of them answer `wide?` with it:
+;; libcosmic measures its window, Flutter reads MediaQuery, and the terminal
+;; multiplies its columns back up to points — three ways of filling
+;; `window-width` in, one width they are all compared against. Two backends
+;; drifting apart on the number would be two different apps out of the same
+;; screens.
+(def wide-width 900)
+
 ;; ------------------------------------------------------------- derivation
 
 (defonce ^:private derived-cells

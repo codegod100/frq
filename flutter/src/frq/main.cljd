@@ -197,6 +197,32 @@
       (net/send-line! c (str "JOIN " name))))
   nil)
 
+(defn- wide?
+  "True while the window has room for the list and a conversation at once.
+
+  `note-window-size!` above is what fills `window-width` in, so this is the
+  same question `frq.state/wide?` answers on the desktop, asked of the same
+  number against the same threshold. It used to answer a flat false and the
+  Flutter build had one screen at a time at every size — which on a laptop
+  window is a phone with several inches of margin either side.
+
+  Not desktop-only: `Platform.isAndroid` is the wrong question here, because a
+  tablet held the long way has the room and a desktop window dragged narrow
+  has not. The width is the whole of it."
+  []
+  (>= @cells/window-width cells/wide-width))
+
+(defn- chat-visible?
+  "Whether the room in `current` is on screen.
+
+  Narrow that is the chat screen alone; wide it is the chats screen too, since
+  the conversation is the pane beside the list there. This and not the screen
+  is what decides whether an arriving line counts as read."
+  [name]
+  (and (= name @cells/current)
+       (or (= :chat @cells/screen)
+           (and (wide?) (= :chats @cells/screen)))))
+
 (defn- open-room!
   "Show a buffer, joining it on the way. A row can outlive the membership
   behind it — a disconnect drops every channel and the buffer stays — so
@@ -222,7 +248,10 @@
          #(-> (rooms/ensure-channel % name)
               (update name rooms/mark-read)
               (assoc-in [name :accessed] (swap! rooms/access-tick inc))))
-  (reset! cells/screen :chat)
+  ;; On a wide window the conversation is the chats screen's second pane, so
+  ;; the list stays: `:chat` is the narrow window's way of showing the room
+  ;; *instead* of the list, and beside it there is nothing to trade away.
+  (reset! cells/screen (if (wide?) :chats :chat))
   ;; Worth a write of its own: the order the list is read in is the order
   ;; rooms were last opened, and this is the moment it changes.
   (remember-rooms! true)
@@ -371,7 +400,7 @@
             ;; Reading a room is marking it read: a line arriving in the room
             ;; on screen moves the marker past itself, and one arriving
             ;; anywhere else is counted against the marker there.
-            viewing? (and (= :chat @cells/screen) (= name @cells/current))
+            viewing? (chat-visible? name)
             settle (fn [m] (update m name (if viewing?
                                             rooms/mark-read
                                             rooms/recount)))]
@@ -1157,7 +1186,7 @@
       ;; will serve again, a picture in a message is whatever host a stranger
       ;; put a link to.
       :image-path (fn [url] (media/path-when-ready url))
-      :wide? (fn [] false)
+      :wide? wide?
       ;; True where there is a pointer to hover with. Both Flutter targets
       ;; compile this file, so it is asked rather than assumed: a window on the
       ;; desktop has a mouse, Android has a finger.

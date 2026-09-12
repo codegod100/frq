@@ -126,10 +126,9 @@
 
 (def window-height cells/window-height)
 
-;; Where the second pane starts paying for itself. Below this a 300pt list
-;; beside a conversation leaves the messages narrower than the phone layout
-;; they were written for.
-(def wide-width 900)
+;; Where the second pane starts paying for itself, shared with the other
+;; backends — see `frq.cells/wide-width`.
+(def wide-width cells/wide-width)
 
 (defn wide?
   "True while the window has room for the list and a conversation at once."
