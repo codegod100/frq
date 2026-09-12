@@ -9,7 +9,7 @@
             ["dart:convert" :as conv]
             [frq.upload.core :as core]))
 
-(defonce ^:private client (io/HttpClient))
+(defonce ^:private ^io/HttpClient client (io/HttpClient))
 
 (defn ^:async upload!
   "Upload the file at `path` as `did`'s, answering the URL freeq serves it back
@@ -20,7 +20,7 @@
         {p :path ct :content-type body :body} (core/request did channel filename
                                                             (vec bytes))
         uri (Uri.https host p)
-        req (await (.postUrl client uri))]
+        ^io/HttpClientRequest req (await (.postUrl client uri))]
     (.set (.-headers req) "user-agent" "frq")
     (.set (.-headers req) "accept" "application/json")
     (.set (.-headers req) "content-type" ct)
@@ -33,7 +33,7 @@
     (let [out (io/BytesBuilder)]
       (doseq [b body] (.addByte out b))
       (.add req (.takeBytes out)))
-    (let [resp (await (.close req))
+    (let [^io/HttpClientResponse resp (await (.close req))
           payload (await (.join (.transform resp (.-decoder conv/utf8))))
           status (.-statusCode resp)]
       (if (and (>= status 200) (< status 300))
