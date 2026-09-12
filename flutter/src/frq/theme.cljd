@@ -53,6 +53,22 @@
   back rather than a colour of its own."
   (.withValues ^m/Color on-bg .alpha 0.7))
 
+(defn emoji-style
+  "A `TextStyle` for a run that is nothing but emoji.
+
+  The app sets `fontFamily` on the theme, so every `Text` that says nothing
+  about its font is set in Fira Sans — a UI font with no emoji in it, and the
+  screens draw a picture where it has no glyph. Naming the platform's emoji
+  font here is what keeps `:emoji` and `:reaction` off that font: Noto Color
+  Emoji is the Android one and the one COSMIC ships, and the fallbacks are the
+  other two desktops in case this runs on one."
+  [size]
+  (m/TextStyle .fontSize size
+               .fontFamily "Noto Color Emoji"
+               .fontFamilyFallback ["Apple Color Emoji"
+                                    "Segoe UI Emoji"
+                                    "Noto Emoji"]))
+
 (def brightness (if c/dark? m/Brightness.dark m/Brightness.light))
 
 (defn app-theme []

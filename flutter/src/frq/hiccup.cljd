@@ -723,7 +723,7 @@
              .mainAxisSize m/MainAxisSize.min
              .children
              (into [(m/Text (str (:emoji p ""))
-                            .style (m/TextStyle .fontSize size))]
+                            .style (t/emoji-style size))]
                    (when (and (number? n) (pos? n))
                      [(m/SizedBox .width pad)
                       (m/Text (str n)
@@ -925,7 +925,7 @@
            field))
 
        :emoji
-       (m/Text (str (:emoji p "")) .style (m/TextStyle .fontSize (dbl (:size p) 16.0)))
+       (m/Text (str (:emoji p "")) .style (t/emoji-style (dbl (:size p) 16.0)))
 
        ;; A face is a way in to who someone is, so it takes the press that
        ;; opens their profile. It was drawn without one and the chat screen's
