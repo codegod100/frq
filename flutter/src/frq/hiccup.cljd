@@ -46,6 +46,24 @@
   (cond (number? x) (double x)
         :else default))
 
+(defn- insets-of
+  "The margin a container asks for, or nil when it asks for none.
+
+  Three spellings, and a box may mix them: `:margin` is all four sides, the
+  per-side keys are each one side, and a per-side key wins over `:margin`
+  where both are given — that is how `message-row` writes `:margin 0` with a
+  `:margin-top` and a `:margin-right` over it.
+
+  The per-side keys are not decoration: the backlog's gap between messages and
+  its clearance for the scrollbar are both written that way, so a backend that
+  reads `:margin` alone draws the conversation edge to edge."
+  [p]
+  (let [side (fn [k] (dbl (get p k) (dbl (:margin p) 0.0)))
+        l (side :margin-left) r (side :margin-right)
+        tp (side :margin-top) b (side :margin-bottom)]
+    (when (some pos? [l r tp b])
+      (m/EdgeInsets.only .left l .right r .top tp .bottom b))))
+
 ;; ------------------------------------------------------------- text entry
 
 (defonce ^:private controllers
@@ -359,8 +377,8 @@
                                 m/MainAxisSize.min)
                 .spacing (dbl (:spacing p) 0.0)
                 .children (flexed fills-column? (body node)))
-             c (if-let [mg (:margin p)]
-                 (m/Padding .padding (m/EdgeInsets.all (dbl mg 0.0)) .child c)
+             c (if-let [mg (insets-of p)]
+                 (m/Padding .padding mg .child c)
                  c)]
          (if-let [w (width-of p)]
            (m/SizedBox .width w .child c)
@@ -391,26 +409,30 @@
        ;; Wrap. Without it the longest message decided the width of the
        ;; conversation and the rest overflowed off the right.
        :hbox
-       (if (true? (:wrap p))
-         (m/Wrap
-          .spacing (dbl (:spacing p) 0.0)
-          .runSpacing (dbl (:spacing p) 0.0)
-          .crossAxisAlignment m/WrapCrossAlignment.center
-          .children kids)
-         (m/Row
-        ;; Stretch when a child fills vertically: a Row hands its children a
-        ;; loose height by default, and a column that wants what is left of it
-        ;; needs a tight one.
-        .crossAxisAlignment (if (some #(fills-column? (expand %)) (body node))
-                              m/CrossAxisAlignment.stretch
-                              m/CrossAxisAlignment.center)
-        ;; A row holding something that fills has to be given the width to
-        ;; divide, so it is max rather than min whenever a child asks.
-        .mainAxisSize (if (some #(fills-row? (expand %)) (body node))
-                        m/MainAxisSize.max
-                        m/MainAxisSize.min)
-          .spacing (dbl (:spacing p) 0.0)
-          .children (flexed fills-row? (body node))))
+       (let [row (if (true? (:wrap p))
+                   (m/Wrap
+                    .spacing (dbl (:spacing p) 0.0)
+                    .runSpacing (dbl (:spacing p) 0.0)
+                    .crossAxisAlignment m/WrapCrossAlignment.center
+                    .children kids)
+                   (m/Row
+                    ;; Stretch when a child fills vertically: a Row hands its
+                    ;; children a loose height by default, and a column that
+                    ;; wants what is left of it needs a tight one.
+                    .crossAxisAlignment (if (some #(fills-column? (expand %)) (body node))
+                                          m/CrossAxisAlignment.stretch
+                                          m/CrossAxisAlignment.center)
+                    ;; A row holding something that fills has to be given the
+                    ;; width to divide, so it is max rather than min whenever a
+                    ;; child asks.
+                    .mainAxisSize (if (some #(fills-row? (expand %)) (body node))
+                                    m/MainAxisSize.max
+                                    m/MainAxisSize.min)
+                    .spacing (dbl (:spacing p) 0.0)
+                    .children (flexed fills-row? (body node))))]
+         (if-let [mg (insets-of p)]
+           (m/Padding .padding mg .child row)
+           row))
 
        :label     (txt ctx (:label p "") t/text-body t/on-bg)
        :dim-label (txt ctx (:label p "") t/text-caption t/dim)
