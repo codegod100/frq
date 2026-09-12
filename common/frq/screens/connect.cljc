@@ -30,7 +30,7 @@
 
 ;; ---------------------------------------------------------------- connect
 
-(defn- mode-tabs []
+(defn mode-tabs []
   [:hbox {:spacing 8}
    (for [[k label] [[:guest "Guest"] [:bluesky "Bluesky"] [:app-password "App password"]]]
      [:button {:key k
@@ -38,15 +38,22 @@
                :kind (if (= k @cells/auth-mode) :primary :default)
                :on-click #(reset! cells/auth-mode k)}])])
 
-(defn- server-fields []
+(defn server-fields []
   [:vbox {:spacing 6}
+   ;; Every :entry carries a :key. glimmer matches children by position when
+   ;; one is absent, so this changes nothing on the desktop — but a backend
+   ;; that keeps a text controller per field needs a stable name for it, and
+   ;; without one the host and the port shared a controller and both showed
+   ;; the port. See frq.hiccup.
    [:label {:label "Server"}]
    [:hbox {:spacing 8}
-    [:entry {:text @cells/form-host
+    [:entry {:key :host
+             :text @cells/form-host
              :width-request 220
              :placeholder "host"
              :on-change #(reset! cells/form-host %)}]
-    [:entry {:text @cells/form-port
+    [:entry {:key :port
+             :text @cells/form-port
              :width-request 90
              :placeholder "6697"
              :on-change #(reset! cells/form-port %)}]]
@@ -56,7 +63,7 @@
                                    (reset! cells/form-port
                                            (if @cells/form-tls? "6697" "6667")))}]])
 
-(defn- connect-action []
+(defn connect-action []
   (if @cells/connecting?
     [:hbox {:spacing 8}
      [:spinner {}]
@@ -78,7 +85,8 @@
        [:title-2 {:label "Sign in with Bluesky"}]
        [:dim-label {:label "Opens your browser for AT Protocol OAuth. freeq's broker hands back a token; no password passes through frq."}]
        [:label {:label "Handle"}]
-       [:entry {:text @cells/form-handle
+       [:entry {:key :handle
+             :text @cells/form-handle
                 :width-request 320
                 :placeholder "alice.bsky.social"
                 :on-change #(reset! cells/form-handle %)}]
@@ -98,12 +106,14 @@
        [:title-2 {:label "Sign in with an app password"}]
        [:dim-label {:label "No browser. Your app password goes to your own PDS; freeq is handed the session it mints."}]
        [:label {:label "Handle"}]
-       [:entry {:text @cells/form-handle
+       [:entry {:key :handle
+             :text @cells/form-handle
                 :width-request 320
                 :placeholder "alice.bsky.social"
                 :on-change #(reset! cells/form-handle %)}]
        [:label {:label "App password"}]
-       [:entry {:text @cells/form-app-password
+       [:entry {:key :app-password
+             :text @cells/form-app-password
                 :width-request 320
                 :placeholder "xxxx-xxxx-xxxx-xxxx"
                 :on-change #(reset! cells/form-app-password %)}]
@@ -112,7 +122,8 @@
       [:vbox {:spacing 6}
        [:title-2 {:label "Connect as guest"}]
        [:label {:label "Nick"}]
-       [:entry {:text @cells/form-nick
+       [:entry {:key :nick
+             :text @cells/form-nick
                 :width-request 320
                 :placeholder "your nick"
                 :on-change #(reset! cells/form-nick %)}]])

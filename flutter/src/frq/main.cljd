@@ -161,6 +161,22 @@
       (m/Scaffold .appBar (m/AppBar .title (m/Text "frq")))
       .body
       (f/widget
-       :watch [st status ls lines io identity-out hh handle]
+       :let [c-status cells/status
+             c-error cells/error
+             c-connecting cells/connecting?
+             c-mode cells/auth-mode
+             c-handle cells/form-handle
+             c-nick cells/form-nick
+             c-host cells/form-host
+             c-port cells/form-port
+             c-tls cells/form-tls?
+             c-apppw cells/form-app-password
+             c-broker cells/broker-token
+             c-login cells/login-url]
+       :watch [st c-status er c-error cn c-connecting am c-mode
+               fh c-handle nk c-nick hs c-host pt c-port tl c-tls
+               ap c-apppw bt c-broker lu c-login ls lines]
        (m/SingleChildScrollView
-        .child (h/render (screen)))))))
+        ;; frq.app's own connect screen, out of common/ — the same file the
+        ;; desktop renders, painted by frq.hiccup in COSMIC's theme.
+        .child (h/render [connect/connect-screen]))))))

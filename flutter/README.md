@@ -130,10 +130,10 @@ What `frq.hiccup` does not do is glimmer's reconciliation: Flutter rebuilds
 from the top and diffs its own element tree, so a cell firing rebuilds the
 screen rather than the subtree that read it. Fine at this size.
 
-`frq.main` still paints a hand-written tree rather than `frq.app`'s own. Not
-because the screens need changing — because requiring them pulls `frq.state`,
-which pulls `frq.irc`, which reaches for jolt.host. The tree it paints uses
-only tags `frq.app` uses, so it is a test of the backend and nothing more.
+`frq.main` paints `frq.app`'s own connect screen, out of
+`common/frq/screens/connect.cljc` — the same file the desktop renders. What it
+reads is `frq.cells` and what it calls is `frq.actions`, and each platform
+fills those in: `frq.state`'s reducers on the desktop, dart:io here.
 
 ## The order to do the rest in
 
@@ -165,3 +165,24 @@ only tags `frq.app` uses, so it is a test of the backend and nothing more.
    platform by reader conditional.
 6. **`frq.app`** follows it, and the tags it uses that `frq.hiccup` does not
    cover yet paint as an orange `?tag` until they do.
+
+## What a missing tag property looks like
+
+Worth writing down, because it cost an evening. `frq.hiccup` ignored
+`:width-request`, and the connect screen puts two entries side by side in an
+`:hbox` with one. A TextField takes its width from its parent and a Row offers
+unbounded width, so that is a hard layout error — and a layout error happens
+after the build, so it is not an exception anything can catch, paints nothing
+at all rather than Flutter's red box, and takes every sibling in the same
+`children` vector down with it. The screen was blank and the log was empty.
+
+The way through was a harness that renders each candidate in turn with a
+labelled marker between them, so the last label standing says where it died.
+Not guesswork: four wrong theories went past before that — `Center` in an
+unbounded height, `fn*` as a binding name, qualified symbols in `:watch`, a
+`Builder` boundary — each one a three-minute deploy.
+
+It also found that two `:entry` nodes with no `:key` shared one
+TextEditingController, so the host field showed the port. glimmer matches
+children by position when there is no key; a backend holding a controller per
+field needs a name for it.

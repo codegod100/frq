@@ -245,11 +245,20 @@
 
        ;; text_input: a filled rounded field, no outline. COSMIC entries sit in
        ;; the component colour rather than behind a border.
+       ;; An entry sizes itself, as it does in jolt-cosmic: Fixed(w) from
+       ;; :width-request unless :hexpand asks for the rest of the row.
+       ;;
+       ;; Not optional. A TextField takes its width from its parent, and a Row
+       ;; offers its children unbounded width — so two entries side by side in
+       ;; an :hbox, which is exactly what the connect screen's host and port
+       ;; are, is a hard layout error. That is what painted the whole screen
+       ;; blank with nothing in the log.
        :entry
        (let [on-change (:on-change p)
              on-activate (:on-activate p)
-             rows (:rows p)]
-         (m/TextField
+             rows (:rows p)
+             w (:width-request p)
+             field (m/TextField
           .controller (controller-for (:key p) (:text p))
           .onChanged (when on-change #(on-change %))
           .onSubmitted (when on-activate (fn [_] (on-activate)))
@@ -275,7 +284,15 @@
                        .focusedBorder (m/OutlineInputBorder
                                        .borderRadius (m/BorderRadius.circular t/radius-s)
                                        .borderSide (m/BorderSide .color t/accent
-                                                                 .width 1.0)))))
+                                                                 .width 1.0))))]
+         ;; No Expanded when there is no width: Expanded in a Column expands
+         ;; along the main axis, which is vertical, and an entry in a card
+         ;; would grow to fill the card. A bare field is right there — a
+         ;; Column hands its children bounded width — and a row wants the
+         ;; width-request the caller already writes.
+         (if w
+           (m/SizedBox .width (dbl w 200.0) .child field)
+           field))
 
        :emoji
        (m/Text (str (:emoji p "")) .style (m/TextStyle .fontSize (dbl (:size p) 16.0)))
