@@ -26,13 +26,15 @@
   ;; resolveHandle path carries its query string, and Uri.https would escape
   ;; the ? into the path.
   (let [uri (Uri.parse (str "https://" host path))
-        req (await (if body (.postUrl client uri) (.getUrl client uri)))]
+        ^io/HttpClientRequest req (await (if body
+                                          (.postUrl ^io/HttpClient client uri)
+                                          (.getUrl ^io/HttpClient client uri)))]
     (.set (.-headers req) "user-agent" "frq")
     (.set (.-headers req) "accept" "application/json")
     (when body
       (.set (.-headers req) "content-type" "application/json")
       (.write req body))
-    (let [resp (await (.close req))]
+    (let [^io/HttpClientResponse resp (await (.close req))]
       (await (.join (.transform resp (.-decoder conv/utf8)))))))
 
 (defn ^:async resolve-handle

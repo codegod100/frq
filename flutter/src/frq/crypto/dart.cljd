@@ -34,7 +34,7 @@
 
 (defn- random-bytes [n]
   (let [out (td/Uint8List. n)]
-    (dotimes [i n] (aset out i (.nextInt rng 256)))
+    (dotimes [i n] (aset out i (.nextInt ^math/Random rng 256)))
     (vec out)))
 
 (defn- sha256 [bs]

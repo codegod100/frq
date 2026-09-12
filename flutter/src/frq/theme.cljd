@@ -51,7 +51,7 @@
 (def dim
   "`:dim-label` is libcosmic's caption class, which is the body colour stepped
   back rather than a colour of its own."
-  (.withValues on-bg .alpha 0.7))
+  (.withValues ^m/Color on-bg .alpha 0.7))
 
 (def brightness (if c/dark? m/Brightness.dark m/Brightness.light))
 

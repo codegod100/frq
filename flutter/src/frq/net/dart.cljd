@@ -67,8 +67,8 @@
                  .cancelOnError true))
     sock))
 
-(defn send-line! [sock line]
+(defn send-line! [^io/Socket sock line]
   (.write sock (str line "\r\n")))
 
-(defn close! [sock]
+(defn close! [^io/Socket sock]
   (try (.destroy sock) (catch Exception _ nil)))

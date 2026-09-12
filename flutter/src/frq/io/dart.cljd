@@ -109,7 +109,7 @@
     :config-dir           (fn [] dir)
     :file-exists?         (fn [p] (.existsSync (io/File. p)))
     :directory?           (fn [p] (.existsSync (io/Directory. p)))
-    :list-dir             (fn [p] (mapv #(.-path %) (.listSync (io/Directory. p))))
+    :list-dir             (fn [p] (mapv #(.-path ^io/FileSystemEntity %) (.listSync (io/Directory. p))))
     :mkdirs!              (fn [p] (.createSync (io/Directory. p) .recursive true))
     :delete-file!         (fn [p] (.deleteSync (io/File. p)))
     :slurp                slurp*
@@ -118,5 +118,5 @@
     :utf8-bytes           (fn [s] (vec (.encode conv/utf8 (str s))))
     :utf8-string          utf8-string
     :wall-nanos           (fn [] (* 1000 (.-microsecondsSinceEpoch (DateTime/now))))
-    :mono-nanos           (fn [] (* 1000 (.-inMicroseconds (.-elapsed uptime))))
+    :mono-nanos           (fn [] (* 1000 (.-inMicroseconds (.-elapsed ^Stopwatch uptime))))
     :local-offset-seconds local-offset-seconds}))

@@ -558,7 +558,7 @@
   ;; build, so nothing can catch them, and what they leave is a blank screen
   ;; and an empty log. Flutter routes them here instead.
   (set! (.-onError m/FlutterError)
-        (fn [details]
+        (fn [^m/FlutterErrorDetails details]
           (m/debugPrint (str "frq: FLUTTER ERROR " (.-exception details)))
           (m/debugPrint (str "frq: LIBRARY " (.-library details)
                              " CONTEXT " (.-context details)))))
@@ -573,7 +573,7 @@
     ;; when to ask and remembers the answer; only the awaiting is here.
     (profile/install-fetch!
      (fn [actor]
-       (.then (atproto/fetch (profile/profile-req actor))
+       (.then ^async/Future (atproto/fetch (profile/profile-req actor))
               (fn [body] (profile/deliver-profile! actor body) nil)
               .onError (fn [_ _] (profile/deliver-profile! actor nil) nil))))
     ;; Before any widget is built: a cell that changes before its watch is on

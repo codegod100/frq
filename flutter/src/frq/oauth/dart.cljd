@@ -54,8 +54,8 @@
     (try
       (on-url (core/login-url broker handle (str "http://127.0.0.1:" port)))
       (.listen server
-               (fn [req]
-                 (let [resp (.-response req)]
+               (fn [^io/HttpRequest req]
+                 (let [^io/HttpResponse resp (.-response req)]
                    (if (= "POST" (.-method req))
                      ;; The fragment the page posted back. A POST carrying
                      ;; nothing usable is not the end of the wait — the real
@@ -77,10 +77,10 @@
                                 .onDone
                                 (fn []
                                   (let [tokens (try (core/tokens-of
-                                                     (.trim (host/utf8-string @chunks)))
+                                                     (.trim ^String (host/utf8-string @chunks)))
                                                     (catch Object _ nil))]
                                     (.write resp (if tokens "ok" "bad payload"))
-                                    (.then (.close resp)
+                                    (.then ^async/Future (.close resp)
                                            (fn [_]
                                              (when (and tokens
                                                         (not (.-isCompleted done)))

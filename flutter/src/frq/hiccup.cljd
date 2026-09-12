@@ -60,7 +60,7 @@
 
 (defn- controller-for [k text]
   (let [k (or k ::anonymous)
-        c (or (get @controllers k)
+        ^m/TextEditingController c (or (get @controllers k)
               (let [c (m/TextEditingController .text (or text ""))]
                 (swap! controllers assoc k c)
                 c))]
@@ -186,12 +186,18 @@
 
   After the frame, because the extent being scrolled to is the height of
   content that has not been laid out yet at the point this is called."
-  [k ctrl token]
+  [k ^m/ScrollController ctrl token]
   (let [mark (get @scroll-marks k ::fresh)
+        ;; Not hinted here: a controller with no clients has no position, so
+        ;; this is nil as often as not, and a non-nullable hint on the binding
+        ;; is a cast that fails before `(nil? pos)` below ever gets to run.
+        ;; The hint goes on the uses instead, where the `or` has already ruled
+        ;; nil out.
         pos (when (.-hasClients ctrl) (.-position ctrl))
         at-end (or (= mark ::fresh)
                    (nil? pos)
-                   (>= (.-pixels pos) (- (.-maxScrollExtent pos) 24.0)))]
+                   (>= (.-pixels ^m/ScrollPosition pos)
+                       (- (.-maxScrollExtent ^m/ScrollPosition pos) 24.0)))]
     (when (or (not= mark token) at-end)
       (swap! scroll-marks assoc k token)
       (.addPostFrameCallback
