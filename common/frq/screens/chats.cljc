@@ -185,7 +185,8 @@
                    :on-click #(do (actions/join! @cells/join-input) (reset! cells/join-input ""))}]
          ;; Both kinds of conversation through one box: `#room` joins a
          ;; channel, `@nick` opens a message to a person.
-         [:entry {:text @cells/join-input
+         [:entry {:key :join-input
+                  :text @cells/join-input
                   :placeholder "#channel or @nick"
                   :on-change #(reset! cells/join-input %)
                   :on-activate #(do (actions/join! @cells/join-input) (reset! cells/join-input ""))}]]
@@ -196,7 +197,8 @@
         [:hbox {:spacing 8 :align :end}
          (when (seq @cells/search)
            [:button {:label "✕" :on-click #(reset! cells/search "")}])
-         [:entry {:text @cells/search
+         [:entry {:key :search
+                  :text @cells/search
                   :placeholder "Search channels"
                   :on-change #(reset! cells/search %)}]]]]]
      ;; `:fill-height` so the scroll inside is handed the rest of the window

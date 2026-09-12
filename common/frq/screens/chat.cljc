@@ -356,7 +356,8 @@
         searching? (seq (str/trim @cells/emoji-search))]
     [:vbox {:key :picker :spacing 4}
      [:hbox {:spacing 6}
-      [:entry {:text @cells/emoji-search
+      [:entry {:key :emoji-search
+               :text @cells/emoji-search
                :width-request 240
                :placeholder "Search emoji"
                :on-change #(reset! cells/emoji-search %)}]
@@ -1370,7 +1371,8 @@
       ;; being typed in: rows spent on a paragraph nobody had written, taken
       ;; off the conversation above. Now the box is a line until there is a
       ;; second line to put in it.
-      [:entry {:text @cells/draft
+      [:entry {:key :draft
+               :text @cells/draft
                :width-request 260
                ;; Always, not only in a terminal. A window is the case that
                ;; needs it more: 260 points is most of a phone's row and a

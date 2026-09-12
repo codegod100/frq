@@ -205,6 +205,34 @@ def cells_enumerated(root):
     ]
 
 
+def entries_keyed(root):
+    """Every `[:entry ...]` in a shared screen carries a `:key`.
+
+    The phone keeps one TextEditingController per key, and an entry without
+    one falls back to a single shared controller — so two unkeyed entries on a
+    screen are the same controller, and whichever renders last wins. It has
+    cost two bugs: the connect screen's host field showed the port, and the
+    emoji search would not hold more than one character, because the composer
+    rendered after it with an empty draft and wiped it.
+
+    glimmer wants the key too, to match children across a render. Nothing
+    enforced it, which is why it kept coming back.
+    """
+    bad = []
+    for path in sorted(root.rglob("*.cljc")):
+        src = strip(path.read_text())
+        for i, line in enumerate(src.split("\n")):
+            if "[:entry" not in line:
+                continue
+            # the props map may run over a few lines; :key belongs in it
+            blob = "\n".join(src.split("\n")[i:i + 8])
+            if ":key" not in blob:
+                bad.append((path, i + 1, ":entry",
+                            "written without a :key — unkeyed entries share one "
+                            "text controller on the phone"))
+    return bad
+
+
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "common")
     bad = []
@@ -216,6 +244,7 @@ def main():
                 if m:
                     bad.append((path, lineno, m.group(0).strip(), why))
     bad += cells_enumerated(root)
+    bad += entries_keyed(root)
     for path, lineno, tok, why in bad:
         where = f"{path}:{lineno}" if lineno else str(path)
         print(f"{where}: {tok!r} is {why}", file=sys.stderr)
