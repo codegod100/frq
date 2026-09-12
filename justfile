@@ -271,3 +271,55 @@ gen-moq lib="":
     { sed -n '1,/^  (:require \[jolt.ffi :as ffi\]))$/p' src/frq/moq/raw.clj; echo; cat "$work/body.clj"; } > "$work/raw.clj"
     mv "$work/raw.clj" src/frq/moq/raw.clj
     echo "wrote src/frq/moq/raw.clj ($(grep -c '^(ffi/defcfn' src/frq/moq/raw.clj) entry points)"
+
+# The other desktop GUI: the same screens, painted by Flutter instead of
+# libcosmic.
+#
+# `just run` and this one are two frontends over one tree, and the split is
+# the same one the APK already draws. Everything under `common/` — the
+# screens, the cells, `frq.io` — is shared; what differs is who paints it and
+# who answers the host. So this recipe is `just apk` with the Android half
+# taken out: the same `clojure -M:cljd compile` over the same flutter/src,
+# then Flutter's Linux target rather than its Android one. CMake and Ninja
+# instead of Gradle, `flutter/linux/` as the runner, no SDK and no JDK.
+#
+# Still impure, for one of the two reasons `apk` is: pub.dev resolution and
+# Flutter's own engine artifacts are network. What it does NOT need is the
+# writable-ANDROID_HOME dance — nothing here writes into the store — so there
+# is no `flutter/.home` on this path.
+#
+# nixGL for the reason `run` needs it and `tui` does not: Flutter paints
+# through GL, and off NixOS the driver is the host's.
+#
+#   just flutter-desktop            build the debug bundle
+#   just flutter-desktop run        build it and open the window
+flutter-desktop action="build":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_FLUTTER_DESKTOP:-}" ]; then
+        exec {{nix}} develop .#flutter-desktop --max-jobs {{jobs}} \
+            --command just flutter-desktop "$@"
+    fi
+    cd flutter
+
+    clojure -M:cljd compile
+    flutter build linux --debug
+
+    # x64/arm64 is Flutter's own name for the host arch, not uname's.
+    case "$(uname -m)" in
+        x86_64)  arch=x64 ;;
+        aarch64) arch=arm64 ;;
+        *)       echo "unknown arch $(uname -m)" >&2; exit 1 ;;
+    esac
+    bundle="build/linux/$arch/debug/bundle"
+
+    case "{{action}}" in
+        build) echo "built $PWD/$bundle/frq" ;;
+        run)
+            runner=()
+            [ -e /run/current-system ] || runner=("$NIXGL")
+            exec "${runner[@]}" "$bundle/frq"
+            ;;
+        *) echo "usage: just flutter-desktop [build|run]" >&2; exit 1 ;;
+    esac

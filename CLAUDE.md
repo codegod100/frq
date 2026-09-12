@@ -39,11 +39,28 @@ Adding a host call means adding it to the seam in `common/frq/io.cljc` and to
 both implementations. Name it for the result rather than the mechanism — the
 seam has `write-private-file!` and not a chmod, because Dart has no chmod.
 
-`flutter/` builds with `just apk`, out of the flake's own `.#flutter` shell
-(clojure, jdk17, flutter) and its `.#android-sdk` package. Impure on purpose:
-Gradle fetches its own dependencies and writes into `ANDROID_HOME`, so the
-recipe copies the store SDK to `flutter/.home` and lets it finish there. See
-flutter/README.md. It is the only APK there is — the jolt APK,
-`nix/android.nix`, `android/` and the `.#apk` outputs are gone, because every
-backend that APK could paint with is retired. jvui and Vidya were experiments;
-libcosmic is the desktop window and does not cross to a phone.
+`flutter/` builds two things, from one `clojure -M:cljd compile`:
+
+`just apk`, out of the flake's own `.#flutter` shell (clojure, jdk17, flutter)
+and its `.#android-sdk` package. Impure on purpose: Gradle fetches its own
+dependencies and writes into `ANDROID_HOME`, so the recipe copies the store SDK
+to `flutter/.home` and lets it finish there. It is the only APK there is — the
+jolt APK, `nix/android.nix`, `android/` and the `.#apk` outputs are gone,
+because every backend that APK could paint with is retired.
+
+`just flutter-desktop`, out of `.#flutter-desktop` (the same clojure and
+flutter, with cmake, ninja, pkg-config and gtk3 where the JDK and the SDK are).
+Impure for the network half of the same reasons and no writable-SDK dance, since
+nothing writes into the store. nixGL off NixOS, like `just run`.
+
+So there are two desktop GUIs and they are both first-class: `just run` is
+libcosmic under jolt, `just flutter-desktop` is Flutter's Linux target over
+`frq.hiccup`. Same screens out of `common/frq/screens/`, two renderers. jvui and
+Vidya were experiments and are gone; libcosmic is a desktop window and does not
+cross to a phone, which is what the Flutter half is for.
+
+The consequence for `common/` is that "the phone" is no longer a synonym for
+"the ClojureDart side" — two targets compile it. An implementation that branches
+on the platform has to ask (`Platform.isAndroid`) rather than assume; see
+`frq.io.dart/write-private-file!`, where assuming cost a token its file mode.
+See flutter/README.md.

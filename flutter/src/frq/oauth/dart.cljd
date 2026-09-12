@@ -21,11 +21,22 @@
             [frq.io :as host]
             [frq.oauth.core :as core]))
 
-(def ^:private return-url
-  "What brings the app back to the front once the browser is done. The activity
-  is `singleTask`, so this raises the app that is already running rather than
-  starting a second copy of it."
-  "frq://auth")
+(defn- return-url
+  "What brings the app back to the front once the browser is done, or nil where
+  nothing needs to.
+
+  On Android the browser is in front of the app and something has to raise it:
+  `frq://auth` is a scheme the manifest claims, and the activity is
+  `singleTask`, so it raises the app that is already running rather than
+  starting a second copy of it.
+
+  On a Linux desktop the window is already beside the browser and the reader
+  switches to it, exactly as it is for `frq.oauth` under libcosmic — and
+  nothing on that machine claims `frq://`, so offering the link would be a
+  button that does nothing. `core/capture-html` takes nil for precisely this
+  and says so; this is the caller it was written for."
+  []
+  (when (.-isAndroid io/Platform) "frq://auth"))
 
 (defn ^:async await-callback!
   "Serve the loopback capture until the browser posts the handoff back.
@@ -79,7 +90,7 @@
                      (do
                        (.set (.-headers resp) "content-type"
                              "text/html; charset=utf-8")
-                       (.write resp (core/capture-html return-url))
+                       (.write resp (core/capture-html (return-url)))
                        (.close resp)))
                    nil)))
       (await (.-future done))

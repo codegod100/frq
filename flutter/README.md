@@ -76,12 +76,64 @@ plugins and is its own project.
 
 ## Building it
 
+Two targets out of one tree. The ClojureDart compile is the same command for
+both — `clojure -M:cljd compile` over `src/` and `../common` — and what differs
+is only what Flutter is asked to wrap it in.
+
 ```bash
-just apk            # the debug APK
-just apk install    # and onto a connected device
-just apk run        # and launched
-just apk log        # logcat
+just apk                 # the debug APK
+just apk install         # and onto a connected device
+just apk run             # and launched
+just apk log             # logcat
+
+just flutter-desktop     # the debug Linux bundle
+just flutter-desktop run # and the window
 ```
+
+### The desktop one
+
+There are two desktop GUIs now, and they are not a fallback for each other:
+`just run` is libcosmic under jolt, and `just flutter-desktop` is this tree
+under Flutter's Linux target. Same screens out of `common/frq/screens/`, two
+renderers — `glimmer-cosmic` walks the hiccup on one side and `frq.hiccup`
+emits Flutter widgets on the other.
+
+Its toolchain is `devShells.flutter-desktop`, which is the APK shell with the
+Android half swapped out: clojure and Flutter are the same two packages at the
+same pinned rev, and CMake, Ninja, pkg-config and GTK stand where the JDK and
+the SDK do. Kept separate rather than merged into one shell because the halves
+are disjoint — a desktop build has no use for a few hundred megabytes of
+Android SDK, which is the same argument that keeps Flutter out of the default
+shell.
+
+Still impure, for one of the two reasons the APK is: pub.dev resolution and
+Flutter's engine artifacts are network. What it does *not* need is the
+writable-`ANDROID_HOME` dance, since nothing here writes into the store — so
+there is no `flutter/.home` on this path.
+
+nixGL off NixOS, for the reason `just run` needs it and `just tui` does not:
+Flutter paints through GL and the driver that can do that is the host's.
+
+`linux/` is the Flutter template's GTK runner, renamed — `frq` rather than
+`cljd_flutter`, and `uk.nandi.frq` rather than `com.example.cljd_flutter`, so
+the binary, the window title and the GTK application id agree with the APK's
+`applicationId`.
+
+Two things the desktop target changed in the Dart, both of them cases where
+"the phone" had been assumed rather than asked:
+
+* `frq.io.dart/write-private-file!` was a plain write, on the grounds that
+  Android storage is already private to the app. On a Linux desktop it is not:
+  the file lands under the XDG data directory with the process umask, and it
+  holds a broker token. The desktop branch now does what `frq.io.jolt` does —
+  create, chmod, then write — and Dart having no chmod is why that is a
+  process.
+* `frq.oauth.dart` handed the capture page `frq://auth` unconditionally, to
+  raise the app from behind Chrome. Nothing on a desktop claims that scheme, so
+  it is now nil there — which `core/capture-html` already documented as the
+  desktop case and already handled.
+
+### The APK
 
 Impure on purpose. Gradle resolves its own dependencies over the network and
 installs build-tools and a platform into `ANDROID_HOME` as it goes, so it can
