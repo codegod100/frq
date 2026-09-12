@@ -113,10 +113,12 @@
 (defn overview-back!
   "Back to the room the strip took you out of.
 
-  The room, and not the place in it: the backlog's scroll is remembered under
-  one name for every conversation — see `messages-scroll-key` — so what comes
-  back is the room and whatever that one viewport is currently showing of it.
-  A place of your own in every room is a bigger change than this button."
+  The room, and with it the place in it: the backlog's scroll is remembered
+  under a name per conversation — see `messages-scroll-key` — so a backend
+  that keeps a position per name lands back where the strip found you. One
+  that only knows whether a viewport is new to it, as the Flutter side does,
+  brings you back to the newest line instead; both beat the middle of the
+  last room you were in, which is what one name for every room gave."
   []
   (when-let [room @overview-return]
     (reset! overview-return nil)

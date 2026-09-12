@@ -253,8 +253,17 @@
 
   After the frame, because the extent being scrolled to is the height of
   content that has not been laid out yet at the point this is called."
-  [k ^m/ScrollController ctrl token]
-  (let [mark (get @scroll-marks k ::fresh)
+  [k ^m/ScrollController ctrl last-key token]
+  (let [;; A widget handed a new key is showing something it has never
+        ;; shown — switching rooms rebuilds the tree into the same shape, so
+        ;; Flutter keeps the State and the offset in it while the backlog
+        ;; underneath becomes another conversation. Whatever this key was
+        ;; told last time, the offset the controller is holding is where the
+        ;; reader was in the room they have just left, so the answer to "are
+        ;; they at the end" is not in it: treat the pair as new.
+        moved (not= k @last-key)
+        _ (reset! last-key k)
+        mark (if moved ::fresh (get @scroll-marks k ::fresh))
         ;; Not hinted here: a controller with no clients has no position, so
         ;; this is nil as often as not, and a non-nullable hint on the binding
         ;; is a cast that fails before `(nil? pos)` below ever gets to run.
@@ -997,13 +1006,19 @@
           ;; two live scroll views briefly shared it and it asserted —
           ;; "ScrollController attached to multiple scroll views", which took
           ;; the whole screen.
-          :managed [ctrl (m/ScrollController)]
+          ;;
+          ;; And an atom beside it for the key that controller is serving —
+          ;; a fact about this widget and not about the key, which is the
+          ;; whole point of it: see `end-ward!`. `:dispose nil` because an
+          ;; atom has no resource to give back.
+          :managed [ctrl (m/ScrollController)
+                    last-key (atom nil) :dispose nil]
           ;; `here-ward!` after `end-ward!`, so the callback that aims at a
           ;; line is queued behind the one that aims at the end: the end's
           ;; runs first, sees the pending jump and stands down, and then this
           ;; one clears it.
           :let [_ (watch-end! k ctrl on-change)
-                _ (end-ward! k ctrl token)
+                _ (end-ward! k ctrl last-key token)
                 _ (here-ward!)]
           (m/SingleChildScrollView
            .controller ctrl

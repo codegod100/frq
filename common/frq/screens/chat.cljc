@@ -907,22 +907,29 @@
 (defn- messages-scroll-key
   "What the backlog's scroll position is remembered under.
 
-  One name in a window: `:scroll-to-bottom` is how the jump button is answered
-  there, and the position under that name is the one the reader left behind.
+  A name per room, because one name for every conversation is a viewport
+  that carries where you were in the last room into the next one: read back
+  through yesterday in one channel, open another, and the second opens in
+  the middle of its backlog rather than at the newest line. A conversation
+  you have never opened has nothing saved under its name, and a viewport
+  with nothing saved opens at the end — which is what opening a room should
+  do, and now does without anyone having to ask for it.
 
-  The terminal backend has no `:scroll-to-bottom` — a viewport there is moved
-  by the wheel and the page keys and by nothing else — but it does open a
-  sticky viewport it has never seen at the bottom, which is the same thing
-  said differently. So a jump renames the viewport: the tick that asks the
-  window to scroll gives the terminal a name with no position saved under it,
-  and the newest line is what it opens on.
+  The tick as well, for the terminal. That backend has no
+  `:scroll-to-bottom` — a viewport there is moved by the wheel and the page
+  keys and by nothing else — but it does open a sticky viewport it has never
+  seen at the bottom, which is the same thing said differently. So a jump
+  renames the viewport: the tick that asks the window to scroll gives the
+  terminal a name with no position saved under it, and the newest line is
+  what it opens on.
 
-  Only on a jump, so scrolling and every message that arrives between two
-  jumps still find the position where they left it."
+  Only on a jump and on a change of room, so scrolling and every message that
+  arrives between two jumps still find the position where they left it."
   []
-  (if @terminal?
-    (str "chat-messages-" @cells/jump-tick)
-    "chat-messages"))
+  (let [room (str @cells/current)]
+    (if @terminal?
+      (str "chat-messages-" @cells/jump-tick "-" room)
+      (str "chat-messages-" room))))
 
 (def sidebar-width 320)
 
