@@ -309,7 +309,11 @@
        ;; that may be gone.
        (reset! jump-context nil)
        (when (.-mounted c)
-         (m/Scrollable.ensureVisible c .alignment 0.3))))))
+         (m/Scrollable.ensureVisible c .alignment 0.3)))
+     ;; The callback is void and `ensureVisible` answers a Future: returned
+     ;; from the tail, it is a value out of a function that has none to give,
+     ;; and Dart says so at compile time rather than here.
+     nil)))
 
 (defn- fills-column?
   "Whether a node takes the height its column has left over.
