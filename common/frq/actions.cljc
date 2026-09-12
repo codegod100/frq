@@ -58,7 +58,7 @@
 (defn toggle-overview! [] (call :toggle-overview! []))
 
 (defn wide? [] (boolean (call :wide? [])))
-(defn member-count [name] (call :member-count [name]))
+(defn member-count [& args] (call :member-count args))
 
 ;; ------------------------------------------------------------------ calls
 ;;
@@ -66,10 +66,10 @@
 ;; the desktop and nothing installs these here, so the call bar renders its
 ;; unavailable shape rather than being special-cased in the screen.
 
-(defn start-call! [] (call :start-call! []))
-(defn in-call? [] (boolean (call :in-call? [])))
-(defn call-in [name] (call :call-in [name]))
-(defn call-available? [] (boolean (call :call-available? [])))
+(defn start-call! [& args] (call :start-call! args))
+(defn in-call? [& args] (boolean (call :in-call? args)))
+(defn call-in [& args] (call :call-in args))
+(defn call-available? [& args] (boolean (call :call-available? args)))
 
 ;; ----------------------------------------------------------------- assets
 ;;
@@ -78,6 +78,37 @@
 ;; the rows that read it; the phone has neither yet and answers nil, which the
 ;; screens already treat as "not here".
 
-(defn avatar-path [actor] (call :avatar-path [actor]))
-(defn image-path [url] (call :image-path [url]))
+(defn avatar-path [& args] (call :avatar-path args))
+(defn image-path [& args] (call :image-path args))
 
+;; ------------------------------------------------------- the rest of chat
+;;
+;; Reactions, the picker, jumping to a message, the overview and the two
+;; dialogs. All of them reducers in `frq.state` on the desktop; a platform
+;; that installs none of them gets a screen whose buttons do nothing rather
+;; than a screen that will not draw.
+
+(defn desktop? [] (boolean (call :desktop? [])))
+(defn quit! [] (call :quit! []))
+(defn hovering [] (call :hovering []))
+(defn viewing [] (call :viewing []))
+(defn accept-policy! [& args] (call :accept-policy! args))
+(defn close-picker! [& args] (call :close-picker! args))
+(defn hover-reaction! [& args] (call :hover-reaction! args))
+(defn join-call! [& args] (call :join-call! args))
+(defn leave-call! [& args] (call :leave-call! args))
+(defn leaving-for-overview! [& args] (call :leaving-for-overview! args))
+(defn member-list [& args] (call :member-list args))
+(defn message-by-id [& args] (call :message-by-id args))
+(defn mine? [& args] (call :mine? args))
+(defn my-reaction? [& args] (call :my-reaction? args))
+(defn open-dm! [& args] (call :open-dm! args))
+(defn open-picker! [& args] (call :open-picker! args))
+(defn overview-back! [& args] (call :overview-back! args))
+(defn picker-emoji [& args] (call :picker-emoji args))
+(defn react-from-picker! [& args] (call :react-from-picker! args))
+(defn recent-everywhere [& args] (call :recent-everywhere args))
+(defn reply-to! [& args] (call :reply-to! args))
+(defn start-edit! [& args] (call :start-edit! args))
+(defn toggle-reaction! [& args] (call :toggle-reaction! args))
+(defn unhover-reaction! [& args] (call :unhover-reaction! args))

@@ -32,3 +32,12 @@
 ;; And whether that terminal draws pictures over its cells — Kitty's graphics
 ;; protocol, which kitty, Ghostty and WezTerm answer and an xterm does not.
 (defonce terminal-graphics? (atom false))
+
+(defn terminal-face?
+  "Whether a message carries a picture of its sender in a terminal.
+
+  Not the same question as `terminal?`: the face is drawn where the protocol
+  for one is, and where it is not an `:image` is `[ picture ]` printed beside
+  every nick — worse than the nothing that is there now."
+  []
+  (and @terminal? @terminal-graphics?))

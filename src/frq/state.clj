@@ -77,19 +77,12 @@
 
 (def editing cells/editing)
 
-;; The message the emoji picker is choosing for, as `{:channel :id}`, or nil
-;; when it is closed. The picker is a panel over the compose bar rather than a
-;; screen: what is being reacted to has to stay in sight.
-(defonce reacting (atom nil))
+(def reacting cells/reacting)
 
-;; What the picker is showing: the search box, and which group is on screen
-;; when nothing has been typed. `nil` is the popular row it opens on.
-(defonce emoji-search (atom ""))
-(defonce emoji-group (atom nil))
+(def emoji-search cells/emoji-search)
+(def emoji-group cells/emoji-group)
 
-;; The picture being looked at full size, or nil. Vidya's tree has no overlay,
-;; so this is a screen of its own rather than a layer over the chat.
-(defonce lightbox (atom nil))            ; {:path :url}
+(def lightbox cells/lightbox)
 
 (def show-users? cells/show-users?)
 
@@ -109,11 +102,7 @@
   (swap! overview? not)
   (save-prefs!))
 
-;; The room the reader was in when a line in the overview took them somewhere
-;; else, or nil. The strip is the one place in the app that moves you without
-;; you having asked to leave where you were — everything else is a room you
-;; chose — so it is the one place that owes you the way back.
-(defonce overview-return (atom nil))
+(def overview-return cells/overview-return)
 
 (declare open-channel!)
 
@@ -135,17 +124,9 @@
     (reset! overview-return nil)
     (open-channel! room)))
 
-;; The window's content width in points, polled from the backend a few times a
-;; second. The app is laid out for a phone-width window, and this is what lets
-;; a wide one be more than a phone with margins: past `wide-width` the channel
-;; list and the conversation are both on screen instead of taking turns.
-(defonce window-width (atom 0))
+(def window-width cells/window-width)
 
-;; The window's content height, polled beside the width and for the same
-;; reason. What it is for is the pictures in the conversation: a preview sized
-;; against the window is a picture on a laptop and a thumbnail on a phone,
-;; where one fixed height is only ever right on one of them.
-(defonce window-height (atom 0))
+(def window-height cells/window-height)
 
 ;; Where the second pane starts paying for itself. Below this a 300pt list
 ;; beside a conversation leaves the messages narrower than the phone layout
@@ -1684,17 +1665,6 @@
 
 (defn close-picker! [] (reset! reacting nil))
 
-(def emoji-groups
-  "Unicode's own grouping, which is what the picker's tabs are."
-  emoji/groups)
-
-(def picker-limit
-  "How many glyphs the picker will lay out at once — twelve rows of the nine it
-  fits across. It stands inside the message list, so what it shows pushes the
-  conversation down; a group that has more says so, and the search box is how
-  you reach the rest."
-  108)
-
 (defn picker-emoji
   "What the picker is showing right now: the popular row, one group, or
   whatever the search matches — by name, so \"cat\" finds the cat and the cat
@@ -1719,11 +1689,7 @@
   [m emoji]
   (boolean (some #{@form-nick} (get (:reactions m) emoji))))
 
-;; The pill the pointer is resting on, or nil — `{:id msgid :emoji glyph}`.
-;; One at a time, and named by the message as well as the glyph: the same emoji
-;; is a pill under many messages, and only the one under the pointer carries a
-;; card.
-(defonce reaction-hover (atom nil))
+(def reaction-hover cells/reaction-hover)
 
 (defn hover-reaction!
   "The pointer has come to rest on a pill."
@@ -1915,15 +1881,9 @@
     (close-picker!)))
 
 
-;; The message a "go to" is currently aiming at. Set for the frame that scrolls
-;; to it and taken off again — a scroll target that stays set would pin the
-;; view there and take scrolling away from the reader.
-(defonce jump-to (atom nil))
+(def jump-to cells/jump-to)
 
-;; The message a jump has just landed on. It outlives the scroll: arriving at a
-;; screenful of messages says nothing about which one was asked for, so the one
-;; that was answers for itself until the reader has had time to see it.
-(defonce highlight (atom nil))
+(def highlight cells/highlight)
 
 
 
@@ -1933,8 +1893,6 @@
 ;; How many it shows without being scrolled — the terminal's whole answer,
 ;; since a strip there is a handful of rows taken off a conversation that is
 ;; measured in how many of those fit.
-(def overview-lines 8)
-
 (defn- round-robin
   "The colls' firsts, then their seconds, and so on until they are spent.
 
@@ -2019,4 +1977,30 @@
   :start-call! start-call!
   :in-call? av/in-call?
   :call-in av/call-in
-  :call-available? av/available?})
+  :call-available? av/available?
+  :desktop? platform/desktop?
+  :quit! platform/quit!
+  :hovering (fn [] @profile/hovering)
+  :viewing (fn [] @profile/viewing)
+  :avatar-path nil
+  :image-path nil
+  :accept-policy! accept-policy!
+  :close-picker! close-picker!
+  :hover-reaction! hover-reaction!
+  :join-call! join-call!
+  :leave-call! leave-call!
+  :leaving-for-overview! leaving-for-overview!
+  :member-list member-list
+  :message-by-id message-by-id
+  :mine? mine?
+  :my-reaction? my-reaction?
+  :open-dm! open-dm!
+  :open-picker! open-picker!
+  :overview-back! overview-back!
+  :picker-emoji picker-emoji
+  :react-from-picker! react-from-picker!
+  :recent-everywhere recent-everywhere
+  :reply-to! reply-to!
+  :start-edit! start-edit!
+  :toggle-reaction! toggle-reaction!
+  :unhover-reaction! unhover-reaction!})

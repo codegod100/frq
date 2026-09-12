@@ -16,7 +16,7 @@
   jolt answers to `:jolt` and ClojureDart to `:cljd`; ClojureDart also has
   `:clj` always on, which is why neither branch is spelled that way."
   (:require #?@(:cljd []
-                :jolt [[glimmer.ratom :refer [atom]]])))
+                :jolt [[glimmer.ratom :refer [atom reaction]]])))
 
 (def default-host "irc.freeq.at")
 (def default-port "6697")
@@ -114,3 +114,80 @@
 ;; watches to be told to go back to it. A counter rather than a flag: a flag
 ;; would need clearing, and there is no frame in which to clear it.
 (defonce at-present? (atom true))
+
+;; --------------------------------------------------- picker, jump, window
+
+(defonce emoji-group (atom nil))
+
+;; What the picker is showing: the search box, and which group is on screen
+;; when nothing has been typed. `nil` is the popular row it opens on.
+(defonce emoji-search (atom ""))
+
+;; The message a jump has just landed on. It outlives the scroll: arriving at a
+;; screenful of messages says nothing about which one was asked for, so the one
+;; that was answers for itself until the reader has had time to see it.
+(defonce highlight (atom nil))
+
+;; The message a "go to" is currently aiming at. Set for the frame that scrolls
+;; to it and taken off again — a scroll target that stays set would pin the
+;; view there and take scrolling away from the reader.
+(defonce jump-to (atom nil))
+
+;; The picture being looked at full size, or nil. Vidya's tree has no overlay,
+;; so this is a screen of its own rather than a layer over the chat.
+(defonce lightbox (atom nil))            ; {:path :url}
+
+;; The room the reader was in when a line in the overview took them somewhere
+;; else, or nil. The strip is the one place in the app that moves you without
+;; you having asked to leave where you were — everything else is a room you
+;; chose — so it is the one place that owes you the way back.
+(defonce overview-return (atom nil))
+
+;; The message the emoji picker is choosing for, as `{:channel :id}`, or nil
+;; when it is closed. The picker is a panel over the compose bar rather than a
+;; screen: what is being reacted to has to stay in sight.
+(defonce reacting (atom nil))
+
+;; The window's content height, polled beside the width and for the same
+;; reason. What it is for is the pictures in the conversation: a preview sized
+;; against the window is a picture on a laptop and a thumbnail on a phone,
+;; where one fixed height is only ever right on one of them.
+(defonce window-height (atom 0))
+
+;; The window's content width in points, polled from the backend a few times a
+;; second. The app is laid out for a phone-width window, and this is what lets
+;; a wide one be more than a phone with margins: past `wide-width` the channel
+;; list and the conversation are both on screen instead of taking turns.
+(defonce window-width (atom 0))
+
+;; ------------------------------------------------------------- derivation
+
+(defonce ^:private derived-cells
+  ;; One cell per question, kept for the session: a cell made afresh on every
+  ;; render would add a watch to its source each time and never take it off.
+  (atom {}))
+
+(defn derived-value
+  "The answer to one question about shared state, under `k`.
+
+  A message row that read `highlight` itself was re-rendered whenever the
+  highlight moved anywhere — every row in the backlog, for one jump. A
+  reaction is recomputed on each such change, which is a comparison, but it
+  wakes the rows that read it only when its answer changes.
+
+  None of which applies under ClojureDart, where Flutter rebuilds the screen
+  and diffs its own element tree: there is no subtree to wake, so the question
+  is simply asked. That is the whole of the difference, and it is why this is
+  a value rather than a cell — `@(derived k f)` could not be written once."
+  [k f]
+  #?(:cljd (f)
+     :jolt (deref (or (get @derived-cells k)
+                      (let [cell (reaction (f))]
+                        (swap! derived-cells assoc k cell)
+                        cell)))))
+
+;; The pill the pointer is resting on, or nil — `{:id msgid :emoji glyph}`.
+;; One at a time, and named by the message as well as the glyph: the same emoji
+;; is a pill under many messages, and only the one under the pointer carries a
+;; card.
+(defonce reaction-hover (atom nil))
