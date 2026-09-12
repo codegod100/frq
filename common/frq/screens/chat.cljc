@@ -1184,7 +1184,15 @@
     [:vbox {:spacing 8 :margin 12 :fill-height true
             :on-key (fn [k]
                       (when (= k "ctrl+end") (actions/jump-to-present!)))}
-     [:hbox {:spacing 8}
+     ;; Wrapping, because on a phone this row asks for more than there is:
+     ;; ← Chats, the room's name, People and Overview do not fit across 360
+     ;; points, and in a Row every one of them is a flex child sharing what
+     ;; there is — so Overview was allotted a quarter of the width and painted
+     ;; itself "Overvi…". Wrapped, each control takes the width of its own
+     ;; label and the row runs onto a second line when it has to. On a window
+     ;; wide enough for one line this changes nothing, and the libcosmic
+     ;; backend lays the row out itself and ignores the prop.
+     [:hbox {:spacing 8 :wrap true}
       ;; The way back to the list, on a window with room for one thing at a
       ;; time. Beside the list there is nothing to go back to, so the button
       ;; goes — in a wrapper of its own, since a child that comes and goes
