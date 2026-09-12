@@ -161,10 +161,15 @@
   (and (vector? node)
        (let [tag (first node)
              p (second node)]
-         (or (= :scroll tag)
+         (or (contains? #{:scroll :page} tag)
              (and (map? p) (:fill-height p))
-             ;; Containers pass it up; `:page` does not, because a page
-             ;; scrolls and nothing inside a scroll can take what is left.
+             ;; A `:page` fills for the same reason a `:scroll` does — it is
+             ;; one — but it does not pass the question *up* from its
+             ;; children, because nothing inside a scroll can take what is
+             ;; left of a height the scroll does not have. Sized to its
+             ;; contents instead, a page overflows the moment the viewport
+             ;; shrinks under it, which on a phone is every time the keyboard
+             ;; opens.
              ;;
              ;; `:hbox` is in the list for the chat screen: its message band is
              ;; a fill-height column sitting in a row beside the people panel,

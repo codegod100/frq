@@ -17,6 +17,7 @@
   (:require [clojure.string :as str]
             [frq.atproto :as atproto]
             [frq.irc.parse :as parse]
+            [frq.irc.handshake :as handshake]
             [frq.msgsig :as msgsig]
             [frq.wire :as wire]
             [jolt.ffi :as ffi]
@@ -182,93 +183,25 @@
       {:kind :plain :fd fd :buf (ffi/alloc buffer-size)
        :lock (Object.) :nick nick :caps (atom #{})})))
 
-(def ^:private sasl-chunk 400)
-
-(defn- authenticate!
-  "AUTHENTICATE takes at most 400 characters a line; a payload that lands on
-  the boundary is followed by a bare `+` so the server knows it ended."
-  [conn payload]
-  (loop [rest payload]
-    (if (> (count rest) sasl-chunk)
-      (do (send-line! conn (str "AUTHENTICATE " (subs rest 0 sasl-chunk)))
-          (recur (subs rest sasl-chunk)))
-      (do (send-line! conn (str "AUTHENTICATE " rest))
-          (when (= sasl-chunk (count rest))
-            (send-line! conn "AUTHENTICATE +"))))))
-
-(def ^:private wanted-caps
-  "What this client can use, and why a guest connection negotiates at all.
-
-  `server-time`: without it a replayed backlog arrives untimed and every old
-  line reads as having just been said. `account-tag`: it puts the sender's DID
-  on the message, which is the only identity a client is given — a nick is
-  whatever someone chose today, and the hostmask carries eight characters of a
-  DID, too few to resolve. Both need `message-tags` beside them, since IRCv3
-  sends tags only to clients that asked for tags at all; either one alone is
-  ACKed and then nothing arrives.
-
-  `echo-message`: the server sends our own lines back to us, which is the only
-  way this client learns the msgid of something it said. Without it our own
-  messages sit in the buffer with no id, and a reaction or a reply aimed at one
-  has nothing to name — the pill appears here and nobody else ever sees it.
-
-  `freeq.at/msgsig`: what lets a signed-in account react at all. freeq answers
-  an unsigned mutation from an account with
-  `FAIL TAGMSG SIGNATURE_REQUIRED`, and this cap is how a client says it can
-  register a key and sign one."
-  ["message-tags" "server-time" "account-tag" "echo-message" "freeq.at/msgsig"])
-
-(defn cap-acked?
+(def cap-acked?
   "Whether the server agreed to `cap` on this connection."
-  [conn cap]
-  (boolean (when-let [caps (:caps conn)] (contains? @caps cap))))
+  (fn [conn cap]
+    (handshake/acked? (when-let [caps (:caps conn)] @caps) cap)))
 
 (defn- cap-step!
   "Drive capability negotiation, and the SASL exchange inside it when there is
   a session to authenticate with. Returns the message unchanged, so the caller
-  can go on handling it."
+  can go on handling it.
+
+  All of the deciding is `frq.irc.handshake`, which is shared: it answers with
+  the lines to send and this writes them. What is left here is the writing and
+  the atom the acked set lives in."
   [conn session msg]
-  (let [{:keys [command params]} msg]
-    (case command
-      "CAP" (let [[_ sub caps] params
-                  offered (set (str/split (or caps "") #"\s+"))
-                  wanted (cond-> (filterv offered wanted-caps)
-                           (and session (offered "sasl")) (conj "sasl"))]
-              (case sub
-                "LS" (if (seq wanted)
-                       (send-line! conn (str "CAP REQ :" (str/join " " wanted)))
-                       (send-line! conn "CAP END"))
-                ;; SASL, when acked, ends negotiation itself — CAP END waits
-                ;; for the exchange to finish either way.
-                "ACK" (do
-                        (when-let [acked (:caps conn)]
-                          (swap! acked into (remove str/blank?
-                                                   (str/split (or caps "") #"\s+"))))
-                        (if (str/includes? (or caps "") "sasl")
-                          (send-line! conn "AUTHENTICATE ATPROTO-CHALLENGE")
-                          (send-line! conn "CAP END")))
-                "NAK" (send-line! conn "CAP END")
-                nil))
-      ;; The challenge arrives as base64url JSON; the nonce inside it is what
-      ;; binds our PDS token to this connection.
-      "AUTHENTICATE" (let [challenge (first params)]
-                       (when (and challenge (not= "+" challenge))
-                         (let [nonce (atproto/json-str
-                                      (atproto/b64-decode challenge) "nonce")]
-                           (authenticate! conn (atproto/sasl-response session nonce)))))
-      ;; 903 logged in, 904/905/906 did not. A login is also the moment this
-      ;; connection can have a signing key: the DID it signs as is only settled
-      ;; here. The key is registered at 001 rather than now — MSGSIG is a
-      ;; registered-client command, and negotiation has not ended yet.
-      "903" (do (when (and (cap-acked? conn "freeq.at/msgsig") (:did session))
-                  (msgsig/generate! (:did session)))
-                (send-line! conn "CAP END"))
-      ("904" "905" "906") (send-line! conn "CAP END")
-      ;; Welcomed. Hand the server the public half, and every reaction from
-      ;; here on carries a signature it will take.
-      "001" (when-let [pub (msgsig/public-key)]
-              (send-line! conn (str "MSGSIG " pub)))
-      nil))
+  (let [caps (:caps conn)
+        {:keys [send] next-caps :caps}
+        (handshake/step {:session session :caps (when caps @caps)} msg)]
+    (when caps (reset! caps next-caps))
+    (doseq [line send] (send-line! conn line)))
   msg)
 
 (defn connect!

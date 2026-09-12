@@ -36,7 +36,8 @@
             [frq.screens.settings :as settings]
             [frq.screens.app :as screens]
             [frq.rooms :as rooms]
-            [frq.irc.parse :as irc]))
+            [frq.irc.parse :as irc]
+            [frq.irc.handshake :as handshake]))
 
 (defonce ^:private lines (atom []))
 (defonce ^:private conn (atom nil))
@@ -87,6 +88,12 @@
 
 (defonce ^:private attempt (atom 0))
 
+(defonce ^:private caps
+  ;; What the server has agreed to on this connection. `frq.irc.handshake`
+  ;; holds none of it: it takes the set and hands a new one back, so the
+  ;; desktop can keep it in an atom on the connection and the phone here.
+  (atom #{}))
+
 (defonce ^:private closing?
   ;; Whether the close about to arrive is one we asked for. Without it a tap
   ;; on Disconnect comes back as "closed by the server", which is both untrue
@@ -107,7 +114,9 @@
   host, the port and the TLS tick are `frq.cells`, filled in by the entry and
   the checkbutton on screen.
 
-  Guest registration only. SASL wants `frq.msgsig`, which is not portable yet."
+  Guest and app-password both. The handshake itself is not here: it is
+  `frq.irc.handshake`, which answers each line with the lines to send back,
+  and all this does is write them."
   []
   ;; Close whatever was open first. Connecting twice left the old socket
   ;; holding the nick, so the second attempt got 433 from its own predecessor.
@@ -115,76 +124,121 @@
     (reset! closing? true)
     (net/close! c)
     (reset! conn nil))
-  (let [n (swap! attempt inc)]
-    (reset! cells/connecting? true)
-    (reset! cells/error nil)
-    (reset! cells/status (str "Connecting to " @cells/form-host "…"))
-    (reset! lines [])
-    ;; A watchdog, because "no answer at all" is a real outcome: a TLS
-    ;; handshake that hangs, or a server that accepts the socket and says
-    ;; nothing, leaves every callback below unfired.
-    (.then (async/Future.delayed (Duration .seconds 20))
-           (fn [_]
-             (when (and @cells/connecting? (= n @attempt))
-               (fail! "No answer from the server after 20s"))))
-    (try
-      (let [sock (await (net/connect!
-                         {:host @cells/form-host
-                          ;; The cell is a string, because it is what an
-                          ;; :entry holds.
-                          :port (or (parse-long (str @cells/form-port)) 6697)
-                          :tls? (boolean @cells/form-tls?)
-                          :on-msg (fn [m]
-                                    (note! m)
-                                    (room! m)
-                                    (let [cmd (str (:command m))
-                                          text (str (last (:params m)))]
-                                      (cond
-                                        (= "001" cmd)
-                                        (do (reset! cells/connecting? false)
-                                            (reset! cells/error nil)
-                                            (reset! cells/status
-                                                    (str "Connected as " @cells/form-nick))
-                                            ;; Off the connect screen, as
-                                            ;; frq.state does on 001. Without
-                                            ;; this a successful connect just
-                                            ;; puts the Connect button back
-                                            ;; and looks exactly like a
-                                            ;; failure.
-                                            (reset! cells/screen :chats)
-                                            (when-let [c @conn]
-                                              (net/send-line! c "JOIN #test")))
+  ;; A guest carries no session, and must not carry the last one either: a
+  ;; leftover session would have `handshake/step` ask for sasl and then
+  ;; authenticate as whoever signed in before.
+  (when (= :guest @cells/auth-mode)
+    (reset! cells/session nil))
+  ;; An app password signs in before the socket opens: the SASL payload is
+  ;; built from a PDS session, and getting one is an HTTPS round trip that has
+  ;; nothing to do with IRC. `frq.atproto.core` says what to ask and what the
+  ;; answer means; `frq.atproto.dart` waits for it. Nothing dials out if it
+  ;; fails — connecting anyway would land us on the server as a guest, which
+  ;; looks like a success and is not the one that was asked for.
+  (when
+   (if (= :app-password @cells/auth-mode)
+     (do (reset! cells/connecting? true)
+         (reset! cells/error nil)
+         (reset! cells/status "Signing in…")
+         (try
+           (reset! cells/session
+                   (await (atproto/create-session @cells/form-handle
+                                                  @cells/form-app-password)))
+           true
+           (catch Object e
+             (reset! cells/session nil)
+             ;; The message, not the exception: `frq.atproto.core` puts the
+             ;; body it could not read in the ex-data, and a PDS that answers
+             ;; a resolve with an HTML error page puts the whole page there.
+             (fail! (str "Sign-in failed: " (or (ex-message e) e)))
+             false)))
+     true)
+    (let [n (swap! attempt inc)]
+      (reset! caps #{})
+      (reset! cells/connecting? true)
+      (reset! cells/error nil)
+      (reset! cells/status (str "Connecting to " @cells/form-host "…"))
+      (reset! lines [])
+      ;; A watchdog, because "no answer at all" is a real outcome: a TLS
+      ;; handshake that hangs, or a server that accepts the socket and says
+      ;; nothing, leaves every callback below unfired.
+      (.then (async/Future.delayed (Duration .seconds 20))
+             (fn [_]
+               (when (and @cells/connecting? (= n @attempt))
+                 (fail! "No answer from the server after 20s"))))
+      (try
+        (let [sock (await (net/connect!
+                           {:host @cells/form-host
+                            ;; The cell is a string, because it is what an
+                            ;; :entry holds.
+                            :port (or (parse-long (str @cells/form-port)) 6697)
+                            :tls? (boolean @cells/form-tls?)
+                            :on-msg (fn [m]
+                                      (note! m)
+                                      (room! m)
+                                      ;; Capability negotiation and SASL, out of
+                                      ;; common/ — the same steps the desktop
+                                      ;; takes, and all this does is write what
+                                      ;; they answer with.
+                                      (let [{:keys [send] next-caps :caps}
+                                            (handshake/step {:session @cells/session
+                                                             :caps @caps}
+                                                            m)]
+                                        (reset! caps next-caps)
+                                        (doseq [line send]
+                                          (when-let [c @conn] (net/send-line! c line))))
+                                      (let [cmd (str (:command m))
+                                            text (str (last (:params m)))]
+                                        (cond
+                                          (= "001" cmd)
+                                          (do (reset! cells/connecting? false)
+                                              (reset! cells/error nil)
+                                              (reset! cells/status
+                                                      (str "Connected as " @cells/form-nick))
+                                              ;; Off the connect screen, as
+                                              ;; frq.state does on 001. Without
+                                              ;; this a successful connect just
+                                              ;; puts the Connect button back
+                                              ;; and looks exactly like a
+                                              ;; failure.
+                                              (reset! cells/screen :chats)
+                                              (when-let [c @conn]
+                                                (net/send-line! c "JOIN #test")))
 
-                                        (contains? registration-failed cmd)
-                                        (fail! (if (= "433" cmd)
-                                                 (str "Nick " @cells/form-nick
-                                                      " is already in use — try another")
-                                                 (str cmd " " text)))
+                                          (contains? registration-failed cmd)
+                                          (fail! (if (= "433" cmd)
+                                                   (str "Nick " @cells/form-nick
+                                                        " is already in use — try another")
+                                                   (str cmd " " text)))
 
-                                        ;; Something is happening; say so
-                                        ;; rather than sit on one message.
-                                        @cells/connecting?
-                                        (reset! cells/status (str "… " cmd)))))
-                          :on-close (fn [why]
-                                      (reset! conn nil)
-                                      ;; Say what the last thing seen was. A
-                                      ;; connection that registers and then
-                                      ;; drops is a different bug from one
-                                      ;; that never registers, and only the
-                                      ;; last line apart tells them.
-                                      (if @closing?
-                                        (reset! closing? false)
-                                        (fail! (str (or why "closed by the server")
-                                                    " (after " (count @lines)
-                                                    " lines, last: " @last-line ")"))))}))]
-        (reset! conn sock)
-        (net/send-line! sock (str "NICK " @cells/form-nick))
-        (net/send-line! sock (str "USER " @cells/form-nick " 0 * :frq")))
-      ;; Object, not Exception. Dart keeps Error and Exception in separate
-      ;; hierarchies, so a TypeError is not an Exception and would leave
-      ;; `connecting?` true for ever.
-      (catch Object e
-        (fail! (str e))))))
+                                          ;; Something is happening; say so
+                                          ;; rather than sit on one message.
+                                          @cells/connecting?
+                                          (reset! cells/status (str "… " cmd)))))
+                            :on-close (fn [why]
+                                        (reset! conn nil)
+                                        ;; Say what the last thing seen was. A
+                                        ;; connection that registers and then
+                                        ;; drops is a different bug from one
+                                        ;; that never registers, and only the
+                                        ;; last line apart tells them.
+                                        (if @closing?
+                                          (reset! closing? false)
+                                          (fail! (str (or why "closed by the server")
+                                                      " (after " (count @lines)
+                                                      " lines, last: " @last-line ")"))))}))]
+          (reset! conn sock)
+          ;; CAP first, then registration — the order the server expects, and the
+          ;; order `frq.irc` uses.
+          (net/send-line! sock "CAP LS 302")
+          (let [nick (if-let [h (:handle @cells/session)] h @cells/form-nick)]
+            (net/send-line! sock (str "NICK " nick))
+            (net/send-line! sock (str "USER " nick " 0 * :frq"))))
+        ;; Object, not Exception. Dart keeps Error and Exception in separate
+        ;; hierarchies, so a TypeError is not an Exception and would leave
+        ;; `connecting?` true for ever.
+        (catch Object e
+          (fail! (str e)))))))
 
 (defn- disconnect! []
   (reset! closing? true)

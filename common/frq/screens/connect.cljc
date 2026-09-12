@@ -24,10 +24,9 @@
   ClojureDart TLS is in the Dart runtime — `SecureSocket`, nothing to load —
   and that sentence would now be a lie.
 
-  Sign-in is still unavailable on the phone, but for a different reason worth
-  naming rather than papering over: the SASL handshake wants `frq.msgsig` and
-  `frq.atproto`'s session, and msgsig is not ported yet."
-  #?(:cljd "TLS comes from dart:io, so :6697 works here; untick it for a plain :6667 listener. Sign-in needs SASL, which is not ported to the phone yet."
+  Sign-in itself is no longer one of those differences: `frq.irc.handshake`
+  drives SASL from common/, so both halves sign in the same way."
+  #?(:cljd "TLS comes from dart:io, so :6697 works here; untick it for a plain :6667 listener."
      :jolt "TLS rides jolt's OpenSSL bindings; untick it for a plain :6667 listener. Sign-in needs TLS, so it is desktop-only."))
 
 (defn error-note
