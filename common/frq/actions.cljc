@@ -139,3 +139,29 @@
 (defn profile-unhover! [& args] (call :profile-unhover! args))
 (defn profile-open! [& args] (call :profile-open! args))
 (defn toggle-hide-join-part! [] (call :toggle-hide-join-part! []))
+
+;; --------------------------------------------------- the picker and a face
+;;
+;; Browsing the filesystem for a picture, and the profile behind a nick. Both
+;; are the host's: one is a directory listing and the other is an HTTPS fetch
+;; with a cache, and a platform that has neither answers nil.
+
+(defn browse! [& args] (call :browse! args))
+(defn close-image-picker! [& args] (call :close-image-picker! args))
+(defn pick-image! [& args] (call :pick-image! args))
+(defn parent-dir [& args] (call :parent-dir args))
+(defn picker-entries [& args] (call :picker-entries args))
+(defn picker-roots [& args] (call :picker-roots args))
+(defn media-tick [] (call :media-tick []))
+(defn avatar-ready [& args] (call :avatar-ready args))
+
+(defn profile-close! [& args] (call :profile-close! args))
+(defn profile-dismiss! [& args] (call :profile-dismiss! args))
+(defn profile-enter-dialog! [& args] (call :profile-enter-dialog! args))
+(defn profile-entry [& args] (call :profile-entry args))
+(defn profile-leave-dialog! [& args] (call :profile-leave-dialog! args))
+(defn profile-stats-line [& args] (call :profile-stats-line args))
+(defn profile-tick [] (call :profile-tick []))
+(defn profile-truncate [& args] (call :profile-truncate args))
+(defn profile-web-url [& args] (call :profile-web-url args))
+

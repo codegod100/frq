@@ -1360,9 +1360,7 @@
 
 ;; ------------------------------------------------------------------ picking
 
-;; Where the picker is looking, or nil when it is closed. A path, so the
-;; browsing is just this cell moving.
-(defonce image-picker (atom nil))
+(def image-picker cells/image-picker)
 
 (defn- readable-dir? [path]
   (try (and (host/file-exists? path) (host/directory? path))
@@ -1950,6 +1948,14 @@
   :open-channel! open-channel!
   :leave-channel! leave-channel!
   :toggle-hide-join-part! toggle-hide-join-part!
+  :browse! browse!
+  :close-image-picker! close-image-picker!
+  :pick-image! pick-image!
+  :parent-dir parent-dir
+  :picker-entries picker-entries
+  :picker-roots picker-roots
+  :media-tick (fn [] @media-tick)
+  :avatar-ready (fn [actor] (avatars/path-when-ready actor))
   :send-draft! send-draft!
   :cancel-edit! cancel-edit!
   :cancel-reply! cancel-reply!

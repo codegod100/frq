@@ -81,6 +81,18 @@
 
 (declare render fills-row?)
 
+(defn- expand
+  "A component vector reduced to the tags it produces.
+
+  `[chat-screen]` is a function, and asking whether it fills means calling it —
+  the root wraps every screen in a plain `:vbox`, and without this the wrapper
+  could not see that the screen inside it wants the whole height. Expanded
+  once and both asked and rendered, so the component runs once either way."
+  [node]
+  (if (and (vector? node) (seq node) (not (keyword? (first node))))
+    (expand (apply (first node) (rest node)))
+    node))
+
 (defn- fills-row?
   "Whether a node takes the width its row has left over.
 
@@ -159,7 +171,7 @@
              ;; so the row must be given a height before the column can take
              ;; what is left of it.
              (and (contains? #{:vbox :card :hbox} tag)
-                  (boolean (some fills-column? (body node))))))))
+                  (boolean (some #(fills-column? (expand %)) (body node))))))))
 
 (defn- children
   "Flatten seqs, drop nils. `(for [...] ...)` in a component yields a seq in
@@ -180,7 +192,8 @@
   `fills?` says which, so a Row asks about width and a Column about height."
   [fills? nodes]
   (persistent!
-   (reduce (fn [acc n]
+   (reduce (fn [acc n0]
+             (let [n (expand n0)]
              (cond (nil? n) acc
                    (seq? n) (reduce conj! acc (flexed fills? n))
                    (fills? n) (conj! acc (m/Expanded .child (render n)))
@@ -193,7 +206,7 @@
                    (conj! acc (m/Expanded .child (render n)))
                    (and (identical? fills? fills-row?) (flexes-in-row? n))
                    (conj! acc (m/Flexible .child (render n)))
-                   :else (conj! acc (render n))))
+                   :else (conj! acc (render n)))))
            (transient []) nodes)))
 
 (defn- txt
@@ -258,7 +271,7 @@
          ;; and a `:scroll` handing their children unbounded space.
          col (fn [sp nodes]
                (m/Column .crossAxisAlignment m/CrossAxisAlignment.start
-                         .mainAxisSize (if (some fills-column? nodes)
+                         .mainAxisSize (if (some #(fills-column? (expand %)) nodes)
                                          m/MainAxisSize.max
                                          m/MainAxisSize.min)
                          .spacing sp
@@ -273,7 +286,7 @@
                 ;; Max when something inside wants the space left over: a
                 ;; column sized to its contents has none to give.
                 .mainAxisSize (if (or (:fill-height p)
-                                      (some fills-column? (body node)))
+                                      (some #(fills-column? (expand %)) (body node)))
                                 m/MainAxisSize.max
                                 m/MainAxisSize.min)
                 .spacing (dbl (:spacing p) 0.0)
@@ -320,12 +333,12 @@
         ;; Stretch when a child fills vertically: a Row hands its children a
         ;; loose height by default, and a column that wants what is left of it
         ;; needs a tight one.
-        .crossAxisAlignment (if (some fills-column? (body node))
+        .crossAxisAlignment (if (some #(fills-column? (expand %)) (body node))
                               m/CrossAxisAlignment.stretch
                               m/CrossAxisAlignment.center)
         ;; A row holding something that fills has to be given the width to
         ;; divide, so it is max rather than min whenever a child asks.
-        .mainAxisSize (if (some fills-row? (body node))
+        .mainAxisSize (if (some #(fills-row? (expand %)) (body node))
                         m/MainAxisSize.max
                         m/MainAxisSize.min)
           .spacing (dbl (:spacing p) 0.0)

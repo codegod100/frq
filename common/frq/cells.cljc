@@ -208,3 +208,7 @@
 
 
 ;; joined as soon as the server sends 001
+
+;; Where the picker is looking, or nil when it is closed. A path, so the
+;; browsing is just this cell moving.
+(defonce image-picker (atom nil))
