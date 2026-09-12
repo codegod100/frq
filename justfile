@@ -78,6 +78,14 @@ apk action="build":
     sdk="$(nix build --no-link --print-out-paths \
         "{{justfile_directory()}}#android-sdk")/libexec/android-sdk"
 
+    # adb keeps the key the phone has already trusted under the real HOME, and
+    # HOME moves below so Gradle can write into the SDK copy. Told where to
+    # look, adb keeps its identity; left to find $HOME/.android it generates a
+    # new one, the device stops recognising this machine, and the deploy ends
+    # in "no devices/emulators found" while `adb devices` in any other shell
+    # lists it perfectly well.
+    export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$HOME/.android}"
+
     export HOME="$PWD/.home"
     export ANDROID_HOME="$HOME/android-sdk"
     export ANDROID_SDK_ROOT="$ANDROID_HOME"
