@@ -891,7 +891,13 @@
           # than as a version mismatch.
           flutter = pkgs.mkShellNoCC {
             name = "frq-flutter";
-            packages = [ pkgs.clojure pkgs.jdk17 pkgs.flutter pkgs.just ];
+
+            # git, because tools.deps resolves the ClojureDart dependency
+            # through tools.gitlibs even when every byte of it is already in
+            # the seeded cache — the same reason flutter-desktop-unwrapped
+            # names it. The host's git has always been there to answer; naming
+            # it means the shell does not depend on that.
+            packages = [ pkgs.clojure pkgs.jdk17 pkgs.flutter pkgs.just pkgs.git ];
 
             # Where the recipe copies from. Naming it here is also what makes
             # entering the shell build it, so the first `just apk` does not
@@ -899,6 +905,19 @@
             # why.
             FRQ_ANDROID_SDK =
               "${androidSdkFor pkgs.stdenv.hostPlatform.system}/libexec/android-sdk";
+
+            # The Maven, gitlibs and pub caches the ClojureDart compile would
+            # otherwise fetch, plus the analyzer project it writes under
+            # .clojuredart. Here for both of FRQ_ANDROID_SDK's reasons: it is
+            # where the recipe copies from, and naming it is what makes
+            # entering the shell build it.
+            #
+            # The compile still runs online. These are a warm start and not a
+            # pin — `--offline` would be, and would turn adding a line to
+            # flutter/deps.edn into a re-hash of cljd-deps before anything
+            # compiled again. The sandbox build takes that trade because it
+            # has no network; the loop someone edits in should not.
+            FRQ_CLJD_DEPS = "${self.packages.${pkgs.stdenv.hostPlatform.system}.cljd-deps}";
           };
 
           # The other desktop GUI. Same ClojureDart half as the APK — one
@@ -944,6 +963,15 @@
             # GL, and off NixOS the driver that can do that is the host's, not
             # the store's. The recipe reads this exactly as `run` does.
             NIXGL = "${nixGLFor pkgs}/bin/nixGLIntel";
+
+            # The `flutter` shell's, deliberately the same one and for the
+            # same reason clojure and flutter are: the ClojureDart half of
+            # both builds is one compile over one deps.edn, so a second set of
+            # caches would be a second answer to what it resolved against.
+            # This recipe reads the variable directly — it is inside this
+            # shell before it does any of the work — where `just apk` reaches
+            # for the flake output itself.
+            FRQ_CLJD_DEPS = "${self.packages.${pkgs.stdenv.hostPlatform.system}.cljd-deps}";
 
             # The recipe's re-entry test, the way JOLT_NATIVE_LIB is the
             # default shell's. Nothing else sets it, so `just flutter-desktop`

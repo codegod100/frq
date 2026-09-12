@@ -99,12 +99,52 @@ apk action="build":
         chmod -R u+w "$ANDROID_HOME"
     fi
 
+    # The compile's three caches, same flake-output-and-copy shape as the SDK
+    # and for the same reason: tools.deps and pub both write into theirs, and
+    # the store is read-only. What this buys is the "Resolving dependencies…
+    # Downloading packages…" that used to open every run.
+    deps="$(nix build --no-link --print-out-paths \
+        "{{justfile_directory()}}#cljd-deps")"
+
+    # Neither of these follows HOME. Both are read off the JVM's user.home,
+    # which comes from /etc/passwd rather than the environment — so moving
+    # HOME below is not enough to move them, and left alone they would be the
+    # real ~/.m2 and ~/.gitlibs, shared with every other project on the box.
+    export GITLIBS="$HOME/gitlibs"
+    m2="$HOME/m2"
+    export PUB_CACHE="$HOME/.pub-cache"
+
+    # Seeded once each and then left alone, exactly as ANDROID_HOME is: after
+    # the first compile these hold whatever the working tree has asked for
+    # since, and re-copying would throw that away.
+    seed() {
+        [ -e "$2" ] && return 0
+        mkdir -p "$(dirname "$2")"
+        cp -r "$deps/$1" "$2"
+        chmod -R u+w "$2"
+    }
+    seed m2 "$m2"
+    seed gitlibs "$GITLIBS"
+    seed pub-cache "$PUB_CACHE"
+    seed clojuredart/cache "$PWD/.clojuredart/cache"
+
     # Also the flake's. `nix shell nixpkgs#...` read the registry, which is a
     # different and unlocked nixpkgs — the Flutter that built the APK could
     # move under it without flake.lock changing a line.
     flutter="nix develop {{justfile_directory()}}#flutter --command"
 
-    $flutter clojure -M:cljd compile
+    # cljd-deps ships the analyzer project unresolved — a fixed-output
+    # derivation may not name the store, and a resolved pub project is
+    # nothing but store paths. So it is resolved here instead, offline,
+    # against the cache that derivation did fetch. ClojureDart reaches for the
+    # network only when bin/analyzer.dart is missing, and after this it is not.
+    for helper in .clojuredart/cache/*/cljd_helper; do
+        [ -d "$helper" ] || continue
+        [ -e "$helper/.dart_tool/package_config.json" ] && continue
+        ( cd "$helper" && $flutter flutter pub get --offline )
+    done
+
+    $flutter clojure -Sdeps "{:mvn/local-repo \"$m2\"}" -M:cljd compile
 
     # Rewritten every run: it carries absolute store paths, and the flutter
     # one moves whenever nixpkgs does.
@@ -311,7 +351,44 @@ flutter-desktop action="build":
     fi
     cd flutter
 
-    clojure -M:cljd compile
+    # The same three caches `just apk` seeds, in the same place and out of the
+    # same flake output — one compiler, one set of dependencies, and no reason
+    # for the two frontends to keep a copy each. `.home/` is `apk`'s directory
+    # by name and this is the only thing put there from here, which is the
+    # point: whichever recipe runs first pays for the copy and the other finds
+    # it warm.
+    #
+    # No `nix build` here, unlike `apk`: this recipe is already inside the
+    # shell that names FRQ_CLJD_DEPS by the time it gets this far, and `apk`
+    # needs the path before it enters anything.
+    #
+    # m2 and gitlibs are set here for the reason they are set there — the JVM
+    # reads user.home out of /etc/passwd, so neither follows HOME and left
+    # alone they are the real ~/.m2 and ~/.gitlibs.
+    export PUB_CACHE="$PWD/.home/.pub-cache"
+    export GITLIBS="$PWD/.home/gitlibs"
+    m2="$PWD/.home/m2"
+
+    seed() {
+        [ -e "$2" ] && return 0
+        mkdir -p "$(dirname "$2")"
+        cp -r "$FRQ_CLJD_DEPS/$1" "$2"
+        chmod -R u+w "$2"
+    }
+    seed m2 "$m2"
+    seed gitlibs "$GITLIBS"
+    seed pub-cache "$PUB_CACHE"
+    seed clojuredart/cache "$PWD/.clojuredart/cache"
+
+    # Resolved here rather than in cljd-deps, which was not allowed to name
+    # the store — see the same loop in `apk`.
+    for helper in .clojuredart/cache/*/cljd_helper; do
+        [ -d "$helper" ] || continue
+        [ -e "$helper/.dart_tool/package_config.json" ] && continue
+        ( cd "$helper" && flutter pub get --offline )
+    done
+
+    clojure -Sdeps "{:mvn/local-repo \"$m2\"}" -M:cljd compile
     flutter build linux --debug
 
     # x64/arm64 is Flutter's own name for the host arch, not uname's.
