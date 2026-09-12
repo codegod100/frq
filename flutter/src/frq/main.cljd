@@ -589,7 +589,19 @@
       (when (seq (str (or (:nick saved) "")))
         (reset! cells/form-nick (:nick saved)))
       (reset! cells/auth-mode :bluesky)
-      (reset! cells/status (str "Signed in as " (:handle saved) " — Connect to resume")))
+      (reset! cells/status (str "Signed in as " (:handle saved) "…"))
+      ;; And then it connects on its own, as `frq.app/start!` does on the
+      ;; desktop: a remembered account has already said what it wants, and
+      ;; making it say so again at every launch is a tap that carries no
+      ;; information. The web-token is minted fresh from the broker token
+      ;; either way, so this is the same round trip Connect would make.
+      ;;
+      ;; On a timer rather than awaited here, and for the desktop's reason:
+      ;; the connect screen with its status is what should be on screen while
+      ;; it happens, and if it fails the error lands somewhere visible rather
+      ;; than before the first frame.
+      (.then (async/Future.delayed (Duration .milliseconds 150))
+             (fn [_] (connect!) nil)))
     ;; What the shared screen calls. The desktop installs frq.state's
     ;; reducers here; this installs the phone's.
     (actions/install!
