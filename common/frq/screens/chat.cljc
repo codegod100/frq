@@ -1300,9 +1300,14 @@
       ;; and without this Send would look like it was about to say it twice.
       [:vbox {:key :editing}
       (when @cells/editing
+        ;; The pencil is a picture and not a character in the label: a label is
+        ;; set in the text font, which has no emoji in it, so the banner opened
+        ;; with tofu where the reply banner above opens with a ↩ the font does
+        ;; have. Same split `run-node` makes for an emoji anybody types.
         [:hbox {:spacing 8}
-         [:dim-label {:label "✏️ Editing your message"}]
-         [:button {:label "✕" :on-click actions/cancel-edit!}]])]
+         [:emoji {:key :pencil :emoji "✏️" :size text-emoji-size}]
+         [:dim-label {:key :label :label "Editing your message"}]
+         [:button {:key :cancel :label "✕" :on-click actions/cancel-edit!}]])]
       ;; The pasted picture, above the line it will go out with. Shown rather
       ;; than written into the draft: what is being sent is a picture, and a URL
       ;; dropped into the entry would be an unreadable line of text sitting in
