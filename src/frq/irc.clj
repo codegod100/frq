@@ -241,23 +241,11 @@
                          "PRIVMSG " target " :" text))))
 
 (defn edit!
-  "Rewrite something already said. The `+draft/edit` tag names the message
-  being replaced, and what follows is its new text — the server checks that
-  the message was ours, files the revision under the original's id, and sends
-  the new line on to the channel for every client to fold in.
-
-  A PRIVMSG rather than a TAGMSG, because an edit carries a body — and signed,
-  like every other thing that changes a record already written: from an account
-  the server answers an unsigned one with
-  `FAIL EDIT SIGNATURE_REQUIRED` and the message stays as it was. `peer-did` is
-  who a DM is with, which is half of the name a DM signature is made under."
+  "Rewrite something already said. The line is `frq.irc.mutate`'s; this writes
+  it."
   ([conn target msgid text] (edit! conn target msgid text nil))
   ([conn target msgid text peer-did]
-   (let [tags (assoc (msgsig/edit-tags target msgid text nil peer-did)
-                     "+draft/edit" msgid)
-         pairs (for [[k v] tags] (str k "=" (escape-tag-value v)))]
-     (send-line! conn (str "@" (str/join ";" pairs)
-                           " PRIVMSG " target " :" text)))))
+   (send-line! conn (mutate/edit-line target msgid text peer-did))))
 
 (defn tagmsg!
   "A message that is only tags: how freeq carries a reaction, a typing hint or

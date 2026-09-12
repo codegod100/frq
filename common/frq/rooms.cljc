@@ -53,3 +53,16 @@
                       (str/includes? (str/lower-case (:name %)) q)))
          (sort-by (juxt #(- (:accessed % 0)) :name))
          vec)))
+
+
+(defn mine?
+  "Whether we are the one who said this.
+
+  Nick against nick, which is what the server itself falls back to for an
+  account with no DID — and an edit it would refuse is one not worth offering.
+  A system line is nobody's to rewrite."
+  [m me]
+  (and (not (:system? m))
+       (seq (or (:from m) ""))
+       (= (str/lower-case (:from m))
+          (str/lower-case (or me "")))))

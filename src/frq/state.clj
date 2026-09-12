@@ -8,6 +8,7 @@
             [frq.rooms :as rooms]
             [frq.members :as members]
             [frq.reactions :as reactions]
+            [frq.edits :as edits]
             [glimmer.ratom :as r :refer [atom]]
             [frq.actions :as actions]
             [frq.cells :as cells]
@@ -564,57 +565,16 @@
   (swap! channels reactions/update-reaction channel msgid emoji nick on?))
 
 (defn edit-message!
-  "Rewrite a message in place, and say so. `msgid` names the line as it was
-  first sent: a message keeps the id it was born with across every revision,
-  which is what keeps its reactions, replies and pins attached to it.
+  "Rewrite a message in place, and say so.
 
-  Only the sender may rewrite their own line, so an edit whose nick is not the
-  one on the message is dropped — the server checks authorship too, and a
-  client that believed the wire alone would let a hostile relay put words in
-  somebody's mouth.
-
-  Answers what became of it: `:applied`, `:refused` for one that was not the
-  sender's to make, or `:absent` when no line here has that id — an edit of
-  something older than the backlog we asked for, which is the one case the
-  caller shows as a line of its own rather than losing what it says."
+  `frq.edits` is the fold and what it answers; the atom and the picture links
+  are this half's. A message keeps the id it was born with across every
+  revision, which is what keeps its reactions, replies and pins attached to it."
   [channel msgid from text]
-  (if-not (and channel msgid)
-    :absent
-    (let [found? (atom nil)]
-      (swap! channels
-             (fn [m]
-               (if-let [msgs (get-in m [channel :messages])]
-                 (assoc-in m [channel :messages]
-                           (mapv (fn [msg]
-                                   (if (= msgid (:id msg))
-                                     (if (= (str/lower-case (or (:from msg) ""))
-                                            (str/lower-case (or from "")))
-                                       (do (reset! found? :applied)
-                                           (assoc msg
-                                                  :text text
-                                                  :images (media/image-urls text)
-                                                  :edited? true))
-                                       ;; Somebody else's line. The server
-                                       ;; refuses this too, so it is either a
-                                       ;; peer talking to us directly or one
-                                       ;; lying — and neither gets to put words
-                                       ;; under a name that is not theirs.
-                                       (do (reset! found? :refused) msg))
-                                     msg))
-                                 msgs))
-                 m)))
-      ;; The revision may link a picture the original did not.
-      (when (= :applied @found?)
-        (doseq [url (media/image-urls text)]
-          (media/fetch! url #(swap! media-tick inc))))
-      (or @found? :absent))))
-
-;; --- who is in the room ------------------------------------------------------
-;; All of it is `frq.members` now: a fold over the channels map, which is the
-;; same fold under either compiler. What stays here is the atom it is folded
-;; into and `ensure-channel`, because a room means more to this half than to
-;; the phone — unread counts, read marks, a joining flag — and the shared
-;; functions deliberately only ever touch `:users` and `:names-acc`.
+  (let [out (edits/apply-edit @channels channel msgid from text
+                              #(assoc % :images (media/image-urls text)))]
+    (reset! channels (:channels out))
+    (:result out)))
 
 (defn- names-line [channel names]
   (swap! channels #(members/with-names (ensure-channel % channel) channel names)))
@@ -1426,10 +1386,7 @@
   server itself falls back to for an account with no DID — and an edit it would
   refuse is one not worth offering."
   [m]
-  (and (not (:system? m))
-       (seq (or (:from m) ""))
-       (= (str/lower-case (:from m))
-          (str/lower-case (or @form-nick "")))))
+  (rooms/mine? m @form-nick))
 
 (defn start-edit!
   "Put a message back in the box to be rewritten.

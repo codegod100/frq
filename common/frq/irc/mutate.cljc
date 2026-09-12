@@ -49,3 +49,19 @@
    (tag-line (merge {"+freeq.at/unreact" emoji "+reply" msgid}
                     (msgsig/mutation-tags "unreact" target msgid emoji peer-did))
              (str "TAGMSG " target))))
+
+
+(defn edit-line
+  "Rewrite something already said.
+
+  The `+draft/edit` tag names the message being replaced and what follows is
+  its new text — the server checks that the message was ours, files the
+  revision under the original's id, and sends the new line on to the channel
+  for every client to fold in.
+
+  A PRIVMSG rather than a TAGMSG, because an edit carries a body."
+  ([target msgid text] (edit-line target msgid text nil))
+  ([target msgid text peer-did]
+   (tag-line (assoc (msgsig/edit-tags target msgid text nil peer-did)
+                    "+draft/edit" msgid)
+             (str "PRIVMSG " target " :" text))))

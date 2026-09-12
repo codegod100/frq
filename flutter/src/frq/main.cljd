@@ -41,6 +41,7 @@
             [frq.rooms :as rooms]
             [frq.members :as members]
             [frq.reactions :as reactions]
+            [frq.edits :as edits]
             [frq.irc.mutate :as mutate]
             [frq.oauth.core :as oauth]
             [frq.oauth.dart :as oauth-dart]
@@ -128,8 +129,25 @@
       (let [tags (:tags m)
             target (first params)
             text (last params)
-            name (if (rooms/dm? target) who target)]
-        (swap! cells/channels update name
+            name (if (rooms/dm? target) who target)
+            edit-of (or (irc/tag-value tags "+draft/edit")
+                        (irc/tag-value tags "+edit"))]
+        (if edit-of
+          ;; A revision is not a new line: it replaces the one it names, under
+          ;; that line's own id and never the revision's own wire msgid, which
+          ;; nothing else refers to. One older than the backlog we hold has
+          ;; nothing here to replace, and is shown as itself rather than lost.
+          (let [out (edits/apply-edit @cells/channels name edit-of who text)]
+            (reset! cells/channels (:channels out))
+            (when (= :absent (:result out))
+              (swap! cells/channels update name
+                     #(-> (merge {:name name :messages [] :unread 0} %)
+                          (update :messages conj {:from who
+                                                  :text text
+                                                  :did (:account m)
+                                                  :id edit-of
+                                                  :edited? true})))))
+          (swap! cells/channels update name
                #(-> (merge {:name name :messages [] :unread 0} %)
                     (update :messages conj
                             ;; The msgid is what everything after a message
@@ -147,9 +165,15 @@
                                            (irc/tag-value tags "+draft/reply"))
                              ;; What is already on it, so a reconnect does not
                              ;; start every message empty.
+                             ;; What the server says about a line it has
+                             ;; already collapsed: replay sends the current
+                             ;; text and no `+draft/edit` to hint that it is
+                             ;; not the original. This tag is the only trace.
+                             :edited? (= "1" (irc/tag-value tags
+                                                            "+freeq.at/edited"))
                              :reactions (reactions/parse-tally
                                          (irc/tag-value tags
-                                                        "+freeq.at/reactions"))}))))
+                                                        "+freeq.at/reactions"))})))))
 
       ;; A message that is only tags. A reaction is the one this reads:
       ;; `+react` puts an emoji on the message `+reply` names, and the
@@ -470,8 +494,23 @@
 
 (defn- send-draft! []
   (let [text (str @cells/draft)
-        room (str @cells/current)]
-    (when (and (seq text) (seq room) @conn)
+        room (str @cells/current)
+        edit @cells/editing]
+    (cond
+      ;; A rewrite replaces what was said. It carries no new msgid of its own
+      ;; — the server files it under the original's id — so nothing is added
+      ;; here and the echo folds it in where the line already is.
+      (and edit (seq text) (seq room) @conn)
+      (do (net/send-line!
+           @conn
+           (mutate/edit-line room (:id edit) text
+                             (reactions/peer-did @cells/channels room
+                                                 (str @cells/form-nick))))
+          (reset! cells/editing nil)
+          (reset! cells/draft ""))
+
+      (and (seq text) (seq room) @conn)
+      (do
       (net/send-line! @conn (str "PRIVMSG " room " :" text))
       ;; Echoed locally only when the server will not echo it back. With
       ;; `echo-message` negotiated it does — that is what the cap is for, and
@@ -480,7 +519,7 @@
       (when-not (handshake/acked? @caps "echo-message")
         (swap! cells/channels update room
                #(update % :messages conj {:from @cells/form-nick :text text})))
-      (reset! cells/draft ""))))
+      (reset! cells/draft "")))))
 
 (defn- message-by-id [room id]
   (when id
@@ -585,7 +624,21 @@
       :unhover-reaction! (fn [_ _] nil)
       :wide? (fn [] false)
       :desktop? (fn [] false)
-      :mine? (fn [from] (= (str from) (str @cells/form-nick)))
+      :mine? (fn [m] (rooms/mine? m (str @cells/form-nick)))
+
+      ;; Rewriting. The old text is the starting point rather than an empty
+      ;; line: an edit is usually a word, and retyping the sentence around it
+      ;; is not what was asked for.
+      :start-edit! (fn [channel m]
+                     (when (and (:id m) (rooms/mine? m (str @cells/form-nick)))
+                       (reset! cells/replying-to nil)
+                       (reset! cells/editing {:channel channel :id (:id m)})
+                       (reset! cells/draft (or (:text m) ""))))
+      ;; The box empties with it: what is in it is a copy of the line on
+      ;; screen, and leaving that behind would look like a draft.
+      :cancel-edit! (fn []
+                      (reset! cells/editing nil)
+                      (reset! cells/draft ""))
       :message-by-id (fn [room id]
                        (->> (get-in @cells/channels [room :messages])
                             (filter #(= id (:id %)))
