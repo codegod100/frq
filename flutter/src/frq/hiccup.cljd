@@ -900,18 +900,29 @@
        (let [size (dbl (or (:size p) (:gap p) (:width-request p)) t/space-xxs)]
          (m/SizedBox .width size .height size))
 
+       ;; A tick and its words. `:on-toggled` takes no arguments — it is the
+       ;; same zero-arity handler every other tag here is given, and the box
+       ;; reads its state back out of `:active` on the next render rather than
+       ;; being told what it now is. Handing Checkbox's own bool to it is what
+       ;; left the settings tick dead: `toggle-hide-join-part!` is 0-arity.
+       ;;
+       ;; The label is part of the target. 20 logical pixels is a fine tick on
+       ;; a desktop pointer and a miss on a thumb, so the whole row taps.
        :checkbutton
-       (let [on (:on-toggled p)]
-         (m/Row
-          .mainAxisSize m/MainAxisSize.min
-          .spacing t/space-xxxs
-          .children [(m/SizedBox
-                      .width 20.0 .height 20.0
-                      .child (m/Checkbox
-                              .value (boolean (:active p))
-                              .activeColor t/accent
-                              .onChanged (when on (fn [v] (on (boolean v))))))
-                     (txt ctx (:label p "") t/text-body t/on-bg)]))
+       (let [on (:on-toggled p)
+             row (m/Row
+                  .mainAxisSize m/MainAxisSize.min
+                  .spacing t/space-xxxs
+                  .children [(m/SizedBox
+                              .width 20.0 .height 20.0
+                              .child (m/Checkbox
+                                      .value (boolean (:active p))
+                                      .activeColor t/accent
+                                      .onChanged (when on (fn [_] (on)))))
+                             (txt ctx (:label p "") t/text-body t/on-bg)])]
+         (if on
+           (m/InkWell .onTap #(on) .child row)
+           row))
 
        ;; text_input: a filled rounded field, no outline. COSMIC entries sit in
        ;; the component colour rather than behind a border.
