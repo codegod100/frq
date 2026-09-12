@@ -226,6 +226,55 @@
     [:button {:label "Disconnect" :destructive true :on-click #(disconnect!)}]]
    [:dim-label {:label "The chats screen is next: it wants rooms, messages and avatars, none of which are ported yet."}]])
 
+(defonce ^:private draft
+  ;; Phone-local for now. `frq.state/draft` is the shared one this becomes
+  ;; when `frq.app`'s chat screen is ported — it carries replies, edits and an
+  ;; attachment with it, and none of that is here.
+  (atom ""))
+
+(defn- send-draft! []
+  (let [text (str @draft)
+        room (str @cells/current)]
+    (when (and (seq text) (seq room) @conn)
+      (net/send-line! @conn (str "PRIVMSG " room " :" text))
+      ;; Echoed locally: the server does not send our own PRIVMSG back.
+      (swap! cells/channels update room
+             #(update % :messages conj {:from @cells/form-nick :text text}))
+      (reset! draft ""))))
+
+(defn- chat-screen
+  "One conversation, until `frq.app`'s own is ported.
+
+  That one is 230 lines over about thirty cells — replies, edits, reactions,
+  the emoji picker, avatars, the people panel and a call bar. This is the part
+  the list opens onto: who said what, and a box to answer in."
+  []
+  (let [room (str @cells/current)
+        buffer (get @cells/channels room)]
+    [:vbox {:fill-height true :margin 12 :spacing 8}
+     [:vbox {:key :head :spacing 8}
+      [:hbox {:spacing 8}
+       [:button {:label "← Chats" :on-click #(reset! cells/screen :chats)}]
+       [:title-2 {:label room}]]
+      [:separator {}]]
+     [:vbox {:key :list :fill-height true}
+      [:scroll {:spacing 8}
+       (if (empty? (:messages buffer))
+         [:dim-label {:label "No messages yet"}]
+         (for [[i m] (map-indexed vector (:messages buffer))]
+           [:vbox {:key i :spacing 2}
+            [:dim-label {:label (str (:from m))}]
+            [:label {:label (str (:text m))}]]))]]
+     [:vbox {:key :foot :spacing 8}
+      [:separator {}]
+      [:hbox {:spacing 8}
+       [:button {:label "Send" :kind :primary :on-click #(send-draft!)}]
+       [:entry {:key :draft
+                :text @draft
+                :placeholder "Message"
+                :on-change #(reset! draft %)
+                :on-activate #(send-draft!)}]]]]))
+
 (defn ^:async main []
   (m/WidgetsFlutterBinding.ensureInitialized)
   ;; Layout errors do not come back as exceptions — they happen after the
@@ -251,7 +300,22 @@
       :leave-channel! (fn [name]
                         (when-let [c @conn] (net/send-line! c (str "PART " name)))
                         (swap! cells/channels dissoc name))
-      :open-channel! (fn [name] (reset! cells/current name))})
+      :open-channel! (fn [name]
+                       (reset! cells/current name)
+                       ;; `frq.state/open-channel!` does this and more: it
+                       ;; marks the buffer read, remembers the room list and
+                       ;; asks for NAMES. What it also does, and what made
+                       ;; Open look like a no-op here, is go to the
+                       ;; conversation — and join it on the way, because a row
+                       ;; can outlive the membership behind it.
+                       (swap! cells/channels update name
+                              #(merge {:name name :messages [] :unread 0} %))
+                       (reset! cells/screen :chat)
+                       (let [buffer (get @cells/channels name)]
+                         (when (and @conn
+                                    (.startsWith (str name) "#")
+                                    (not (:joined? buffer)))
+                           (net/send-line! @conn (str "JOIN " name)))))})
     (f/run
       (m/MaterialApp .title "frq" .theme (t/app-theme))
       .home
@@ -277,7 +341,7 @@
              c-screen cells/screen]
        :watch [st c-status er c-error cn c-connecting am c-mode
                fh c-handle nk c-nick hs c-host pt c-port tl c-tls
-               ap c-apppw bt c-broker lu c-login ls lines sc c-screen]
+               ap c-apppw bt c-broker lu c-login ls lines sc c-screen dr draft ch cells/channels cu cells/current]
        ;; No scroll view around the screen. A `:page` scrolls itself now, and a
        ;; `:vbox :fill-height` wants the bounded height the Scaffold gives it —
        ;; wrapping the tree took that away, and `:scroll`'s Expanded then sat
@@ -285,4 +349,5 @@
        (h/render (case @cells/screen
                    :connect [connect/connect-screen]
                    :chats [chats/chats-screen]
+                   :chat [chat-screen]
                    [connected-screen]))))))
