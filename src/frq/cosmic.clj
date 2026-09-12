@@ -33,14 +33,41 @@
   [path]
   (cosmic/every! 3000 #(spit path (cosmic/dump-str))))
 
+(defn- open-url!
+  "Hand a URL to the desktop's browser.
+
+  libcosmic has none of its own, so this is xdg-open — which is what the
+  desktop's answer to \"show me this page\" has always been, and what
+  `frq.platform/open-url!` means by a backend that has a browser to hand it
+  to. Detached and its output thrown away: frq is not waiting on it, and a
+  child whose pipes nobody reads is a child that can block on a full one.
+
+  http and https only. Every link in a conversation reaches this from
+  somewhere else's message, and xdg-open takes far more than a web page — a
+  `file:` URL is a file manager, and a bare path is whatever is registered for
+  it. A scheme this client did not mean to offer is not opened at all."
+  [url]
+  (boolean
+   (when (re-matches #"(?i)https?://[^\s]+" (str url))
+     (try
+       (-> (ProcessBuilder. (into-array String ["xdg-open" url]))
+           (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)
+           (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)
+           (.start))
+       true
+       (catch Exception _ false)))))
+
 (defn -main [& _]
   ;; Everything this backend can do. What is missing is missing on purpose:
-  ;; libcosmic has no `open-url!`, so the connect screen falls back to showing
-  ;; the URL, and no texture to push call frames into, which is the same thing
-  ;; `:av? false` below says from the other end.
+  ;; libcosmic has no texture to push call frames into, which is the same
+  ;; thing `:av? false` below says from the other end. It has no browser
+  ;; either, but the desktop it is running on does — `open-url!` above is
+  ;; that, and it is why the connect screen opens a browser here now rather
+  ;; than falling back to printing the URL for someone to copy.
   (platform/override! {:after! cosmic/after!
                        :every! cosmic/every!
                        :quit! cosmic/quit!
+                       :open-url! open-url!
                        :screen-size cosmic/window-size
                        :pick-image! cosmic/pick-image!
                        :picked-image! cosmic/picked-image!

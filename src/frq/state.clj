@@ -103,6 +103,33 @@
 
 (defn toggle-users! [] (swap! show-users? not))
 
+;; Whether the wide window is holding the chats list back, leaving the whole
+;; row to the conversation. Only a wide window has anything to hide: below
+;; `wide-width` the list and the conversation already take turns, and hiding
+;; the list there would be hiding the only way to another room.
+;;
+;; Saved with the other settings rather than reset per launch: it is a choice
+;; about how this screen is read, and a reader who wants the conversation
+;; whole wants it whole again tomorrow.
+(defonce hide-chat-list? (atom false))
+
+(declare save-prefs!)
+
+(defn toggle-chat-list! []
+  (swap! hide-chat-list? not)
+  (save-prefs!))
+
+;; Whether the conversation is sharing its room with the overview strip —
+;; every channel's last lines in one list, under the one you are reading.
+;; Saved for the same reason as the fold above it: it is a choice about how
+;; this screen is laid out, and a layout a reader chose should be the one they
+;; come back to.
+(defonce overview? (atom false))
+
+(defn toggle-overview! []
+  (swap! overview? not)
+  (save-prefs!))
+
 ;; The window's content width in points, polled from the backend a few times a
 ;; second. The app is laid out for a phone-width window, and this is what lets
 ;; a wide one be more than a phone with margins: past `wide-width` the channel
@@ -199,6 +226,8 @@
 (defn- save-prefs! []
   (future (store/save-prefs! (assoc (store/load-prefs)
                                     :hide-join-part? @hide-join-part?
+                                    :hide-chat-list? @hide-chat-list?
+                                    :overview? @overview?
                                     :room-list-owned? @room-list-owned?))))
 
 (defn toggle-hide-join-part! []
@@ -210,6 +239,8 @@
   []
   (let [prefs (store/load-prefs)]
     (reset! hide-join-part? (boolean (:hide-join-part? prefs)))
+    (reset! hide-chat-list? (boolean (:hide-chat-list? prefs)))
+    (reset! overview? (boolean (:overview? prefs)))
     (reset! room-list-owned? (boolean (:room-list-owned? prefs)))
     prefs))
 
@@ -1924,6 +1955,47 @@
 (defonce highlight (atom nil))
 
 
+
+;; How many lines the overview takes from each room. Per room rather than
+;; across all of them: the strip is there to say what is happening everywhere,
+;; and one busy channel taking the whole of a shared budget is the strip
+;; answering about one room — which is the room you are probably already in.
+(def overview-per-channel 3)
+
+;; And a ceiling on the lot, because the rooms are not a fixed number: at three
+;; apiece, a client in twenty channels would hand the strip sixty rows and the
+;; conversation above it nothing. Past this the newest win, which is the same
+;; bargain every other list here makes.
+(def overview-limit 24)
+
+(defn recent-everywhere
+  "The last `overview-per-channel` lines from every buffer at once, oldest
+  first, and at most `overview-limit` of them.
+
+  Each carries the room it was said in, since that is the one thing a line
+  taken out of its own conversation no longer says for itself.
+
+  Bounded per room before the sort, so the cost is the number of rooms rather
+  than the length of their backlogs: a channel with a week of history in it
+  must not make this the most expensive thing on the screen.
+
+  Joins, parts and the rest of the system's own chatter are left out. They are
+  the noise this strip would drown in: a room nobody has spoken in for a day
+  still reports everyone who came and went in it.
+
+  So is the room being read. It is on the screen already, in full, directly
+  above — repeating its last three lines under itself spends the strip's room
+  saying what the conversation just said, and what the strip is for is the
+  rooms you are not looking at."
+  []
+  (->> (dissoc @channels @current)
+       (mapcat (fn [[name buffer]]
+                 (->> (:messages buffer)
+                      (remove :system?)
+                      (take-last overview-per-channel)
+                      (map #(assoc % :channel name)))))
+       (sort-by #(or (:at %) 0))
+       (take-last overview-limit)))
 
 (defn last-preview [buffer]
   (if-let [m (last (:messages buffer))]

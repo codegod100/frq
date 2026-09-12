@@ -100,12 +100,6 @@
   [url]
   (derived [:image url] #(do @s/media-tick (media/path-when-ready url))))
 
-(defonce ^:private hovered-face
-  ;; Which message's face the pointer is on. `profile/hovering` says whose, and
-  ;; the same person's face is on every message they sent: asked by name alone,
-  ;; one hover woke every one of those rows and hung a card off each face.
-  (atom nil))
-
 ;; How big a face is on a message, in points — the size the window has always
 ;; drawn one at. A terminal's cell is eight points across and sixteen down, so
 ;; the same number is four columns by two rows there: a cached 128-pixel
@@ -114,9 +108,14 @@
 
 ;; ---------------------------------------------------------------- chats
 
+;; The way into a room. Standard rather than `:primary`: the theme paints a
+;; suggested button as a filled lozenge, which is the highest-contrast fill it
+;; has — and a filled lozenge on every card made the brightest, most regular
+;; rhythm down the list the one word that is the same on every row, with the
+;; name that differs set quieter than it. Nothing moves; the button stops
+;; shouting.
 (defn- open-button [name]
   [:button {:label "Open"
-            :kind :primary
             :on-click #(s/open-channel! name)}])
 
 ;; The only way out of a room. Everything else adds one — the server saying we
@@ -132,9 +131,22 @@
   a list of rooms."
   [text]
   (let [line (str/replace (str text) #"\s+" " ")]
-    (if (> (count line) 90)
-      (str (subs line 0 89) "…")
+    ;; 60 rather than a card's worth: at `sidebar-width` a 90-character line is
+    ;; three wrapped rows, and three rows of somebody else's last sentence is
+    ;; the row shouting over the name above it. One row of it says which
+    ;; conversation this is, which is all the list is for.
+    (if (> (count line) 60)
+      (str (subs line 0 59) "…")
       line)))
+
+;; What everything in the chats pane keeps clear of its right edge.
+;;
+;; It is one number because it is one edge: the scrollbar rides it, and the
+;; cards in the list have to stop short of the bar rather than be drawn under
+;; it — but the Join box above the list is outside the scroll and has no bar
+;; beside it, so left to itself it ran on past the cards and the pane had two
+;; right edges half a finger apart. Whatever the gap is, both of them take it.
+(def ^:private list-gutter 16)
 
 (defn conversation-row [buffer]
   (let [name (:name buffer)
@@ -143,44 +155,59 @@
         ;; the atom, and a half-made room reaching here should be a row that
         ;; reads as quiet rather than the frame that killed the client.
         unread (:unread buffer 0)]
-    [:card {:key name}
-     ;; The name gets the line, and membership and unread count the one under
-     ;; it. All three on one line is what the list pane has no room for: the
-     ;; name takes what it likes, the badges are left the remainder, and a
-     ;; long name squeezes them into a status reading "joine/d" and a count
-     ;; split down two lines — while the card, sized to a row that no longer
-     ;; fits, sticks out past the cards above and below it.
-     ;;
-     ;; In a terminal the Open button rides up onto the name's line. A row of
-     ;; chrome there is one cell, so a button on a line of its own costs the
-     ;; card a whole row — four of them and the list has spent a screenful on
-     ;; buttons. A window's row is 34 points and its button is a lozenge with
-     ;; air around it, which is why it keeps its own line there.
-     (if @terminal?
+    ;; The card in a wrapper that holds it off the right edge, where the
+    ;; list's scrollbar rides — `message-row` keeps its actions clear of the
+    ;; same edge for the same reason, and without it the cards are drawn
+    ;; under the bar rather than beside it. The wrapper and not the card
+    ;; itself: the window backend pads a card by a fixed 12 and never reads a
+    ;; margin off one, so the room has to be taken outside it.
+    [:vbox {:key name :margin-right list-gutter}
+     [:card {}
+      ;; The name gets the line, and membership and unread count the one under
+      ;; it. All three on one line is what the list pane has no room for: the
+      ;; name takes what it likes, the badges are left the remainder, and a
+      ;; long name squeezes them into a status reading "joine/d" and a count
+      ;; split down two lines — while the card, sized to a row that no longer
+      ;; fits, sticks out past the cards above and below it.
+      ;;
+      ;; In a terminal the Open button rides up onto the name's line. A row of
+      ;; chrome there is one cell, so a button on a line of its own costs the
+      ;; card a whole row — four of them and the list has spent a screenful on
+      ;; buttons. A window's row is 34 points and its button is a lozenge with
+      ;; air around it, which is why it keeps its own line there.
+      (if @terminal?
        [:hbox {:spacing 8 :wrap false}
         [:title-2 {:label name}]
         [open-button name]
         [close-button name]]
        [:title-2 {:label name}])
-     ;; `:wrap false` on the badges: they sit beside each other or not at all.
-     [:hbox {:spacing 12 :wrap false}
-      ;; A DM has no membership to report — there is nothing to be in — so the
-      ;; badge says what the buffer is instead of answering a question nobody
-      ;; asked of it.
-      [:status {:label (cond (s/dm? name) "direct message"
-                             (:joined? buffer) "joined"
-                             :else "not joined")
-                :live (boolean (:joined? buffer))}]
-      ;; A mention is not more unread, it is different unread: the dot says
-      ;; how much there is and the name says it was aimed at you. Both or
-      ;; neither — a room with your name in it always has a line to count.
-      (when (pos? unread)
-        [:label {:label (str (if (:mention? buffer) "◆ @ " "● ") unread)}])]
-     [:dim-label {:label (preview-line (s/last-preview buffer))}]
-     (when-not @terminal?
-       [:hbox {:spacing 8 :wrap false}
-        [open-button name]
-        [close-button name]])]))
+      ;; The badge line, and only when there is a badge: every row carrying a
+      ;; green "joined" was a row spending a third of its height saying the
+      ;; ordinary thing, and a list where every card says the same word is a
+      ;; list you read by skipping. So membership is reported when it is news —
+      ;; a room in the list we are not in — and a DM says nothing at all, since
+      ;; there is no membership to have and the name already says what it is.
+      ;;
+      ;; In a wrapper of its own, because the line comes and goes with the
+      ;; unread count and the reconciler numbers a card's children by position.
+      ;; `:wrap false` on the badges: they sit beside each other or not at all.
+      [:vbox {:key :badges}
+      (let [away? (and (not (s/dm? name)) (not (:joined? buffer)))]
+        (when (or away? (pos? unread))
+          [:hbox {:spacing 12 :wrap false}
+           (when away?
+             [:status {:label "not joined" :live false}])
+           ;; A mention is not more unread, it is different unread: the dot
+           ;; says how much there is and the name says it was aimed at you.
+           ;; Both or neither — a room with your name in it always has a line
+           ;; to count.
+           (when (pos? unread)
+             [:label {:label (str (if (:mention? buffer) "◆ @ " "● ") unread)}])]))]
+      [:dim-label {:label (preview-line (s/last-preview buffer))}]
+      (when-not @terminal?
+        [:hbox {:spacing 8 :wrap false}
+         [open-button name]
+         [close-button name]])]]))
 
 (def ^:private sidebar-width 320)
 
@@ -264,11 +291,15 @@
     ;; under it. Every screen that pins something to the bottom says this on
     ;; its own root — the split view already said it, one wrapper further out.
     [:vbox {:spacing 8 :margin 12 :fill-height true}
-     [:vbox {:key :head :spacing 8}
+     [:vbox {:key :head :spacing 8 :margin-right list-gutter}
        ;; Your nick in the title, where "Chats" alone said nothing you did not
-      ;; already know. It is what every channel calls you and what your own
-      ;; lines are signed with, and the only other place it showed was Settings.
-      [:title {:label (if (s/connected?) (str "Chats as " @s/form-nick) "Chats")}]
+      ;; already know — and said plainly, as a sign-in rather than as a name
+      ;; the list is somehow held in. It is what every channel calls you and
+      ;; what your own lines are signed with, and the only other place it
+      ;; showed was Settings.
+      [:title {:label (if (s/connected?)
+                        (str "Logged in as " @s/form-nick)
+                        "Chats")}]
       [error-note]
       ;; Join and search are the same shape — a channel box with a button
       ;; beside it — so they read as one control block rather than a titled
@@ -322,7 +353,8 @@
          ;; the slot the reader clicked while the row that moved into it is
          ;; someone else's conversation.
          (for [b buffers] ^{:key (:name b)} [conversation-row b])
-         [:card {} [:dim-label {:label "No conversations yet — join a channel."}]])]]
+         [:vbox {:margin-right list-gutter}
+          [:card {} [:dim-label {:label "No conversations yet — join a channel."}]]])]]
      [:vbox {:key :foot :spacing 8}
       [:separator {}]
       [tab-bar]]]))
@@ -521,13 +553,7 @@
   than a button with the emoji as its label — the chip draws the glyph from the
   Twemoji pack, in colour, where a label gets whatever the text font has."
   [channel m]
-  (let [reactions (:reactions m)
-        ;; Which of this message's pills the pointer is on, if any. Asked once
-        ;; per message, so moving between pills wakes the rows involved and not
-        ;; every row that has a reaction on it.
-        hovered @(derived [:pill-hover (:id m)]
-                          #(let [h @s/reaction-hover]
-                             (when (= (:id m) (:id h)) (:emoji h))))]
+  (let [reactions (:reactions m)]
     ;; `into` and not a lazy `for` inside the vector. The pills read
     ;; `my-reaction?` — a ratom — and a ratom read while a lazy seq is being
     ;; realised somewhere other than the render is a read the component never
@@ -547,13 +573,14 @@
                     ;; says who put it there. On a phone the pill is a button
                     ;; and nothing more: there is no hover to answer.
                     (platform/desktop?)
+                    ;; Nothing is hung under the pill any more: who is on a
+                    ;; reaction is shown the way everything else the pointer
+                    ;; asks for is shown now — the dialog at the root of the
+                    ;; tree, which `reactor-dialog` builds out of
+                    ;; `reaction-hover`. The pill's only job is to say where
+                    ;; the pointer is.
                     (assoc :on-hover #(s/hover-reaction! (:id m) emoji)
-                           :on-unhover #(s/unhover-reaction! (:id m) emoji)))
-        ;; Only the hovered pill carries a card: the panel is painted from
-        ;; whatever children the node has, and a channel's worth of unseen
-        ;; lists is a tree nobody looks at.
-        (when (and (platform/desktop?) (= emoji hovered))
-          [reactor-card emoji (get reactions emoji)])]))))
+                           :on-unhover #(s/unhover-reaction! (:id m) emoji)))]))))
 
 (def ^:private picker-columns
   "Emoji to a row, at the picker's own size. Narrow enough that the grid fits a
@@ -619,48 +646,6 @@
      [:vbox {:key :more}
       (when (pos? over)
         [:dim-label {:label (str "and " over " more — keep typing to narrow it")}])]]))
-
-(defn hover-card
-  "Who someone is, in the few lines that fit beside a pointer.
-
-  The profile screen's opening, without the ways onward: a picture, the name
-  they go by, their handle, and the first of their bio. What it cannot say yet
-  it says plainly — a fetch in flight, a guest with no identity to look up —
-  because a card that is blank while it waits reads as a card with nothing on
-  it."
-  [nick actor]
-  (let [_ @profile/tick
-        _ @s/media-tick
-        pr (profile/entry actor)
-        ready? (= :ready (:status pr))
-        display (or (:display-name pr) nick)]
-    [:vbox {:spacing 6}
-     [:hbox {:spacing 10}
-      [:avatar {:label nick
-                :src (or (avatars/path-when-ready actor) "")
-                :size 48}]
-      [:vbox {:spacing 2}
-       [:title-2 {:label display}]
-       [:vbox {:key :nick}
-        (when (not= display nick) [:dim-label {:label nick}])]
-       [:vbox {:key :handle}
-        (when-let [h (and ready? (not-empty (or (:handle pr) "")))]
-          [:label {:label (str "@" h)}])]]]
-     ;; Shorter than the screen's: this is a glance, not a read, and a bio
-     ;; that fills the window beside a pointer is in the way of the chat.
-     [:vbox {:key :bio :spacing 2}
-      (when-let [bio (and ready? (:description pr))]
-        (for [[i line] (map-indexed vector (str/split-lines (profile/truncate bio 200)))]
-          [:label {:key i :label line}]))]
-     [:vbox {:key :stats}
-      (when-let [line (and ready? (profile/stats-line pr))]
-        [:dim-label {:label line}])]
-     [:vbox {:key :status}
-      (cond
-        (nil? actor) [:dim-label {:label "Guest — no Bluesky identity"}]
-        (= :loading (:status pr)) [:dim-label {:label "Loading…"}]
-        (= :failed (:status pr)) [:dim-label {:label "No Bluesky profile found"}])]
-     [:dim-label {:label "Click for the full profile"}]]))
 
 (defn- preview-height
   "How tall a picture in the conversation may be.
@@ -744,21 +729,17 @@
        ;; the whole message rather than off its heading — `message-row` has it.
        (when-not @terminal?
          (let [src @(avatar-path (:actor m))]
+           ;; One profile, two gestures, and no card hung under the face: the
+           ;; pointer opens the dialog and the press pins it. What makes that
+           ;; work is the dialog being non-modal while the pointer is what is
+           ;; holding it open — see `profile-dialog`.
            [:avatar (cond-> {:label (:from m)
                              :src (or src "")
                              :size face-size
                              :on-click #(profile/open! (:from m) (:actor m))}
                       (platform/desktop?)
-                      (assoc :on-hover #(do (reset! hovered-face (:id m))
-                                            (profile/hover! (:from m) (:actor m)))
-                             :on-unhover #(profile/unhover! (:from m))))
-            ;; Only the hovered face carries one: a card is painted when its
-            ;; node has children, and the pointer is on one face at a time.
-            (when (and (platform/desktop?)
-                       @(derived [:hovering (:id m) (:from m)]
-                                 #(and (= (:id m) @hovered-face)
-                                       (= (:from m) (:nick @profile/hovering)))))
-              [hover-card (:from m) (:actor m)])]))
+                      (assoc :on-hover #(profile/hover! (:from m) (:actor m))
+                             :on-unhover #(profile/unhover! (:from m))))]))
        ;; The name carries the row, so it is set at body size in the plain
        ;; text colour: dimmed caption made the one thing you scan a column
        ;; for the faintest thing on it.
@@ -919,6 +900,120 @@
                            [message-row i m]))))
           (range (count messages))
           messages))
+
+(defn- profile-dialog
+  "Who someone is, as libcosmic's own dialog: centred over the window, with
+  what you were reading dimmed behind it rather than replaced.
+
+  The window can do this and the terminal cannot, which is the whole reason
+  there are two of these. `profile-screen` below is the terminal's, and says
+  why it is a screen.
+
+  Both buttons are always here, the Bluesky one insensitive until there is a
+  profile to open: a dialog whose second button appears a moment after it
+  opens is a dialog that moves under the pointer, and the fetch lands whenever
+  it lands.
+
+  Who it is about comes from either of two places, and that — with the
+  modality below — is the whole of what hovering and pressing a face do
+  differently. Resting on one sets `hovering`, which the pointer takes away
+  again when it leaves; pressing one sets `viewing`, which nothing takes away
+  but Close. `viewing` is read first, so a pinned profile is not swapped out
+  from under the reader by a face the pointer crosses on the way to it.
+
+  And a dialog the pointer is holding open is not modal. A modal one makes
+  the window underneath it deaf — libcosmic wraps the app in a popover that
+  hands its content an `Unavailable` cursor while a popup is up — so the face
+  that opened it never hears the pointer leave, and what a hover opened could
+  never close itself. Non-modal, the face keeps hearing, and moving away shuts
+  it. A pinned one is modal, which is what being pinned means: it is the thing
+  on the screen until it is dismissed."
+  []
+  (let [pinned? (some? @profile/viewing)
+        {:keys [nick actor]} (or @profile/viewing @profile/hovering)
+        _ @profile/tick
+        _ @s/media-tick
+        pr (profile/entry actor)
+        ready? (= :ready (:status pr))
+        display (or (:display-name pr) nick)
+        url (when ready? (profile/web-url pr))]
+    [:dialog {:label display :max-width 520 :modal pinned?
+              :on-hover profile/enter-dialog!
+              :on-unhover profile/leave-dialog!}
+     ;; The body is the screen's card without its heading: the dialog's own
+     ;; title is the name now, so repeating it under the picture is a line
+     ;; that says nothing.
+     [:vbox {:key :body :spacing 8}
+      [:hbox {:spacing 12}
+       [:avatar {:label nick
+                 :src (or (avatars/path-when-ready actor) "")
+                 :size 72}]
+       [:vbox {:spacing 2}
+        [:vbox {:key :nick}
+         (when (not= display nick) [:dim-label {:label nick}])]
+        [:vbox {:key :handle}
+         (when-let [h (and ready? (not-empty (or (:handle pr) "")))]
+           [:label {:label (str "@" h)}])]
+        [:vbox {:key :did}
+         (when-let [did (:did pr)] [:dim-label {:label did}])]]]
+      [:vbox {:key :bio :spacing 2}
+       (when-let [bio (and ready? (:description pr))]
+         (for [[i line] (map-indexed vector (str/split-lines (profile/truncate bio 600)))]
+           [:label {:key i :label line}]))]
+      [:vbox {:key :stats}
+       (when-let [line (and ready? (profile/stats-line pr))]
+         [:dim-label {:label line}])]
+      [:vbox {:key :status :spacing 4}
+       (cond
+         (nil? actor)
+         [:dim-label {:label "Guest — no Bluesky / AT Protocol identity"}]
+
+         (= :loading (:status pr))
+         [:hbox {:spacing 8}
+          [:spinner {}]
+          [:dim-label {:label "Loading Bluesky profile…"}]]
+
+         (= :failed (:status pr))
+         [:dim-label {:label "No Bluesky profile found"}])]
+      ;; What the pointer is holding open says how to stop having to hold it.
+      ;; Pinned, that line has nothing left to tell anyone.
+      [:vbox {:key :hint}
+       (when-not pinned?
+         [:dim-label {:label "Click the face to keep this open"}])]]
+     ;; `slot` is where libcosmic puts a button: the two actions go to the
+     ;; foot of the dialog, and anything else here would be another control
+     ;; stacked in the body.
+     ;;
+     ;; Both are here whether the profile is pinned or only hovered. They were
+     ;; hidden while hovering, back when a hover could not be walked into: the
+     ;; dialog reports its own pointer now, so moving towards a button in it
+     ;; keeps it open instead of closing it, and a button you can reach is a
+     ;; button worth drawing.
+     [:button {:key :close :slot "primary"
+               :label (if pinned? "Close" "Dismiss")
+               :on-click profile/dismiss!}]
+     [:button {:key :web :slot "secondary" :label "Bluesky ↗"
+               :sensitive (boolean url)
+               :on-click #(when url (platform/open-url! url))}]]))
+
+(defn- reactor-dialog
+  "Who is on the reaction the pointer is resting on.
+
+  The same dialog a face gets, for the same reason: two hover cards in two
+  shapes was two things to look at and two things to keep working. Non-modal
+  and no buttons, because the pointer is what is holding it open — a modal one
+  would go deaf to the pill leaving and never close, and a button in it could
+  never be reached.
+
+  The message is looked up rather than carried: a pill says which message and
+  which emoji it is, and the room it is in is the one being read — a pill in
+  any other room is not under a pointer."
+  []
+  (let [{:keys [id emoji]} @s/reaction-hover
+        nicks (get (:reactions (s/message-by-id @s/current id)) emoji)]
+    (when (seq nicks)
+      [:dialog {:label "Reactions" :max-width 320 :modal false}
+       [reactor-card emoji nicks]])))
 
 (defn profile-screen
   "Who someone is: sleek's peer profile modal, as a screen.
@@ -1196,6 +1291,19 @@
 ;; there is one. Those rows do move the compose bar, and should: each appears
 ;; because the reader just asked for something — unlike the jump button, which
 ;; appears on its own and must not shift what is under it.
+;; What the overview strip costs the conversation above it, in points: a row
+;; for its heading, a row a line, and the separator and gaps around them. The
+;; backlog's `:reserve` takes this too, so the strip is paid for out of the
+;; conversation rather than pushing the compose bar off the bottom — which is
+;; what every other row under the message list has had to say for itself.
+;;
+;; Counted from the lines there actually are, not from the ceiling: the strip
+;; holds a few per room, so its height is the client's rooms, and reserving
+;; for a full one in a client with two channels in it would take a third of
+;; the window off the conversation to leave it empty.
+(defn- overview-height []
+  (* (chrome-scale) (+ 24 (* 20 (count (s/recent-everywhere))) 16)))
+
 (defn- below-messages []
   ;; 140 is that, counted: the gap under the row of columns, the jump button's
   ;; 34pt row, the separator and the two empty wrappers with a gap apiece, then
@@ -1218,7 +1326,12 @@
      ;; box rounded up: the reserve has to be at least what the field took,
      ;; because a point too few does not crop the list, it slides the
      ;; compose bar off the bottom of the window.
-     (* 20 (dec @draft-rows))))
+     (* 20 (dec @draft-rows))
+     ;; And the overview strip, when it is up. Reserved here rather than
+     ;; anywhere else because this is the number the backlog is laid out
+     ;; against: without it the strip is drawn past the bottom of the window
+     ;; and takes the compose bar with it.
+     (if @s/overview? (overview-height) 0)))
 
 (defn- messages-width
   "How wide the message list may be with the people panel beside it.
@@ -1229,7 +1342,9 @@
   first `sidebar-width` of the window; the rest is the margins and the gap
   between the two columns."
   []
-  (let [pane (- @s/window-width (if (s/wide?) sidebar-width 0))]
+  (let [pane (- @s/window-width (if (and (s/wide?) (not @s/hide-chat-list?))
+                                  sidebar-width
+                                  0))]
     (max 240 (- pane users-width 8 28))))
 
 (defn- member-row [{:keys [nick prefix]}]
@@ -1305,6 +1420,44 @@
      [:button {:label "Accept policy" :kind :primary
                :on-click #(s/accept-policy! name)}]]))
 
+(defn- overview-row
+  "One line from somewhere else: which room, who, and what — on one row.
+
+  The room leads, because that is the whole question the strip answers. The
+  name is a button for the same reason it is one in the people panel: the
+  room is somewhere to go, and a line you want more of is a line you want the
+  conversation behind it."
+  [i m]
+  [:hbox {:key i :spacing 8 :wrap false}
+   [:button {:label (:channel m)
+             :on-click #(s/open-channel! (:channel m))}]
+   [:vbox {:key :said}
+    [:dim-label {:label (str (when-let [at (:at m)] (str (clock/clock-time at) "  "))
+                             (:from m) ": "
+                             (preview-line (:text m)))}]]])
+
+(defn- overview-pane
+  "Every room's last few lines in one list, oldest at the top.
+
+  A strip under the conversation rather than a screen of its own: the question
+  it answers — is anything happening anywhere else — is one you ask while
+  reading something, and an answer you have to leave the room for is one you
+  stop asking for.
+
+  It does not scroll. A fixed handful of lines is what makes the room it takes
+  from the backlog a number this file can reserve; a scroll here would be a
+  second thing on the screen sizing itself against the window, fighting the
+  backlog above it for the same points."
+  []
+  (let [lines (s/recent-everywhere)]
+    [:vbox {:key :overview :spacing 4 :margin-top 4}
+     [:separator {}]
+     [:dim-label {:label "Everywhere else"}]
+     (if (seq lines)
+       (for [[i m] (map-indexed vector lines)]
+         ^{:key (str (:channel m) "-" (or (:id m) i))} [overview-row i m])
+       [:dim-label {:label "Nothing has been said in any room yet."}])]))
+
 (defn chat-screen []
   (let [name @s/current
         buffer (get @s/channels name)
@@ -1333,6 +1486,14 @@
       [:vbox {:key :back}
        (when-not (s/wide?)
          [:button {:label "← Chats" :on-click #(reset! s/screen :chats)}])]
+      ;; And the same room's other way of appearing, on a window wide enough
+      ;; to have been showing both: the list folds away and the conversation
+      ;; takes the whole row. Its own wrapper, since it is only offered where
+      ;; there are two panes to choose between.
+      [:vbox {:key :fold}
+       (when (s/wide?)
+         [:button {:label (if @s/hide-chat-list? "☰ Chats" "☰")
+                   :on-click s/toggle-chat-list!}])]
       [:title {:label (or name "Chat")}]
       ;; Same wrapper trick: only in a channel, and only when there is no call
       ;; to join already — the bar below offers Join in that case, and two ways
@@ -1351,7 +1512,14 @@
        (when (and name (str/starts-with? name "#"))
          [:button {:label (str "People " (s/member-count name))
                    :kind (when @s/show-users? :primary)
-                   :on-click s/toggle-users!}])]]
+                   :on-click s/toggle-users!}])]
+      ;; The overview's switch. Not in a wrapper conditioned on anything: it
+      ;; is about every room rather than this one, so it is offered in a DM
+      ;; and in a channel alike.
+      [:button {:key :overview-toggle
+                :label "Overview"
+                :kind (when @s/overview? :primary)
+                :on-click s/toggle-overview!}]]
      [error-note]
      ;; In a wrapper of its own, for the reconciler's sake: it comes and goes.
      [:vbox {:key :policy}
@@ -1393,6 +1561,11 @@
       ;; compose bar sits in whether or not the panel was showing.
       [:vbox {:key :people-pane}
        (when show-users? [users-panel name])]]
+     ;; Under the conversation and above the jump button: it is a second list
+     ;; of messages, so it belongs with the first rather than down among the
+     ;; compose bar's rows. In a wrapper of its own, since it comes and goes.
+     [:vbox {:key :overview-pane}
+      (when @s/overview? [overview-pane])]
      ;; Only while it is needed, and directly above the compose bar: the way
      ;; back to the present belongs next to the thing that puts you there.
      ;; The row keeps its height whether or not the button is in it, so the
@@ -1509,7 +1682,16 @@
   []
   [:vbox {:spacing 8 :margin 12}
    [:title {:label "frq"}]
-   [:card {} [:dim-label {:label "Pick a conversation on the left."}]]])
+   ;; With the list folded away there is nothing on the left to pick from, and
+   ;; no conversation here carrying the switch that would bring it back — so
+   ;; this pane carries it instead. Without that the reader who hid the list
+   ;; and then closed the last room has put the app away, not the list.
+   (if @s/hide-chat-list?
+     [:card {}
+      [:dim-label {:label "The chats list is hidden."}]
+      [:button {:label "☰ Chats" :kind :primary
+                :on-click s/toggle-chat-list!}]]
+     [:card {} [:dim-label {:label "Pick a conversation on the left."}]])])
 
 (defn split-screen
   "The chats list and the conversation side by side, for a window wide enough
@@ -1544,9 +1726,18 @@
    ;; axis alone: the height without the share. The conversation keeps
    ;; :fill-height and so keeps the slack, which is what the note above says
    ;; it takes.
-   [:vbox {:key :list :width-request sidebar-width :fill-height true
-           :expand :cross}
-    [chats-screen]]
+   ;; The list pane, when the reader has not put it away. Hidden, the wrapper
+   ;; stays and empties: a child that vanished would renumber the row for the
+   ;; reconciler and take the conversation's scroll position with it every
+   ;; time the list was toggled — the same trick the people panel plays.
+   ;; Empty, it asks for nothing: no width and no `:fill-height`, because a
+   ;; column that fills the height is also a column that is there, and a
+   ;; 320-point hole where the list was is not hiding it.
+   (if @s/hide-chat-list?
+     [:vbox {:key :list}]
+     [:vbox {:key :list :width-request sidebar-width :fill-height true
+             :expand :cross}
+      [chats-screen]])
    [:vbox {:key :chat :fill-height true}
     (if @s/current
       [chat-screen]
@@ -1638,9 +1829,30 @@
   ;; from the conversation you were in a moment ago. A key that changes with
   ;; the screen makes the swap a swap: the old tree comes out whole and the new
   ;; one goes in whole.
-  (cond
+  ;; And the dialog beside them all rather than instead of one of them. A
+  ;; `dialog` node is not painted where it stands — the window backend hands
+  ;; it to libcosmic, which puts it over the middle of the window with what is
+  ;; behind it dimmed — so the screen under it keeps its place in the tree,
+  ;; and its scroll position with it. The wrapper is always here and only its
+  ;; child comes and goes, for the reason every other wrapper in this file
+  ;; gives: a child that appeared and vanished would renumber the root.
+  ;;
+  ;; The terminal has no such thing, and a `dialog` tag it has not grown would
+  ;; paint its contents inline at the bottom of the screen. So there it stays
+  ;; a screen you go to and come back from, which is `profile-screen`.
+  [:vbox {:key :root :fill-height true}
+   ;; One dialog at a time, and a pinned profile outranks both pointers: it is
+   ;; the only one of the three that was asked for by a press rather than by
+   ;; where the pointer happens to be resting.
+   [:vbox {:key :dialog}
+    (when-not @terminal?
+      (cond
+        (or @profile/viewing @profile/hovering) [profile-dialog]
+        @s/reaction-hover [reactor-dialog]))]
+   (cond
     @s/lightbox [:vbox {:key :screen-lightbox} [lightbox-screen]]
-    @profile/viewing [:vbox {:key :screen-profile} [profile-screen]]
+    (and @terminal? @profile/viewing)
+    [:vbox {:key :screen-profile} [profile-screen]]
     @s/image-picker [:vbox {:key :screen-picker} [image-picker-screen]]
     ;; Wide enough for both, and on one of the two screens that are halves of
     ;; the same thing: the list and the conversation it opens. Discover and
@@ -1653,7 +1865,7 @@
             :chat [:vbox {:key :screen-chat} [chat-screen]]
             :discover [:vbox {:key :screen-discover} [discover-screen]]
             :settings [:vbox {:key :screen-settings} [settings-screen]]
-            [:vbox {:key :screen-chats} [chats-screen]])))
+            [:vbox {:key :screen-chats} [chats-screen]]))])
 
 (defn start!
   "Everything a launch does before the loop starts, for whichever backend is

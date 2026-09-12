@@ -13,7 +13,8 @@
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
             [frq.atproto :as atproto]
-            [frq.avatars :as avatars]))
+            [frq.avatars :as avatars]
+            [frq.platform :as platform]))
 
 (def ^:private directory-host "public.api.bsky.app")
 
@@ -96,12 +97,70 @@
   (when (seq actor) (avatars/fetch! actor #(swap! tick inc)))
   (fetch! actor))
 
-(defn unhover!
-  "The pointer has left `nick`'s face. Guarded by who is being left, so the
-  leaving of one face cannot take down the card of the next one — both edges
-  arrive in the same frame when the pointer crosses straight over."
+;; Whether the pointer is on the dialog the hover put up.
+;;
+;; This is what makes a hovered profile something you can move into and read
+;; rather than something you can only glance at: the dialog reports its own
+;; pointer, so leaving the face is not the end of the hover if the pointer
+;; turned up here instead.
+(defonce ^:private over-dialog? (atom false))
+
+(defn dismiss!
+  "Put the profile away, however it was opened.
+
+  The dialog is shown for `viewing` or for `hovering`, so a Close that cleared
+  only the first left one the pointer had opened on screen with its own button
+  doing nothing to it."
+  []
+  (reset! viewing nil)
+  (reset! hovering nil)
+  ;; And the pointer's claim on it. Close takes the dialog out from under the
+  ;; pointer, so there is no leaving edge coming to say so — left set, it
+  ;; would hold the next hover open for good.
+  (reset! over-dialog? false))
+
+;; How long the pointer may be on neither the face nor the dialog before the
+;; dialog goes.
+;;
+;; There is a gap between the two — the dialog is centred and the face is
+;; wherever the message is — and a hover that ended the instant the pointer
+;; left the face would close it halfway across every time. Long enough to
+;; cross, short enough that a pointer moving somewhere else entirely does not
+;; drag it along.
+(def ^:private grace-ms 400)
+
+(defn- release!
+  "Let `nick`'s hover go, unless something has taken it up again.
+
+  Three things can have happened in the grace period: the pointer arrived on
+  the dialog, it went back to the face, or it landed on someone else's. In all
+  three there is a hover to keep, and it is not this one's to end — which is
+  what the nick guard says."
   [nick]
-  (swap! hovering #(when-not (= nick (:nick %)) %)))
+  (when-not @over-dialog?
+    (swap! hovering #(when-not (= nick (:nick %)) %))))
+
+(defn unhover!
+  "The pointer has left `nick`'s face — which is not yet the end of it.
+
+  Guarded by who is being left, so the leaving of one face cannot take down
+  the card of the next one: both edges arrive in the same frame when the
+  pointer crosses straight over."
+  [nick]
+  (platform/after! grace-ms #(release! nick)))
+
+(defn enter-dialog!
+  "The pointer is on the dialog. Whatever hover put it there is now this."
+  []
+  (reset! over-dialog? true))
+
+(defn leave-dialog!
+  "The pointer has left the dialog, and with it the last thing holding the
+  profile open — unless it went back to the face it came from."
+  []
+  (reset! over-dialog? false)
+  (let [nick (:nick @hovering)]
+    (platform/after! grace-ms #(release! nick))))
 
 (defn web-url
   "Their profile on the web, by handle where there is one and DID otherwise."
