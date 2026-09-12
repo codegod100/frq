@@ -14,6 +14,22 @@
   (:require [frq.actions :as actions]
             [frq.cells :as cells]))
 
+(def transport-note
+  "What the foot of the screen says about the transport, which is the one
+  sentence here that is not the same on both.
+
+  It is a reader conditional rather than a seam because it is a compile-time
+  fact: jolt reaches OpenSSL through the dynamic loader, and Android ships no
+  public libssl, so :6697 was unreachable there and the screen said so. Under
+  ClojureDart TLS is in the Dart runtime — `SecureSocket`, nothing to load —
+  and that sentence would now be a lie.
+
+  Sign-in is still unavailable on the phone, but for a different reason worth
+  naming rather than papering over: the SASL handshake wants `frq.msgsig` and
+  `frq.atproto`'s session, and msgsig is not ported yet."
+  #?(:cljd "TLS comes from dart:io, so :6697 works here; untick it for a plain :6667 listener. Sign-in needs SASL, which is not ported to the phone yet."
+     :jolt "TLS rides jolt's OpenSSL bindings; untick it for a plain :6667 listener. Sign-in needs TLS, so it is desktop-only."))
+
 (defn error-note
   "Always a node, never nil.
 
@@ -130,4 +146,4 @@
     [server-fields]
     [:separator {}]
     [connect-action]]
-   [:dim-label {:label "TLS rides jolt's OpenSSL bindings; untick it for a plain :6667 listener. Sign-in needs TLS, so it is desktop-only."}]])
+   [:dim-label {:label transport-note}]])

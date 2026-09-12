@@ -16,7 +16,8 @@
   port. What this paints is the proof the shared half is alive under a second
   compiler: the clock and the saved session, read through exactly the
   namespaces the desktop reads them through."
-  (:require ["package:flutter/material.dart" :as m]
+  (:require ["dart:async" :as async]
+            ["package:flutter/material.dart" :as m]
             ["package:path_provider/path_provider.dart" :as pp]
             [cljd.flutter :as f]
             [frq.hiccup :as h]
@@ -36,6 +37,28 @@
 (defn- note! [m]
   (swap! lines (fn [v] (vec (take-last 8 (conj v m))))))
 
+(def ^:private registration-failed
+  "Numerics that mean registration will never complete.
+
+  Only 001 used to clear `connecting?`, so anything the server said instead of
+  it spun for ever with no message — and the likeliest of them is the dullest:
+  433, the nick is already in use, which is what a second phone or a session
+  left open elsewhere gets."
+  #{"431"    ; no nickname given
+    "432"    ; erroneous nickname
+    "433"    ; nickname in use
+    "436"    ; nick collision
+    "464"    ; password incorrect
+    "465"    ; banned
+    "ERROR"})
+
+(defonce ^:private attempt (atom 0))
+
+(defn- fail! [why]
+  (reset! cells/connecting? false)
+  (reset! cells/status "Not connected")
+  (reset! cells/error why))
+
 (defn ^:async connect!
   "What `frq.actions/connect!` is on the phone.
 
@@ -44,42 +67,65 @@
   host, the port and the TLS tick are `frq.cells`, filled in by the entry and
   the checkbutton on screen.
 
-  Guest registration only. SASL wants `frq.msgsig`, which is not portable
-  yet — so `frq.actions` answering a name it cannot fully honour is the point
-  of that seam: the screen renders and the button works, and what is behind it
-  grows."
+  Guest registration only. SASL wants `frq.msgsig`, which is not portable yet."
   []
-  (reset! cells/connecting? true)
-  (reset! cells/error nil)
-  (reset! cells/status (str "Connecting to " @cells/form-host "…"))
-  (reset! lines [])
-  (try
-    (let [sock (await (net/connect!
-                       {:host @cells/form-host
-                        ;; The cell is a string, because it is what an :entry holds.
-                        :port (or (parse-long (str @cells/form-port)) 6697)
-                        :tls? (boolean @cells/form-tls?)
-                        :on-msg (fn [m]
-                                  (note! m)
-                                  (when (= "001" (:command m))
-                                    (reset! cells/connecting? false)
-                                    (reset! cells/status
-                                            (str "Connected as " @cells/form-nick))))
-                        :on-close (fn [why]
-                                    (reset! cells/connecting? false)
-                                    (reset! cells/status "Not connected")
-                                    (when why (reset! cells/error why)))}))]
-      (reset! conn sock)
-      (net/send-line! sock (str "NICK " @cells/form-nick))
-      (net/send-line! sock (str "USER " @cells/form-nick " 0 * :frq")))
-    ;; Object, not Exception. Dart keeps Error and Exception in separate
-    ;; hierarchies, so a TypeError or a NoSuchMethodError is not an Exception
-    ;; and would leave `connecting?` true for ever — a spinner that never
-    ;; stops and no message saying why, which is exactly what this did.
-    (catch Object e
-      (reset! cells/connecting? false)
-      (reset! cells/status "Not connected")
-      (reset! cells/error (str e)))))
+  ;; Close whatever was open first. Connecting twice left the old socket
+  ;; holding the nick, so the second attempt got 433 from its own predecessor.
+  (when-let [c @conn] (net/close! c) (reset! conn nil))
+  (let [n (swap! attempt inc)]
+    (reset! cells/connecting? true)
+    (reset! cells/error nil)
+    (reset! cells/status (str "Connecting to " @cells/form-host "…"))
+    (reset! lines [])
+    ;; A watchdog, because "no answer at all" is a real outcome: a TLS
+    ;; handshake that hangs, or a server that accepts the socket and says
+    ;; nothing, leaves every callback below unfired.
+    (.then (async/Future.delayed (Duration .seconds 20))
+           (fn [_]
+             (when (and @cells/connecting? (= n @attempt))
+               (fail! "No answer from the server after 20s"))))
+    (try
+      (let [sock (await (net/connect!
+                         {:host @cells/form-host
+                          ;; The cell is a string, because it is what an
+                          ;; :entry holds.
+                          :port (or (parse-long (str @cells/form-port)) 6697)
+                          :tls? (boolean @cells/form-tls?)
+                          :on-msg (fn [m]
+                                    (note! m)
+                                    (let [cmd (str (:command m))
+                                          text (str (last (:params m)))]
+                                      (cond
+                                        (= "001" cmd)
+                                        (do (reset! cells/connecting? false)
+                                            (reset! cells/error nil)
+                                            (reset! cells/status
+                                                    (str "Connected as " @cells/form-nick)))
+
+                                        (contains? registration-failed cmd)
+                                        (fail! (if (= "433" cmd)
+                                                 (str "Nick " @cells/form-nick
+                                                      " is already in use — try another")
+                                                 (str cmd " " text)))
+
+                                        ;; Something is happening; say so
+                                        ;; rather than sit on one message.
+                                        @cells/connecting?
+                                        (reset! cells/status (str "… " cmd)))))
+                          :on-close (fn [why]
+                                      (reset! conn nil)
+                                      (if why
+                                        (fail! why)
+                                        (do (reset! cells/connecting? false)
+                                            (reset! cells/status "Not connected"))))}))]
+        (reset! conn sock)
+        (net/send-line! sock (str "NICK " @cells/form-nick))
+        (net/send-line! sock (str "USER " @cells/form-nick " 0 * :frq")))
+      ;; Object, not Exception. Dart keeps Error and Exception in separate
+      ;; hierarchies, so a TypeError is not an Exception and would leave
+      ;; `connecting?` true for ever.
+      (catch Object e
+        (fail! (str e))))))
 
 (defn- disconnect! []
   (when-let [c @conn] (net/close! c))
