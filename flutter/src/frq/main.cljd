@@ -34,7 +34,10 @@
 (defonce ^:private lines (atom []))
 (defonce ^:private conn (atom nil))
 
+(defonce ^:private last-line (atom nil))
+
 (defn- note! [m]
+  (reset! last-line (str (:command m) " " (last (:params m))))
   (swap! lines (fn [v] (vec (take-last 8 (conj v m))))))
 
 (def ^:private registration-failed
@@ -54,9 +57,16 @@
 
 (defonce ^:private attempt (atom 0))
 
+(defonce ^:private closing?
+  ;; Whether the close about to arrive is one we asked for. Without it a tap
+  ;; on Disconnect comes back as "closed by the server", which is both untrue
+  ;; and alarming.
+  (atom false))
+
 (defn- fail! [why]
   (reset! cells/connecting? false)
   (reset! cells/status "Not connected")
+  (reset! cells/screen :connect)
   (reset! cells/error why))
 
 (defn ^:async connect!
@@ -71,7 +81,10 @@
   []
   ;; Close whatever was open first. Connecting twice left the old socket
   ;; holding the nick, so the second attempt got 433 from its own predecessor.
-  (when-let [c @conn] (net/close! c) (reset! conn nil))
+  (when-let [c @conn]
+    (reset! closing? true)
+    (net/close! c)
+    (reset! conn nil))
   (let [n (swap! attempt inc)]
     (reset! cells/connecting? true)
     (reset! cells/error nil)
@@ -100,7 +113,14 @@
                                         (do (reset! cells/connecting? false)
                                             (reset! cells/error nil)
                                             (reset! cells/status
-                                                    (str "Connected as " @cells/form-nick)))
+                                                    (str "Connected as " @cells/form-nick))
+                                            ;; Off the connect screen, as
+                                            ;; frq.state does on 001. Without
+                                            ;; this a successful connect just
+                                            ;; puts the Connect button back
+                                            ;; and looks exactly like a
+                                            ;; failure.
+                                            (reset! cells/screen :chats))
 
                                         (contains? registration-failed cmd)
                                         (fail! (if (= "433" cmd)
@@ -114,10 +134,16 @@
                                         (reset! cells/status (str "… " cmd)))))
                           :on-close (fn [why]
                                       (reset! conn nil)
-                                      (if why
-                                        (fail! why)
-                                        (do (reset! cells/connecting? false)
-                                            (reset! cells/status "Not connected"))))}))]
+                                      ;; Say what the last thing seen was. A
+                                      ;; connection that registers and then
+                                      ;; drops is a different bug from one
+                                      ;; that never registers, and only the
+                                      ;; last line apart tells them.
+                                      (if @closing?
+                                        (reset! closing? false)
+                                        (fail! (str (or why "closed by the server")
+                                                    " (after " (count @lines)
+                                                    " lines, last: " @last-line ")"))))}))]
         (reset! conn sock)
         (net/send-line! sock (str "NICK " @cells/form-nick))
         (net/send-line! sock (str "USER " @cells/form-nick " 0 * :frq")))
@@ -128,10 +154,12 @@
         (fail! (str e))))))
 
 (defn- disconnect! []
+  (reset! closing? true)
   (when-let [c @conn] (net/close! c))
   (reset! conn nil)
   (reset! cells/connecting? false)
-  (reset! cells/status "Not connected"))
+  (reset! cells/status "Not connected")
+  (reset! cells/screen :connect))
 
 (defonce ^:private handle (atom "nandi-test.bsky.social"))
 (defonce ^:private identity-out (atom nil))
@@ -145,6 +173,29 @@
       (reset! identity-out [(str "did  " did) (str "pds  " pds)]))
     (catch Exception e
       (reset! identity-out [(str "failed: " e)]))))
+
+(defn- connected-screen
+  "Where a connect lands, until `frq.app`'s chats screen is portable.
+
+  Not much, and honest about it: the status, what the server said, and the way
+  back. The desktop goes to :chats here — that screen reads rooms, messages,
+  avatars and the media plane, which is most of what is not ported yet."
+  []
+  [:page {:max-width 520}
+   [:title {:label "frq"}]
+   [:status {:live true :label @cells/status}]
+   [:card {}
+    [:title-2 {:label "What the server said"}]
+    (if (empty? @lines)
+      [:dim-label {:label "nothing yet"}]
+      (for [[i m] (map-indexed vector @lines)]
+        [:label {:key i
+                 :label (str (:command m)
+                             (when-let [p (seq (:params m))]
+                               (str "  " (last p))))}]))]
+   [:hbox {:spacing 8}
+    [:button {:label "Disconnect" :destructive true :on-click #(disconnect!)}]]
+   [:dim-label {:label "The chats screen is next: it wants rooms, messages and avatars, none of which are ported yet."}]])
 
 (defn ^:async main []
   (m/WidgetsFlutterBinding.ensureInitialized)
@@ -174,11 +225,14 @@
              c-tls cells/form-tls?
              c-apppw cells/form-app-password
              c-broker cells/broker-token
-             c-login cells/login-url]
+             c-login cells/login-url
+             c-screen cells/screen]
        :watch [st c-status er c-error cn c-connecting am c-mode
                fh c-handle nk c-nick hs c-host pt c-port tl c-tls
-               ap c-apppw bt c-broker lu c-login ls lines]
+               ap c-apppw bt c-broker lu c-login ls lines sc c-screen]
        (m/SingleChildScrollView
         ;; frq.app's own connect screen, out of common/ — the same file the
         ;; desktop renders, painted by frq.hiccup in COSMIC's theme.
-        .child (h/render [connect/connect-screen]))))))
+        .child (h/render (if (= :connect @cells/screen)
+                           [connect/connect-screen]
+                           [connected-screen])))))))
