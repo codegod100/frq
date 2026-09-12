@@ -131,6 +131,32 @@
   (swap! overview? not)
   (save-prefs!))
 
+;; The room the reader was in when a line in the overview took them somewhere
+;; else, or nil. The strip is the one place in the app that moves you without
+;; you having asked to leave where you were — everything else is a room you
+;; chose — so it is the one place that owes you the way back.
+(defonce overview-return (atom nil))
+
+(declare open-channel!)
+
+(defn leaving-for-overview!
+  "Remember where we are, because a line in the strip is about to take us out
+  of it. Nothing to remember if there is nowhere to go back to."
+  []
+  (reset! overview-return @current))
+
+(defn overview-back!
+  "Back to the room the strip took you out of.
+
+  The room, and not the place in it: the backlog's scroll is remembered under
+  one name for every conversation — see `messages-scroll-key` — so what comes
+  back is the room and whatever that one viewport is currently showing of it.
+  A place of your own in every room is a bigger change than this button."
+  []
+  (when-let [room @overview-return]
+    (reset! overview-return nil)
+    (open-channel! room)))
+
 ;; The window's content width in points, polled from the backend a few times a
 ;; second. The app is laid out for a phone-width window, and this is what lets
 ;; a wide one be more than a phone with margins: past `wide-width` the channel
@@ -1939,28 +1965,39 @@
 
 
 
-;; How many lines the overview takes from each room. Per room rather than
-;; across all of them: the strip is there to say what is happening everywhere,
-;; and one busy channel taking the whole of a shared budget is the strip
-;; answering about one room — which is the room you are probably already in.
-(def overview-per-channel 3)
+;; How many lines the overview holds in all.
+(def overview-limit 100)
 
-;; And a ceiling on the lot, because the rooms are not a fixed number: at three
-;; apiece, a client in twenty channels would hand the strip sixty rows and the
-;; conversation above it nothing. Past this the newest win, which is the same
-;; bargain every other list here makes.
-(def overview-limit 24)
+;; How many it shows without being scrolled — the terminal's whole answer,
+;; since a strip there is a handful of rows taken off a conversation that is
+;; measured in how many of those fit.
+(def overview-lines 8)
+
+(defn- round-robin
+  "The colls' firsts, then their seconds, and so on until they are spent.
+
+  This is how the overview stays about every room while still being a fixed
+  number of lines. Taking the newest hundred outright would be the strip
+  answering about whichever room is busiest — which is the one you can already
+  see. A turn each means a room that said one thing all day is in the first
+  handful, beside the room that has said a hundred."
+  [colls]
+  (lazy-seq
+   (let [colls (remove empty? colls)]
+     (when (seq colls)
+       (concat (map first colls)
+               (round-robin (map rest colls)))))))
 
 (defn recent-everywhere
-  "The last `overview-per-channel` lines from every buffer at once, oldest
-  first, and at most `overview-limit` of them.
+  "The newest lines from every buffer at once, newest first, and at most
+  `overview-limit` of them — a turn to each room until they run out.
 
   Each carries the room it was said in, since that is the one thing a line
   taken out of its own conversation no longer says for itself.
 
-  Bounded per room before the sort, so the cost is the number of rooms rather
-  than the length of their backlogs: a channel with a week of history in it
-  must not make this the most expensive thing on the screen.
+  Bounded per room before anything else, so the cost is the number of rooms
+  rather than the length of their backlogs: a channel with a week of history
+  in it must not make this the most expensive thing on the screen.
 
   Joins, parts and the rest of the system's own chatter are left out. They are
   the noise this strip would drown in: a room nobody has spoken in for a day
@@ -1972,13 +2009,24 @@
   rooms you are not looking at."
   []
   (->> (dissoc @channels @current)
-       (mapcat (fn [[name buffer]]
-                 (->> (:messages buffer)
-                      (remove :system?)
-                      (take-last overview-per-channel)
-                      (map #(assoc % :channel name)))))
-       (sort-by #(or (:at %) 0))
-       (take-last overview-limit)))
+       (map (fn [[name buffer]]
+              ;; Newest first, which is the order a turn each has to be taken
+              ;; in: the first round is every room's latest line.
+              (->> (:messages buffer)
+                   (remove :system?)
+                   (take-last overview-limit)
+                   reverse
+                   (map #(assoc % :channel name)))))
+       (remove empty?)
+       round-robin
+       (take overview-limit)
+       ;; Newest at the top, which is the other way round from a conversation
+       ;; and right for the same reason a conversation is the way it is: what
+       ;; you came to the strip for is what has just happened, and a list you
+       ;; have to scroll to the bottom of to find it is a list that answers
+       ;; last. The turn-taking above is about which lines are in it, not
+       ;; about where they sit.
+       (sort-by #(or (:at %) 0) >)))
 
 (def last-preview rooms/last-preview)
 

@@ -260,6 +260,33 @@
       (str (subs text 0 (dec limit)) "…")
       text)))
 
+(defn- goto-message!
+  "Show message `id`, in `channel`, and say which one it was.
+
+  Three things in a fixed order: be in the room, aim the scroll at the line,
+  and mark it once it is there. `jump-to` comes off again as soon as the frame
+  that scrolled has been painted — a scroll target that stays set pins the
+  view and takes scrolling away from the reader — while the highlight outlives
+  it, because arriving at a screenful of messages says nothing about which one
+  was asked for.
+
+  `settle` is how long that first frame is given, and `linger` how long the
+  mark stays. Within a room the scrolling frame is the next one and the line
+  is somewhere the reader was already looking. Crossing a room is a slower
+  and a stranger arrival — the screen has to be built before there is
+  anything to scroll, and what it opens on is a conversation the reader was
+  not in a moment ago — so a caller that crosses one asks for more of both."
+  [channel id settle linger]
+  (when (and channel (not= channel @s/current))
+    (s/open-channel! channel))
+  (reset! s/jump-to id)
+  (reset! s/highlight id)
+  (platform/after! settle (fn [] (reset! s/jump-to nil)))
+  ;; The highlight only clears itself: a later jump elsewhere owns the
+  ;; highlight from then on.
+  (platform/after! linger (fn [] (when (= id @s/highlight)
+                                   (reset! s/highlight nil)))))
+
 (defn- reply-chip
   "What a message is replying to, above it, and a way back to it.
 
@@ -273,18 +300,9 @@
      ;; action, and a filled pill above every answer was the loudest thing in
      ;; the column.
      [:link {:label (str "↩ " (:from target) ": " (summarise target 48))
-             :on-click #(do (reset! s/jump-to id)
-                            (reset! s/highlight id)
-                            ;; Off again once the frame that scrolled has
-                            ;; been painted, so the reader keeps the view.
-                            (platform/after! 120 (fn [] (reset! s/jump-to nil)))
-                            ;; The highlight stays long enough to be read,
-                            ;; and only clears itself: a later jump elsewhere
-                            ;; owns the highlight from then on.
-                            (platform/after! 2000
-                                          (fn []
-                                            (when (= id @s/highlight)
-                                              (reset! s/highlight nil)))))}]
+             ;; The line being answered is in the room already open, so the
+             ;; next frame is the one that scrolls.
+             :on-click #(goto-message! channel id 120 2000)}]
      ;; The message it answers is older than this buffer goes.
      [:dim-label {:label "↩ replying to an earlier message"}])])
 
@@ -780,11 +798,7 @@
 
          (= :failed (:status pr))
          [:dim-label {:label "No Bluesky profile found"}])]
-      ;; What the pointer is holding open says how to stop having to hold it.
-      ;; Pinned, that line has nothing left to tell anyone.
-      [:vbox {:key :hint}
-       (when-not pinned?
-         [:dim-label {:label "Click the face to keep this open"}])]]
+]
      ;; `slot` is where libcosmic puts a button: the two actions go to the
      ;; foot of the dialog, and anything else here would be another control
      ;; stacked in the body.
@@ -1103,21 +1117,29 @@
 ;; what every other row under the message list has had to say for itself.
 ;;
 ;; Counted from the lines there actually are, not from the ceiling: the strip
-;; holds a few per room, so its height is the client's rooms, and reserving
-;; for a full one in a client with two channels in it would take a third of
-;; the window off the conversation to leave it empty.
+;; holds at most `overview-lines` of them there, and a room with two lines in
+;; it should not have a screenful reserved against it.
+;;
+;; The window reserves nothing for the overview. Its pane scrolls and fills,
+;; so it takes its half of the column by being in it — there is no number to
+;; subtract, and subtracting one would take the room twice.
 (defn- overview-height []
-  (* (chrome-scale) (+ 24 (* 20 (count (s/recent-everywhere))) 16)))
+  (* (chrome-scale)
+     (+ 24 (* 20 (min s/overview-lines (count (s/recent-everywhere)))) 16)))
 
 (defn- below-messages []
-  ;; 140 is that, counted: the gap under the row of columns, the jump button's
-  ;; 34pt row, the separator and the two empty wrappers with a gap apiece, then
-  ;; the compose row and the air under it — its own and the window's. Short by
-  ;; any of it and the column runs past the bottom edge, which does not show as
-  ;; a list that is too long: it shows as a compose bar sitting flat on the
-  ;; bottom of the window with its margin cut off.
+  ;; 115 is that, counted: the gap under the row of columns, the jump button's
+  ;; 34pt row, the banners in their one wrapper with one gap, then the compose
+  ;; row and the air under it — its own and the window's. Short by any of it
+  ;; and the column runs past the bottom edge, which does not show as a list
+  ;; that is too long: it shows as a compose bar sitting flat on the bottom of
+  ;; the window with its margin cut off.
+  ;;
+  ;; It was 140 when a rule was drawn above the compose bar and the three
+  ;; banners each cost the column a gap of their own. The rule went, and they
+  ;; went into one wrapper: twenty-five points of nothing, given back.
   (+ (* (chrome-scale)
-        (+ 140
+        (+ 115
            (if @s/replying-to 34 0)
            (if @s/attachment 76 0)))
      ;; The two extra rows the terminal's compose field wraps into, in points:
@@ -1136,7 +1158,7 @@
      ;; anywhere else because this is the number the backlog is laid out
      ;; against: without it the strip is drawn past the bottom of the window
      ;; and takes the compose bar with it.
-     (if @s/overview? (overview-height) 0)))
+     (if (and @terminal? @s/overview?) (overview-height) 0)))
 
 (defn- messages-width
   "How wide the message list may be with the people panel beside it.
@@ -1234,34 +1256,113 @@
   conversation behind it."
   [i m]
   [:hbox {:key i :spacing 8 :wrap false}
+   ;; The room is the button, and pressing it goes to this line rather than to
+   ;; the room's end: the line is what was read here and what the press was
+   ;; about, and a jump that landed on the newest message instead would answer
+   ;; a question nobody asked from a strip that was showing the answer.
+   ;;
+   ;; Unless the line has no id to aim at — one this client has sent and the
+   ;; server has not echoed back yet — and then the room is all there is to
+   ;; offer.
+   ;;
+   ;; 600ms to land and five seconds marked: the room is a room away, so the
+   ;; screen it scrolls in has to be built before there is anything to scroll,
+   ;; and what the reader arrives at is a conversation they were not in a
+   ;; moment ago. The mark is the whole answer to "which of these was the line
+   ;; I pressed", and it has to still be there when they have finished
+   ;; recognising where they are.
    [:button {:label (:channel m)
-             :on-click #(s/open-channel! (:channel m))}]
+             :on-click (if (:id m)
+                         #(do (s/leaving-for-overview!)
+                              (goto-message! (:channel m) (:id m) 600 5000))
+                         #(do (s/leaving-for-overview!)
+                              (s/open-channel! (:channel m))))}]
+   ;; And the line itself, as something to read rather than to press. It was a
+   ;; link for a moment, which made the strip two things at once: a line the
+   ;; server has echoed back has an id to aim at and a line this client has
+   ;; just sent does not, so half the rows came out accent-coloured and half
+   ;; plain, down the same list. The chip beside it is the way to the message
+   ;; and is on every row either way.
    [:vbox {:key :said}
     [:dim-label {:label (str (when-let [at (:at m)] (str (clock/clock-time at) "  "))
                              (:from m) ": "
                              (preview-line (:text m)))}]]])
 
 (defn- overview-pane
-  "Every room's last few lines in one list, oldest at the top.
+  "Every other room's recent lines in one list, newest at the top.
 
   A strip under the conversation rather than a screen of its own: the question
   it answers — is anything happening anywhere else — is one you ask while
   reading something, and an answer you have to leave the room for is one you
   stop asking for.
 
-  It does not scroll. A fixed handful of lines is what makes the room it takes
-  from the backlog a number this file can reserve; a scroll here would be a
-  second thing on the screen sizing itself against the window, fighting the
-  backlog above it for the same points."
+  In a window it scrolls, and the column it is in fills the height: two
+  children of a column that both fill it are two halves of it, which is the
+  horizontal split this is. The backlog above keeps its own scroll and its own
+  place in it, so reading down here does not move the conversation.
+
+  A terminal gets a handful of lines and no scroll. Its rows are cells rather
+  than points, and a second scrolling pane in a screen that is already a
+  conversation, a compose bar and a tab bar leaves neither half enough rows to
+  be worth reading — so there it stays the strip it was, and `below-messages`
+  reserves it by the row."
   []
-  (let [lines (s/recent-everywhere)]
-    [:vbox {:key :overview :spacing 4 :margin-top 4}
-     [:separator {}]
-     [:dim-label {:label "Everywhere else"}]
-     (if (seq lines)
-       (for [[i m] (map-indexed vector lines)]
-         ^{:key (str (:channel m) "-" (or (:id m) i))} [overview-row i m])
-       [:dim-label {:label "Nothing has been said in any room yet."}])]))
+  (let [lines (s/recent-everywhere)
+        ;; The way back, and only while there is somewhere to go: the strip
+        ;; is the one thing here that moves you without your having chosen a
+        ;; room, so it is the one thing that owes you an undo. Gone once you
+        ;; are back in that room, where it would offer to take you where you
+        ;; already are.
+        back (let [room @s/overview-return]
+               (when (and room (not= room @s/current))
+                 [:button {:label (str "← Back to " room)
+                           :on-click s/overview-back!}]))
+        ;; The row keeps its height whether or not the way back is in it. A
+        ;; button is 34 points and a caption is not, so a heading that grew
+        ;; one when you jumped and lost it when you came back moved every
+        ;; line under it — the strip rendering two different ways depending
+        ;; on where you had been.
+        heading (fn []
+                  [:hbox {:key :heading :spacing 8 :wrap false :align :center}
+                   [:dim-label {:label "Everywhere else"}]
+                   [:vbox {:key :back}
+                    (or back [:spacer {:size @chrome-row}])]])
+        ;; The same heading on the same rule the conversation puts between two
+        ;; days, and needed more here than there: these lines come from rooms
+        ;; that were last spoken in at their own times, so a strip of them can
+        ;; cross a day twice in ten rows where a single room's backlog crosses
+        ;; one once a day. A clock alone would then be the only thing saying
+        ;; which, and `9:40` says nothing about how long ago it was.
+        rows (fn [ms]
+               (if (seq ms)
+                 (mapcat
+                  (fn [i m]
+                    (let [prev (when (pos? i) (nth ms (dec i)))
+                          day (some-> (:at m) clock/day)
+                          new-day? (and day (not= day (some-> (:at prev) clock/day)))]
+                      (cond-> []
+                        new-day?
+                        (conj (day-separator (str "overview-day-" i)
+                                             (clock/day-label (:at m))))
+                        true
+                        (conj ^{:key (str (:channel m) "-" (or (:id m) i))}
+                              [overview-row i m]))))
+                  (range (count ms))
+                  ms)
+                 [[:dim-label {:label "Nothing has been said in any other room yet."}]]))]
+    (if @terminal?
+      (into [:vbox {:key :overview :spacing 4 :margin-top 4}
+             [:separator {}]
+             [heading]]
+            (rows (take s/overview-lines lines)))
+      [:vbox {:key :overview :spacing 4 :margin-top 4 :fill-height true}
+       [:separator {}]
+       [heading]
+       ;; Named, so coming back to a conversation does not throw away where
+       ;; the reader had got to in here.
+       (into [:scroll {:scroll-key "overview-list" :orientation :vertical
+                       :spacing 4}]
+             (rows lines))])))
 
 (defn chat-screen []
   (let [name @s/current
@@ -1366,18 +1467,19 @@
       ;; compose bar sits in whether or not the panel was showing.
       [:vbox {:key :people-pane}
        (when show-users? [users-panel name])]]
-     ;; Under the conversation and above the jump button: it is a second list
-     ;; of messages, so it belongs with the first rather than down among the
-     ;; compose bar's rows. In a wrapper of its own, since it comes and goes.
-     [:vbox {:key :overview-pane}
-      (when @s/overview? [overview-pane])]
-     ;; Only while it is needed, and directly above the compose bar: the way
-     ;; back to the present belongs next to the thing that puts you there.
-     ;; The row keeps its height whether or not the button is in it, so the
-     ;; compose bar below stays where the reader last saw it.
+     ;; Only while it is needed, and directly under the backlog: the way back
+     ;; to the present belongs next to the thing that puts you there, which is
+     ;; the conversation and not the overview.
+     ;;
+     ;; The row used to be held open by a spacer when the button was not in
+     ;; it, so that the compose bar did not move when it came and went. It sat
+     ;; under the backlog then, where the empty row read as the end of the
+     ;; conversation. Above the strip it reads as a hole between two lists,
+     ;; and there is no arguing a reader out of that — so the row is only
+     ;; there when the button is, and what moves is a strip below it moving by
+     ;; one row on the rare frame the reader has scrolled away from the end.
      [:vbox {:key :jump}
-      (if @s/at-present?
-        [:spacer {:size 34}]
+      (when-not @s/at-present?
         ;; With the key beside it where there is a key: a terminal is where a
         ;; reader is least likely to reach for the mouse, and most likely to
         ;; have paged up here with the keyboard in the first place.
@@ -1385,26 +1487,42 @@
                            "↓ Jump to present (Ctrl-End)"
                            "↓ Jump to present")
                   :on-click s/jump-to-present!}])]
-     [:separator {}]
-     ;; What the draft is answering, directly above where it is being typed.
-     [:vbox {:key :replying}
+     ;; The strip, under the conversation and the way back to it: it is a
+     ;; second list of messages, so it belongs with the first rather than down
+     ;; among the compose bar's rows. In a wrapper of its own, since it comes
+     ;; and goes.
+     [:vbox {:key :overview-pane :fill-height (boolean (and @s/overview?
+                                                            (not @terminal?)))}
+      (when @s/overview? [overview-pane])]
+     ;; No rule above the compose bar. The bar is already told apart from the
+     ;; conversation by what it is — a framed box and a button on a strip of
+     ;; air — and a line drawn over it as well was the app underlining the one
+     ;; edge nobody was going to miss.
+     ;; The three banners in one wrapper, at no spacing of its own. Each is a
+     ;; row that is usually empty, and an empty child still costs the column
+     ;; its gap — three of them stacked under the overview was two dozen
+     ;; points of nothing between the strip and the compose bar. Inside, they
+     ;; carry their own air only when they have something in them.
+     [:vbox {:key :banners :spacing 0}
+      ;; What the draft is answering, directly above where it is being typed.
+      [:vbox {:key :replying}
       (when-let [target @s/replying-to]
         [:hbox {:spacing 8}
          [:dim-label {:label (str "↩ " (:from target) ": " (summarise target 36))}]
          [:button {:label "✕" :on-click s/cancel-reply!}]])]
-     ;; And, in the same place, that the box holds a rewrite rather than
-     ;; something new: the text in it is a copy of a line already on screen,
-     ;; and without this Send would look like it was about to say it twice.
-     [:vbox {:key :editing}
+      ;; And, in the same place, that the box holds a rewrite rather than
+      ;; something new: the text in it is a copy of a line already on screen,
+      ;; and without this Send would look like it was about to say it twice.
+      [:vbox {:key :editing}
       (when @s/editing
         [:hbox {:spacing 8}
          [:dim-label {:label "✏️ Editing your message"}]
          [:button {:label "✕" :on-click s/cancel-edit!}]])]
-     ;; The pasted picture, above the line it will go out with. Shown rather
-     ;; than written into the draft: what is being sent is a picture, and a URL
-     ;; dropped into the entry would be an unreadable line of text sitting in
-     ;; the middle of whatever the reader was in the middle of typing.
-     [:vbox {:key :attachment}
+      ;; The pasted picture, above the line it will go out with. Shown rather
+      ;; than written into the draft: what is being sent is a picture, and a URL
+      ;; dropped into the entry would be an unreadable line of text sitting in
+      ;; the middle of whatever the reader was in the middle of typing.
+      [:vbox {:key :attachment}
       (when-let [att @s/attachment]
         [:hbox {:spacing 8}
          ;; Small: it is a reminder of what is attached, not the picture
@@ -1413,7 +1531,7 @@
          [:dim-label {:label (if (= :uploading (:status att))
                                "Uploading…"
                                "Picture attached")}]
-         [:button {:label "✕" :on-click s/clear-attachment!}]])]
+         [:button {:label "✕" :on-click s/clear-attachment!}]])]]
      ;; The line and its buttons on the middle of the width rather than
      ;; against its left edge: the entry asks for a fixed width, and on a
      ;; window wider than that a left-aligned row leaves it stranded in the
@@ -1421,11 +1539,10 @@
      ;; window and centring costs nothing.
      ;; Equal air above and below, so the row sits on the middle of the strip
      ;; between the separator and the bottom edge rather than flat against it.
-     ;; Above it is four of the column's gaps: one after the separator and one
-     ;; for each of the empty wrappers — the reply banner, the edit banner and
-     ;; the attachment, which cost a gap apiece whether or not they have
-     ;; anything in them. This margin plus the window's own is what answers
-     ;; them underneath.
+     ;; Above it is one of the column's gaps, where it used to be four: the
+     ;; reply banner, the edit banner and the attachment share a wrapper now
+     ;; and cost one between them whether or not they have anything in them.
+     ;; This margin plus the window's own is what answers it underneath.
      [:hbox {:spacing 8 :align :center :margin-bottom 12}
       ;; narrow enough that Send keeps its place on a phone-width row
       ;; A picture is pasted where everything else is typed: Ctrl+V. The field
