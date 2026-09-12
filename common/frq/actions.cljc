@@ -138,4 +138,4 @@
 (defn profile-hover! [& args] (call :profile-hover! args))
 (defn profile-unhover! [& args] (call :profile-unhover! args))
 (defn profile-open! [& args] (call :profile-open! args))
-
+(defn toggle-hide-join-part! [] (call :toggle-hide-join-part! []))

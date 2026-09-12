@@ -32,6 +32,7 @@
             [frq.screens.connect :as connect]
             [frq.screens.chats :as chats]
             [frq.screens.chat :as chat]
+            [frq.screens.settings :as settings]
             [frq.rooms :as rooms]
             [frq.irc.parse :as irc]))
 
@@ -275,6 +276,11 @@
       :toggle-users! (fn [] (swap! cells/show-users? not))
       :toggle-overview! (fn [] (swap! cells/overview? not))
       :toggle-chat-list! (fn [] (swap! cells/hide-chat-list? not))
+      :toggle-hide-join-part! (fn [] (swap! cells/hide-join-part? not))
+      :quit! (fn [] nil)
+      :forget-session! (fn []
+                         (reset! cells/broker-token nil)
+                         (reset! cells/session nil))
       :jump-to-present! (fn [] (reset! cells/at-present? true))
       :open-channel! (fn [name]
                        (reset! cells/current name)
@@ -329,4 +335,6 @@
                    :connect [connect/connect-screen]
                    :chats [chats/chats-screen]
                    :chat [chat/chat-screen]
+                   :discover [settings/discover-screen]
+                   :settings [settings/settings-screen]
                    [connected-screen]))))))

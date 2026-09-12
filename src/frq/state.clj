@@ -54,16 +54,8 @@
 (def search cells/search)
 (def login-url cells/login-url)
 
-(def popular-channels
-  [["#general" "General discussion"]
-   ["#test"    "Test channel"]
-   ["#freeq"   "freeq development & support"]
-   ["#dev"     "Programming & technology"]
-   ["#music"   "Music recommendations"]
-   ["#random"  "Off-topic chat"]])
+(def popular-channels cells/popular-channels)
 
-
-;; joined as soon as the server sends 001
 (def auto-join "#test")
 
 ;; How much backlog to ask for when the server did not volunteer any.
@@ -186,11 +178,7 @@
 ;; monotonic tick cannot be surprised by the system time moving.
 (defonce access-tick (atom 0))
 
-;; Comings and goings, hidden or not. A quiet room reads better with them —
-;; they are how you notice someone arriving — and a busy one drowns in them,
-;; so it is the reader's call. Only other people's: your own "Joined #chan" is
-;; the answer to something you just did.
-(defonce hide-join-part? (atom false))
+(def hide-join-part? cells/hide-join-part?)
 
 ;; Whether rooms.edn is the authority yet.
 ;;
@@ -1961,6 +1949,7 @@
   :join! join!
   :open-channel! open-channel!
   :leave-channel! leave-channel!
+  :toggle-hide-join-part! toggle-hide-join-part!
   :send-draft! send-draft!
   :cancel-edit! cancel-edit!
   :cancel-reply! cancel-reply!

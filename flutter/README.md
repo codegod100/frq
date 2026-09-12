@@ -135,12 +135,13 @@ screen rather than the subtree that read it. Fine at this size.
 reads is `frq.cells` and what it calls is `frq.actions`, and each platform
 fills those in: `frq.state`'s reducers on the desktop, dart:io here.
 
-## Three screens shared, all drawn on both
+## Five screens shared, all drawn on both
 
-`frq.screens.connect`, `frq.screens.chats` and `frq.screens.chat` are in
-`common/`, with the cells under them in `frq.cells`, the derivations in
+`frq.screens.connect`, `frq.screens.chats`, `frq.screens.chat` and
+`frq.screens.settings` — the last carrying Discover, Settings and the frame the
+tab bar sits in — are in `common/`, with the cells under them in `frq.cells`, the derivations in
 `frq.rooms`, the backend metrics in `frq.metrics` and everything a screen
-cannot do itself behind `frq.actions`. `frq.app` is 621 lines and was 1,744.
+cannot do itself behind `frq.actions`. `frq.app` is 565 lines and was 1,744.
 
 What `Length::Fill` means took four goes to get right, and the rule it ended
 at is worth stating once: a child that fills is Flutter's `Expanded`, the

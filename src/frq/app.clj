@@ -37,6 +37,8 @@
             ;; phone renders this very file.
             [frq.screens.chats :refer [below-list chats-screen conversation-row
                                        preview-line tab-bar]]
+            [frq.screens.settings :refer [discover-screen settings-screen
+                                          tab-screen]]
             [frq.screens.chat :refer [chat-screen emoji-picker message-row
                                       reactor-dialog sidebar-width
                                       users-panel]]
@@ -418,76 +420,7 @@
 
 ;; ---------------------------------------------------------------- discover
 
-(defn- tab-screen
-  "One of the three screens the tab bar moves between, in the chats screen's
-  shape: the title at the top, the tabs pinned at the bottom, and `body`
-  scrolling between them.
-
-  The same shape for all three, so switching tabs moves nothing but the
-  middle. As pages they were centred columns of their own widths with the tabs
-  wherever the content happened to end, and every switch resized the screen
-  under the pointer."
-  [title scroll-key & body]
-  [:vbox {:spacing 8 :margin 12 :fill-height true}
-   [:title {:label title}]
-   [:vbox {:key :list :fill-height true}
-    (into [:scroll {:scroll-key scroll-key :orientation :vertical
-                    :reserve (below-list) :spacing 8}]
-          body)]
-   [:vbox {:key :foot :spacing 8}
-    [:separator {}]
-    [tab-bar]]])
-
-(defn discover-screen []
-  (tab-screen "Discover" "discover-list"
-   [:dim-label {:label "Popular channels on freeq."}]
-   [error-note]
-   (for [[name blurb] s/popular-channels]
-     (let [joined? (get-in @s/channels [name :joined?])]
-       [:card {:key name}
-        [:title-2 {:label name}]
-        [:dim-label {:label blurb}]
-        [:button {:label (if joined? "Open" "Join")
-                  :kind :primary
-                  :on-click #(if joined? (s/open-channel! name) (s/join! name))}]]))))
-
 ;; ---------------------------------------------------------------- settings
-
-(defn settings-screen []
-  (tab-screen "Settings" "settings-list"
-   [:card {}
-    [:title-2 {:label "Connection"}]
-    [:status {:label @s/status :live (s/connected?)}]
-    [:label {:label (str "Server: " @s/form-host ":" @s/form-port)}]
-    [:label {:label (str "Nick: " @s/form-nick)}]
-    (if-let [sess @s/session]
-      [:vbox {:spacing 2}
-       [:label {:label (str "Signed in as " (:handle sess))}]
-       [:dim-label {:label (or (:did sess) "")}]
-       [:vbox {:key :forget}
-        (when @s/broker-token
-          [:button {:label "Forget Bluesky session"
-                    :kind :destructive
-                    :on-click s/forget-session!}])]]
-      [:dim-label {:label "Guest — not signed in."}])
-    [:separator {}]
-    ;; Nothing to disconnect from when there is no connection — the way back to
-    ;; the connect screen is what is wanted then.
-    [:vbox {:key :connection-action}
-     (if (s/connected?)
-       [:button {:label "Disconnect" :kind :destructive :on-click s/disconnect!}]
-       [:button {:label "Back to connect"
-                 :on-click #(reset! s/screen :connect)}])]]
-   [:card {}
-    [:title-2 {:label "Messages"}]
-    [:checkbutton {:label "Hide join/part messages"
-                   :active @s/hide-join-part?
-                   :on-toggled s/toggle-hide-join-part!}]
-    [:dim-label {:label "Hides other people arriving, leaving and quitting. The people panel still follows who is here."}]]
-   [:card {}
-    [:title-2 {:label "frq"}]
-    [:dim-label {:label "freeq client in jolt — glimmer components on the Vidya/egui backend."}]
-    [:button {:label "Quit" :on-click platform/quit!}]]))
 
 ;; ---------------------------------------------------------------- shell
 

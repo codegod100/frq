@@ -191,3 +191,20 @@
 ;; is a pill under many messages, and only the one under the pointer carries a
 ;; card.
 (defonce reaction-hover (atom nil))
+
+;; Comings and goings, hidden or not. A quiet room reads better with them —
+;; they are how you notice someone arriving — and a busy one drowns in them,
+;; so it is the reader's call. Only other people's: your own "Joined #chan" is
+;; the answer to something you just did.
+(defonce hide-join-part? (atom false))
+
+(def popular-channels
+  [["#general" "General discussion"]
+   ["#test"    "Test channel"]
+   ["#freeq"   "freeq development & support"]
+   ["#dev"     "Programming & technology"]
+   ["#music"   "Music recommendations"]
+   ["#random"  "Off-topic chat"]])
+
+
+;; joined as soon as the server sends 001
