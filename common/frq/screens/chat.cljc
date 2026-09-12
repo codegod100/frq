@@ -1386,20 +1386,20 @@
       ;; something else on it".
       ;; And the same picture chosen rather than pasted, for a phone — which has
       ;; no Ctrl+V, and no clipboard of pictures to read if it had.
-      ;; In a window, a picture on a Delight 2 tile (src/frq/icons, on the
-      ;; geometry delight-icons generates its tiles with): grey frame, dark
-      ;; square, cream glyph — where the emoji was a colour photo that matched
-      ;; nothing else in the bar. Its path is read from the working directory,
-      ;; which is the tree under `just run` and `just cosmic` and the store
-      ;; copy under the flake's launcher. A terminal has no pixels to put
-      ;; it in, and an APK carries no src/ to read it from — both keep the glyph.
-      ;; `:jolt` and not `desktop?`: the tile is a file read out of the working
-      ;; directory, which is the source tree jolt runs from. Flutter's desktop
-      ;; target is a window with a pointer like libcosmic's — `desktop?` is
-      ;; true there now — but it is launched from `flutter/` and bundles no
-      ;; src/, so it keeps the glyph the APK keeps.
-      (if #?(:jolt (and (actions/desktop?) (not @terminal?)) :cljd false)
-        [:image {:src "src/frq/icons/insert-image.png"
+      ;; The same picture on both halves: a Delight 2 tile (src/frq/icons, on
+      ;; the geometry delight-icons generates its tiles with) — grey frame,
+      ;; dark square, cream glyph, where the emoji was a colour photo that
+      ;; matched nothing else in the bar. Only where the tile can be found,
+      ;; which is not the same place twice. jolt reads it out of the working
+      ;; directory, which is the source tree under `just run` and `just
+      ;; cosmic` and the store copy under the flake's launcher. ClojureDart is
+      ;; launched from `flutter/` and bundles no src/, on the phone and the
+      ;; desktop target alike, so it asks for the copy in `flutter/assets/`
+      ;; that `pubspec.yaml` bundles — hence `asset:` rather than a path.
+      ;; A terminal has no pixels to put a picture in and keeps the glyph.
+      (if #?(:jolt (and (actions/desktop?) (not @terminal?)) :cljd true)
+        [:image {:src #?(:jolt "src/frq/icons/insert-image.png"
+                         :cljd "asset:assets/insert-image.png")
                  :size [36 36]
                  ;; On the middle of the field rather than the top of it: the
                  ;; box grows downwards as a message is typed, and a button

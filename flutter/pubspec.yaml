@@ -67,10 +67,12 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  # The Delight 2 tiles the composer draws its buttons with. jolt reads them
+  # out of the source tree it runs from; this half is launched from `flutter/`
+  # and carries no src/, so the ones it needs are bundled here and asked for
+  # as `asset:` sources — see `frq.hiccup`'s `:image`.
+  assets:
+    - assets/insert-image.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

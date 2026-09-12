@@ -1035,6 +1035,15 @@
              oops (fn [_ _ _] (m/SizedBox .width 0.0 .height 0.0))
              img (cond
                    (nil? src) (m/SizedBox .width 0.0 .height 0.0)
+                   ;; A picture the bundle carries rather than one the reader
+                   ;; chose or the network holds: `pubspec.yaml`'s assets,
+                   ;; named `asset:<path>` so the three sources stay one
+                   ;; `:src`. A file path could not do this job — the bundle
+                   ;; is not the filesystem on Android, and the desktop build
+                   ;; is launched from wherever it was installed.
+                   (.startsWith (str src) "asset:")
+                   (m/Image.asset (subs (str src) 6) .fit m/BoxFit.contain
+                                  .errorBuilder oops)
                    (or (.startsWith (str src) "http://")
                        (.startsWith (str src) "https://"))
                    (m/Image.network (str src) .fit m/BoxFit.contain
