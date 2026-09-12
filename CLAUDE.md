@@ -39,8 +39,11 @@ Adding a host call means adding it to the seam in `common/frq/io.cljc` and to
 both implementations. Name it for the result rather than the mechanism — the
 seam has `write-private-file!` and not a chmod, because Dart has no chmod.
 
-`flutter/` does not build; there is no cljd toolchain or Flutter SDK in the
-flake. See flutter/README.md. It is the only APK there is — the jolt APK,
+`flutter/` builds with `just apk`, out of the flake's own `.#flutter` shell
+(clojure, jdk17, flutter) and its `.#android-sdk` package. Impure on purpose:
+Gradle fetches its own dependencies and writes into `ANDROID_HOME`, so the
+recipe copies the store SDK to `flutter/.home` and lets it finish there. See
+flutter/README.md. It is the only APK there is — the jolt APK,
 `nix/android.nix`, `android/` and the `.#apk` outputs are gone, because every
 backend that APK could paint with is retired. jvui and Vidya were experiments;
 libcosmic is the desktop window and does not cross to a phone.

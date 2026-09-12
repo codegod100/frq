@@ -101,6 +101,42 @@
         enable32bits = false;
       }).nixGLIntel;
 
+      # The Android SDK wants two things `nixpkgs.legacyPackages` cannot give:
+      # `allowUnfree`, because the SDK's own licence is not free, and
+      # `android_sdk.accept_license`, which is how you say so in a file rather
+      # than at a prompt a build has no terminal for. Neither can be set on a
+      # legacyPackages attribute after the fact, so this is a second import of
+      # the same locked nixpkgs rather than a second nixpkgs.
+      #
+      # This used to live in `just apk` as a `nix build --impure --expr` with
+      # `builtins.getFlake "github:NixOS/nixpkgs/nixos-unstable"` inside it —
+      # which fetched whatever nixos-unstable was that morning, not what
+      # flake.lock pins, so the SDK under the APK and the nixpkgs under
+      # everything else were free to drift apart. Here they are the same rev.
+      androidPkgsFor = system: import nixpkgs {
+        inherit system;
+        config = {
+          allowUnfree = true;
+          android_sdk.accept_license = true;
+        };
+      };
+
+      # Only the floor Gradle stands on. It installs build-tools and a platform
+      # into ANDROID_HOME itself as it goes — see `just apk` for why that means
+      # a writable copy — so composing more of them here buys nothing.
+      #
+      # includeNDK = false deliberately: the app is Dart and path_provider is
+      # platform channels, so there is no native code to need one, and asking
+      # for it is a few hundred megabytes and a Gradle fetch of that exact NDK.
+      androidSdkFor = system:
+        let android = androidPkgsFor system; in
+        (android.androidenv.composeAndroidPackages {
+          cmdLineToolsVersion = "13.0";
+          buildToolsVersions = [ "34.0.0" ];
+          platformVersions = [ "35" "34" ];
+          includeNDK = false;
+        }).androidsdk;
+
       # egui reaches for these with dlopen rather than linking them, so being
       # in the cdylib's buildInputs is not enough — whatever starts frq has to
       # put them on the loader path itself. Without libx11 here, vidya reports
@@ -416,6 +452,12 @@
           jolt = joltRuntime;
           default = frq;
 
+          # The Android SDK `just apk` copies into flutter/.home. A package
+          # rather than something the recipe evaluates inline, so that
+          # `nix build .#android-sdk` is how you pre-warm it and `nix flake
+          # show` admits it exists.
+          android-sdk = androidSdkFor pkgs.stdenv.hostPlatform.system;
+
           # frq and everything it loads, squashed into one runnable file for
           # hosts without Nix. The whole closure rides along — Mesa included,
           # which is not waste: off NixOS the launcher goes through nixGL, and
@@ -538,6 +580,32 @@
               fi
               unset frq_named frq_git frq_near
             '';
+          };
+
+          # The APK toolchain, which the default shell deliberately does not
+          # carry: Flutter brings its own Dart, Gradle and a JDK's worth of
+          # closure, and a desktop build has no use for any of it.
+          #
+          # `just apk` used to name these as `nix shell nixpkgs#clojure
+          # nixpkgs#jdk17 nixpkgs#flutter`, which is the flake registry's
+          # nixpkgs and not this flake's — so the Flutter under the APK
+          # floated while everything else was locked. Same three packages,
+          # from flake.lock now.
+          #
+          # JDK 17 and not newer on purpose: the Flutter template's Gradle
+          # plugin pins a Gradle that rejects a JDK it was released before,
+          # and the failure reads as an unsupported class file version rather
+          # than as a version mismatch.
+          flutter = pkgs.mkShellNoCC {
+            name = "frq-flutter";
+            packages = [ pkgs.clojure pkgs.jdk17 pkgs.flutter pkgs.just ];
+
+            # Where the recipe copies from. Naming it here is also what makes
+            # entering the shell build it, so the first `just apk` does not
+            # stop for a few hundred megabytes of SDK with nothing said about
+            # why.
+            FRQ_ANDROID_SDK =
+              "${androidSdkFor pkgs.stdenv.hostPlatform.system}/libexec/android-sdk";
           };
         });
 

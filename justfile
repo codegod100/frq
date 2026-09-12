@@ -72,8 +72,11 @@ apk action="build":
     set -euo pipefail
     cd "{{justfile_directory()}}/flutter"
 
-    sdk="$(nix build --impure --no-link --print-out-paths \
-        --expr 'let pkgs = import (builtins.getFlake "github:NixOS/nixpkgs/nixos-unstable") { system = "x86_64-linux"; config = { allowUnfree = true; android_sdk.accept_license = true; }; }; in (pkgs.androidenv.composeAndroidPackages { cmdLineToolsVersion = "13.0"; buildToolsVersions = [ "34.0.0" ]; platformVersions = [ "35" "34" ]; includeNDK = false; }).androidsdk')/libexec/android-sdk"
+    # The flake's, not an --impure --expr against whatever nixos-unstable is
+    # today: the licence config the SDK needs lives in `androidPkgsFor` now,
+    # so this is an ordinary output at the rev flake.lock pins.
+    sdk="$(nix build --no-link --print-out-paths \
+        "{{justfile_directory()}}#android-sdk")/libexec/android-sdk"
 
     export HOME="$PWD/.home"
     export ANDROID_HOME="$HOME/android-sdk"
@@ -88,7 +91,10 @@ apk action="build":
         chmod -R u+w "$ANDROID_HOME"
     fi
 
-    flutter="nix shell nixpkgs#clojure nixpkgs#jdk17 nixpkgs#flutter --command"
+    # Also the flake's. `nix shell nixpkgs#...` read the registry, which is a
+    # different and unlocked nixpkgs — the Flutter that built the APK could
+    # move under it without flake.lock changing a line.
+    flutter="nix develop {{justfile_directory()}}#flutter --command"
 
     $flutter clojure -M:cljd compile
 

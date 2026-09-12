@@ -1,8 +1,8 @@
 # The ClojureDart half
 
-Nothing here builds yet. This is the boundary, drawn before the port rather
-than after it, so that the question "can this file go on the phone?" has a
-filesystem answer.
+This is the boundary, drawn before the port rather than after it, so that the
+question "can this file go on the phone?" has a filesystem answer. It builds:
+see "Building it" below.
 
 ## The three trees
 
@@ -89,6 +89,23 @@ neither run in a sandbox nor write to the store. What nix gives is the
 toolchain — clojure, a JDK, Flutter, and an SDK composed by androidenv — and
 the recipe copies that SDK to `flutter/.home` for Gradle to finish off. That
 copy and everything Gradle leaves behind are gitignored.
+
+All of it is the flake's, which it did not used to be. The toolchain was
+`nix shell nixpkgs#clojure nixpkgs#jdk17 nixpkgs#flutter` and the SDK was a
+`nix build --impure --expr` around `builtins.getFlake
+"github:NixOS/nixpkgs/nixos-unstable"` — two references to an *unlocked*
+nixpkgs, so the Flutter that compiled the APK and the nixpkgs under everything
+else could drift apart without flake.lock changing a line. They are
+`devShells.<system>.flutter` and `packages.<system>.android-sdk` now, at the
+pinned rev, and the recipe is `nix develop .#flutter --command` over
+`nix build .#android-sdk`.
+
+The SDK needs `allowUnfree` and `android_sdk.accept_license`, which cannot be
+set on a `legacyPackages` attribute after the fact — hence `androidPkgsFor` in
+the flake, a second `import` of the same locked input rather than a second
+nixpkgs. The Flutter toolchain is kept out of the default dev shell: it brings
+its own Dart and a JDK's worth of closure, and a desktop build wants none of
+it.
 
 Two things the Flutter template wanted that are deliberately not here. There is
 no `ndkVersion` in `android/app/build.gradle.kts`: setting it makes Gradle
