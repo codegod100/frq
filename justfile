@@ -150,6 +150,13 @@ run *args:
 # No nixGL here, unlike `run`: a terminal wants nothing from the host's GL
 # driver, which is the reason this output exists on machines that have none.
 #
+# What may appear in common/, checked — the half of the tree both backends
+# compile. Needs nothing built: it reads the source, so it is the one check
+# that runs anywhere, and CI runs exactly this.
+check-common:
+    #!/usr/bin/env bash
+    python3 tools/check-common.py common
+
 # The same screens in a terminal. `just tui --headless` prints one screenshot.
 tui *args:
     #!/usr/bin/env bash

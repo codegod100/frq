@@ -1,4 +1,5 @@
-# One job, and it only ever runs on a schedule.
+# Two jobs: one that checks what common/ is allowed to contain on every push,
+# and one that re-resolves the jolt-native input on a schedule.
 #
 # jolt-native publishes its Android objects under a "latest" alias on every
 # default-branch build, and frq takes them as a flake input. A flake input is
@@ -7,10 +8,26 @@
 # this does it for the repository, so main's flake.lock names a recent build
 # rather than whichever one it was first locked against.
 #
-# Nothing is built here. The job resolves one input, and if that moved, commits
-# the lock file. Whether the new objects actually work is what an APK build
-# answers, and that is deliberately not this job's business.
-stages: [update]
+# Nothing is built by either. The update job resolves one input, and if that
+# moved, commits the lock file — whether the new objects actually work is what
+# an APK build answers, and that is deliberately not this job's business. The
+# check reads source and no more. So this file needs no toolchain at all, which
+# is what keeps it honest about running on every push.
+stages: [check, update]
+
+# common/ is compiled by jolt AND by ClojureDart, and only the jolt half is on
+# the way to anything anyone runs day to day. So shared code reaching for the
+# JVM breaks nothing the author can see, and the phone stops compiling at a
+# namespace nobody touched — `Math/ceil` in the compose bar was the third time.
+# Reading the source is enough to catch it, which is why this needs no toolchain
+# and no builder: python and a checkout, a few seconds, on every push.
+check-common:
+  stage: check
+  image: python:3-alpine
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "schedule"
+  script:
+    - python3 tools/check-common.py common
 
 update-jolt-native:
   stage: update
