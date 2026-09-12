@@ -71,6 +71,37 @@
           (str/lower-case (or me "")))))
 
 
+(defn seen-message?
+  "Whether this buffer already holds the line that has just arrived.
+
+  The server hands the same message over more than once: a JOIN replays the
+  backlog, a CHATHISTORY replays it again, and a line can have arrived live
+  before either. The msgid is the message's identity and it survives every
+  revision, so holding the copy we have is what keeps a rejoin from doubling
+  the buffer — and what keeps a replayed *pre-edit* row from landing under a
+  line already showing the current text.
+
+  And sometimes a line is replayed with no tags at all — no msgid to know it
+  by and no time to place it. That line has no identity, so left alone it
+  arrives new on every rejoin, appended again and stamped `now`, which is a
+  room that can never be finished reading. What it does have is a sender and
+  words, which for an untagged line is identity enough. The cost is that the
+  same person saying the same thing twice — both times untagged — shows once.
+  Ours and the system's are left out of it: those have no msgid either, and a
+  second \"ok\" from this client, or a second \"alice joined\", is a real event
+  rather than a replay."
+  [msgs id from text me]
+  (boolean
+   (if id
+     (some #(= id (:id %)) msgs)
+     (and (not= "*" from)
+          (not= (str/lower-case (or from "")) (str/lower-case (or me "")))
+          (some #(and (nil? (:id %))
+                      (= from (:from %))
+                      (= text (:text %)))
+                msgs)))))
+
+
 ;; How many lines the overview holds in all.
 (def overview-limit 100)
 

@@ -388,7 +388,13 @@
       (let [tags (:tags m)
             target (first params)
             text (last params)
-            name (if (rooms/dm? target) who target)
+            ;; A DM addressed to us belongs in a buffer named for the sender,
+            ;; not for our own nick — except when the sender is us:
+            ;; `echo-message` sends our own DM back, and the buffer it belongs
+            ;; to is the one we sent it to. `frq.state` names it the same way.
+            name (if (and (rooms/dm? target) (not= who (str @cells/form-nick)))
+                   who
+                   target)
             edit-of (or (irc/tag-value tags "+draft/edit")
                         (irc/tag-value tags "+edit"))
             ;; When the server says the line was written, or now when it says
@@ -418,16 +424,40 @@
           (when (= :absent (edit-message! name edit-of who text))
             (swap! cells/channels
                    #(-> (rooms/ensure-channel % name)
-                          (update-in [name :messages] conj
-                                     {:from who
-                                      :text text
-                                      :images (images-in text)
-                                      :did (:account m)
-                                      :id edit-of
-                                      :at at
-                                      :edited? true})
-                          settle))))
-          (swap! cells/channels
+                        (update-in [name :messages] conj
+                                   {:from who
+                                    :text text
+                                    :images (images-in text)
+                                    :did (:account m)
+                                    :id edit-of
+                                    :at at
+                                    :actor (profile/actor (:account m) who)
+                                    :edited? true})
+                        settle)))
+          ;; And a line that is not a revision is a new one — but only the
+          ;; else arm of that `if`, which is what this was not. The append sat
+          ;; a paren outside the whole thing and ran for every PRIVMSG, so an
+          ;; edit was folded into the line it names *and* posted again at the
+          ;; bottom: the duplicate the reader saw.
+          ;;
+          ;; And not one we already hold either. The server hands the same
+          ;; message over more than once — a JOIN replays the backlog, a
+          ;; CHATHISTORY replays it again, and a line can have arrived live
+          ;; before either — which is the rest of what was doubling rooms
+          ;; here. `frq.rooms/seen-message?` is that rule, shared with the
+          ;; desktop, which has always applied it.
+          (let [msgid (irc/tag-value tags "msgid")
+                ;; What the server says about a line it has already collapsed:
+                ;; replay sends the current text and no `+draft/edit` to hint
+                ;; that it is not the original. This tag is the only trace.
+                edited? (= "1" (irc/tag-value tags "+freeq.at/edited"))]
+            (if (rooms/seen-message? (get-in @cells/channels [name :messages])
+                                     msgid who text (str @cells/form-nick))
+              ;; The copy we hold is the older wording and this is the server
+              ;; saying so. Same message, later word: take the text rather
+              ;; than the arrival order, and no second row either way.
+              (when edited? (edit-message! name msgid who text))
+              (swap! cells/channels
                #(-> (rooms/ensure-channel % name)
                     (update-in [name :messages] conj
                                ;; The msgid is what everything after a message
@@ -446,25 +476,21 @@
                                 ;; is handle-shaped. A guest has neither and gets
                                 ;; no lookup, which is the honest answer.
                                 :actor (profile/actor (:account m) who)
-                                :id (irc/tag-value tags "msgid")
+                                :id msgid
                                 ;; The server canonicalises +draft/reply to
                                 ;; +reply; a client that sent the draft name may
                                 ;; still reach us before it does.
                                 :reply-to (or (irc/tag-value tags "+reply")
                                               (irc/tag-value tags "+draft/reply"))
+                                ;; A line can arrive already rewritten.
+                                :edited? edited?
                                 ;; What is already on it, so a reconnect does not
                                 ;; start every message empty.
-                                ;; What the server says about a line it has
-                                ;; already collapsed: replay sends the current
-                                ;; text and no `+draft/edit` to hint that it is
-                                ;; not the original. This tag is the only trace.
-                                :edited? (= "1" (irc/tag-value tags
-                                                               "+freeq.at/edited"))
                                 :reactions (reactions/parse-tally
                                             (irc/tag-value tags
                                                            "+freeq.at/reactions"))})
                     (assoc-in [name :last-activity] at)
-                    settle)))
+                    settle))))))
 
       ;; A message that is only tags. A reaction is the one this reads:
       ;; `+react` puts an emoji on the message `+reply` names, and the

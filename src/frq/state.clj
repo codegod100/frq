@@ -318,38 +318,13 @@
             (fn [m]
               (let [m (ensure-channel m channel)
                     viewing? (and (chat-visible?) (= channel @current))
-                    ;; The server hands the same message over more than once: a
-                    ;; JOIN replays the backlog, the CHATHISTORY we ask for
-                    ;; replays it again, and a line can have arrived live before
-                    ;; either. The msgid is the message's identity and it
-                    ;; survives every revision, so holding the copy we have is
-                    ;; what keeps a rejoin from doubling the buffer — and what
-                    ;; keeps a replayed *pre-edit* row from landing under a line
-                    ;; already showing the current text.
-                    ;; And sometimes it replays a line with no tags at all —
-                    ;; no msgid to know it by and no time to place it. That
-                    ;; line has no identity, so it arrives new on every rejoin:
-                    ;; appended again, timestamped `now` because there is
-                    ;; nothing else to timestamp it with, and therefore always
-                    ;; newer than the read marker. Left alone it is a buffer
-                    ;; that grows a copy per reconnect and a room that cannot
-                    ;; be finished reading.
-                    ;;
-                    ;; What it does have is a sender and words, which for an
-                    ;; untagged line is identity enough. The cost is that the
-                    ;; same person saying the same thing twice — both times
-                    ;; untagged — shows once. Ours and the system's are left
-                    ;; out of it: those have no msgid either, and a second
-                    ;; "ok" from this client, or a second "alice joined", is
-                    ;; a real event rather than a replay.
-                    seen? (if id
-                            (some #(= id (:id %)) (get-in m [channel :messages]))
-                            (and (not= "*" from)
-                                 (not= from @form-nick)
-                                 (some #(and (nil? (:id %))
-                                             (= from (:from %))
-                                             (= text (:text %)))
-                                       (get-in m [channel :messages]))))]
+                    ;; And not a second copy of one we already hold: the
+                    ;; server hands the same message over more than once, and
+                    ;; `frq.rooms/seen-message?` is the whole of that rule —
+                    ;; shared, because the Flutter half was appending every
+                    ;; replay this drops.
+                    seen? (rooms/seen-message? (get-in m [channel :messages])
+                                               id from text @form-nick)]
                 (cond
                   ;; The copy we already hold is the pre-edit one, and this is
                   ;; the server's collapsed row saying so. Same message, later
