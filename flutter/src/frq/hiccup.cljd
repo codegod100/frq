@@ -136,12 +136,20 @@
 
   jolt-cosmic gives an entry Length::Fixed(w) when it has a width and
   Length::Fill otherwise; Fill in a Row is Flutter's Expanded. A TextField that
-  is neither is offered unbounded width, which is a layout error."
+  is neither is offered unbounded width, which is a layout error.
+
+  A row aligned to its end fills too, for the same reason it does in glimmer:
+  `:align :end` is \"against the right edge of what is left\", and a row sized
+  to its own children has no left-over to sit at the end of. The message
+  heading is the one that showed it — the chips rode along directly after the
+  clock, and on a phone the last of them was off the edge of the screen."
   [node]
   (and (vector? node)
-       (= :entry (first node))
        (let [p (second node)]
-         (or (not (map? p)) (nil? (width-of p)) (:hexpand p)))))
+         (case (first node)
+           :entry (or (not (map? p)) (nil? (width-of p)) (:hexpand p))
+           :hbox (and (map? p) (= :end (:align p)))
+           false))))
 
 (declare body)
 
@@ -526,21 +534,39 @@
                     .runSpacing (dbl (:spacing p) 0.0)
                     .crossAxisAlignment m/WrapCrossAlignment.center
                     .children kids)
-                   (m/Row
-                    ;; Stretch when a child fills vertically: a Row hands its
-                    ;; children a loose height by default, and a column that
-                    ;; wants what is left of it needs a tight one.
-                    .crossAxisAlignment (if (some #(fills-column? (expand %)) (body node))
-                                          m/CrossAxisAlignment.stretch
-                                          m/CrossAxisAlignment.center)
-                    ;; A row holding something that fills has to be given the
-                    ;; width to divide, so it is max rather than min whenever a
-                    ;; child asks.
-                    .mainAxisSize (if (some #(fills-row? (expand %)) (body node))
-                                    m/MainAxisSize.max
-                                    m/MainAxisSize.min)
-                    .spacing (dbl (:spacing p) 0.0)
-                    .children (flexed fills-row? (body node))))]
+                   ;; `:align` is where in the row its children sit, and it is
+                   ;; glimmer's meaning that the shared screens are written
+                   ;; against: `:end` lays them out *from* the right, so the
+                   ;; first child in the source is the rightmost on screen.
+                   ;; Ignoring it put the message heading's chips in the
+                   ;; opposite order and left the pencil — the one written
+                   ;; first so it would land beside the words — hanging off the
+                   ;; end of a phone's width, which is why a line you wrote had
+                   ;; no way to rewrite it.
+                   (let [end? (= :end (:align p))
+                         kids (flexed fills-row? (body node))]
+                     (m/Row
+                      .mainAxisAlignment (case (:align p)
+                                           :end m/MainAxisAlignment.end
+                                           :center m/MainAxisAlignment.center
+                                           m/MainAxisAlignment.start)
+                      ;; Stretch when a child fills vertically: a Row hands its
+                      ;; children a loose height by default, and a column that
+                      ;; wants what is left of it needs a tight one.
+                      .crossAxisAlignment (if (some #(fills-column? (expand %)) (body node))
+                                            m/CrossAxisAlignment.stretch
+                                            m/CrossAxisAlignment.center)
+                      ;; A row holding something that fills has to be given the
+                      ;; width to divide, so it is max rather than min whenever a
+                      ;; child asks. A row aligned to an edge needs it too: there
+                      ;; is no edge to sit against inside a row the width of its
+                      ;; own children.
+                      .mainAxisSize (if (or end?
+                                            (some #(fills-row? (expand %)) (body node)))
+                                      m/MainAxisSize.max
+                                      m/MainAxisSize.min)
+                      .spacing (dbl (:spacing p) 0.0)
+                      .children (if end? (vec (reverse kids)) kids))))]
          (if-let [mg (insets-of p)]
            (m/Padding .padding mg .child row)
            row))
