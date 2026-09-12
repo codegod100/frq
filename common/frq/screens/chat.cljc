@@ -119,7 +119,7 @@
   deafened microphone still carries your voice, and one control for both would
   make the quieter of the two a surprise."
   []
-  (let [{:keys [muted? speaker-muted? camera? has-camera? has-mic? media]} @av/local-call]
+  (let [{:keys [muted? speaker-muted? camera? has-camera? has-mic? media]} (actions/local-call)]
     [:vbox {:key :call-controls :spacing 6}
      [:hbox {:spacing 8}
       [:label {:label (case media
@@ -134,16 +134,16 @@
         [:dim-label {:label "· listening only"}])]
      [:hbox {:spacing 8}
       [:button {:label (if muted? "Unmute" "Mute")
-                :on-click #(av/set-muted! (not muted?))}]
+                :on-click #(actions/set-muted! (not muted?))}]
       [:button {:label (if speaker-muted? "Undeafen" "Deafen")
-                :on-click #(av/set-speaker-muted! (not speaker-muted?))}]
+                :on-click #(actions/set-speaker-muted! (not speaker-muted?))}]
       ;; Only offered when there is a camera to turn on. Nothing is more
       ;; annoying than a control that does nothing and does not say why.
       (when has-camera?
         [:button {:label (if camera? "Stop video" "Start video")
-                  :on-click #(av/set-camera! (not camera?))}])
+                  :on-click #(actions/set-camera! (not camera?))}])
       [:button {:label "Leave" :on-click #(actions/leave-call!)}]]
-     (when-let [e @av/media-error]
+     (when-let [e (actions/media-error)]
        [:dim-label {:label (str "⚠ " e)}])]))
 
 (defn- call-tile
@@ -157,7 +157,7 @@
   over. Naming both keeps a portrait phone from making its tile tall enough to
   push the row off the screen — the picture is fitted inside, never stretched."
   [width key]
-  (let [mine? (= av/local-feed key)]
+  (let [mine? (= (actions/local-feed) key)]
     [:vbox {:key key :spacing 2}
      ;; `:upscale` because a tile is a slot the layout sized, not a picture
      ;; sitting at whatever the camera happened to send. Without it a 480-wide
@@ -175,12 +175,12 @@
   A call with no video is the normal case and should look like one — a row of
   empty frames would suggest something had failed to load.
 
-  Both cells this reads are what subscribe it: `av/tiles` for who is on
+  Both cells this reads are what subscribe it: `actions/tiles` for who is on
   screen, and the window width so the tiles follow a window being dragged.
   Without either it would lay itself out once, on the first frame, and keep
   that shape for the rest of the call."
   []
-  (let [[width rows] (av/tile-rows)]
+  (let [[width rows] (actions/tile-rows)]
     [:vbox {:key :call-wall :spacing 6}
      ;; A seq, not a vector: children splice, and a vector would be read as one
      ;; more hiccup element — which an empty one is not.
@@ -220,7 +220,7 @@
      ;; We are in a call, but in a different room. Say which, since the
      ;; controls are not on this screen to be found by looking.
      (actions/in-call?)
-     [:dim-label {:label (str "In a call in " (:channel @av/local-call))}]
+     [:dim-label {:label (str "In a call in " (:channel (actions/local-call)))}]
 
      :else nil)])
 
@@ -500,10 +500,10 @@
     (actions/open-channel! channel))
   (reset! cells/jump-to id)
   (reset! cells/highlight id)
-  (platform/after! settle (fn [] (reset! cells/jump-to nil)))
+  (actions/after! settle (fn [] (reset! cells/jump-to nil)))
   ;; The highlight only clears itself: a later jump elsewhere owns the
   ;; highlight from then on.
-  (platform/after! linger (fn [] (when (= id @cells/highlight)
+  (actions/after! linger (fn [] (when (= id @cells/highlight)
                                    (reset! cells/highlight nil)))))
 
 (defn- summarise
@@ -563,7 +563,7 @@
   is still one plain label — the row is only paid for where it is needed."
   [j [kind value] system?]
   (if (= :link kind)
-    [:link {:key j :label value :on-click #(platform/open-url! value)}]
+    [:link {:key j :label value :on-click #(actions/open-url! value)}]
     (let [pieces (glyphs/runs (str/trim value))]
       (if (glyphs/emoji? pieces)
         ;; Runs alternate text and picture, so this gap only ever falls either
@@ -655,7 +655,7 @@
        ;; terminal can draw a picture there is a face after all, hung beside
        ;; the whole message rather than off its heading — `message-row` has it.
        (when-not @terminal?
-         (let [src @(actions/avatar-path (:actor m))]
+         (let [src (actions/avatar-path (:actor m))]
            ;; One profile, two gestures, and no card hung under the face: the
            ;; pointer opens the dialog and the press pins it. What makes that
            ;; work is the dialog being non-modal while the pointer is what is
@@ -663,10 +663,10 @@
            [:avatar (cond-> {:label (:from m)
                              :src (or src "")
                              :size face-size
-                             :on-click #(profile/open! (:from m) (:actor m))}
+                             :on-click #(actions/profile-open! (:from m) (:actor m))}
                       (actions/desktop?)
-                      (assoc :on-hover #(profile/hover! (:from m) (:actor m))
-                             :on-unhover #(profile/unhover! (:from m))))]))
+                      (assoc :on-hover #(actions/profile-hover! (:from m) (:actor m))
+                             :on-unhover #(actions/profile-unhover! (:from m))))]))
        ;; The name carries the row, so it is set at body size in the plain
        ;; text colour: dimmed caption made the one thing you scan a column
        ;; for the faintest thing on it.
@@ -725,7 +725,7 @@
        ;; wakes this row for its own pictures landing and not for everyone's.
        (doall
         (for [url (:images m)]
-          (when-let [path @(actions/image-path url)]
+          (when-let [path (actions/image-path url)]
             [:image {:key url
                      :src path
                      :max-height (preview-height)
@@ -791,7 +791,7 @@
      (if (terminal-face?)
        [:hbox {:key :faced :spacing 8}
         [:vbox {:key :face :width-request face-size}
-         (when-let [path @(actions/avatar-path (:actor m))]
+         (when-let [path (actions/avatar-path (:actor m))]
            [:image {:key :picture
                     :src path
                     :max-width face-size

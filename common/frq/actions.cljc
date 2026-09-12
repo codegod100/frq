@@ -112,3 +112,30 @@
 (defn start-edit! [& args] (call :start-edit! args))
 (defn toggle-reaction! [& args] (call :toggle-reaction! args))
 (defn unhover-reaction! [& args] (call :unhover-reaction! args))
+
+;; ------------------------------------------------------ the rest of a call
+;;
+;; The media plane's own state, which is not a cell here because it is not
+;; state this app holds: it lives in `frq.av`, which wraps a MoQ session, the
+;; codecs and the devices. A phone installs none of it.
+
+(defn local-call [] (call :local-call []))
+(defn local-feed [] (call :local-feed []))
+(defn media-error [] (call :media-error []))
+(defn tiles [& args] (call :tiles args))
+(defn tile-rows [& args] (call :tile-rows args))
+(defn set-muted! [& args] (call :set-muted! args))
+(defn set-speaker-muted! [& args] (call :set-speaker-muted! args))
+(defn set-camera! [& args] (call :set-camera! args))
+
+;; --------------------------------------------------------------- platform
+
+(defn after! [& args] (call :after! args))
+(defn open-url! [& args] (call :open-url! args))
+
+;; ---------------------------------------------------------------- profile
+
+(defn profile-hover! [& args] (call :profile-hover! args))
+(defn profile-unhover! [& args] (call :profile-unhover! args))
+(defn profile-open! [& args] (call :profile-open! args))
+

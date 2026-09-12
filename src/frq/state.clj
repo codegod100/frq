@@ -1980,10 +1980,18 @@
   :call-available? av/available?
   :desktop? platform/desktop?
   :quit! platform/quit!
-  :hovering (fn [] @profile/hovering)
-  :viewing (fn [] @profile/viewing)
   :avatar-path nil
   :image-path nil
+  :local-call (fn [] @av/local-call)
+  :local-feed (fn [] av/local-feed)
+  :media-error (fn [] @av/media-error)
+  :tiles av/tiles
+  :tile-rows av/tile-rows
+  :set-muted! av/set-muted!
+  :set-speaker-muted! av/set-speaker-muted!
+  :set-camera! av/set-camera!
+  :after! platform/after!
+  :open-url! platform/open-url!
   :accept-policy! accept-policy!
   :close-picker! close-picker!
   :hover-reaction! hover-reaction!

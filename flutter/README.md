@@ -135,7 +135,27 @@ screen rather than the subtree that read it. Fine at this size.
 reads is `frq.cells` and what it calls is `frq.actions`, and each platform
 fills those in: `frq.state`'s reducers on the desktop, dart:io here.
 
-## Two screens shared, and where the renderer stops
+## Three screens shared, all drawn on both
+
+`frq.screens.connect`, `frq.screens.chats` and `frq.screens.chat` are in
+`common/`, with the cells under them in `frq.cells`, the derivations in
+`frq.rooms`, the backend metrics in `frq.metrics` and everything a screen
+cannot do itself behind `frq.actions`. `frq.app` is 621 lines and was 1,744.
+
+What `Length::Fill` means took four goes to get right, and the rule it ended
+at is worth stating once: a child that fills is Flutter's `Expanded`, the
+question is recursive — a plain `:vbox` holding a `:scroll` fills too — a Row
+holding a filling column must `stretch` and be given a height, and a pane that
+fills a column takes the row's width as well, or it is as wide as its longest
+line. Prose in a row is `Flexible` rather than `Expanded`, because Expanded
+hands out equal shares and a button label then wraps down the middle of a
+word.
+
+And `:width-request 0` means no request. Every number is truthy in Clojure, so
+taking it at face value gave the message list a `SizedBox` of zero width and
+an empty screen.
+
+## The older note, kept because the lesson is general
 
 `frq.screens.connect` and `frq.screens.chats` are in `common/` now, with the
 cells under them in `frq.cells`, the derivations in `frq.rooms`, the backend

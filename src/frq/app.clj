@@ -617,5 +617,16 @@
 ;; neither the reaction nor the cache. It installs nothing and the screens
 ;; draw what they draw before a face arrives.
 (actions/install!
- {:avatar-path avatar-path
-  :image-path image-path})
+ ;; The value rather than the cell: a platform without a cache answers nil,
+ ;; and `@nil` is not a thing. Derefing the reaction here keeps the desktop's
+ ;; per-row waking, because the deref still happens inside the render.
+ {:avatar-path (fn [actor] @(avatar-path actor))
+  :image-path (fn [url] @(image-path url))
+  ;; The profile half lives here rather than in frq.state, which does not
+  ;; require frq.profile — who is hovered and whose card is open is a question
+  ;; about the screen, not about the connection.
+  :hovering (fn [] @profile/hovering)
+  :viewing (fn [] @profile/viewing)
+  :profile-hover! profile/hover!
+  :profile-unhover! profile/unhover!
+  :profile-open! profile/open!})

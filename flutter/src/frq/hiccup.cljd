@@ -31,6 +31,17 @@
             [frq.theme :as t]))
 
 
+(defn- width-of
+  "A `:width-request`, or nil when there is none to honour.
+
+  Zero means no request, not a width of nothing — the chat screen writes
+  `(if show-users? (messages-width) 0)` and every number is truthy in Clojure,
+  so taking it at face value gave the message list a SizedBox of zero and an
+  empty screen."
+  [p]
+  (let [w (:width-request p)]
+    (when (and (number? w) (pos? w)) (double w))))
+
 (defn- dbl [x default]
   (cond (number? x) (double x)
         :else default))
@@ -68,7 +79,7 @@
 (defn- body [node]
   (let [p (second node)] (if (map? p) (drop 2 node) (drop 1 node))))
 
-(declare render)
+(declare render fills-row?)
 
 (defn- fills-row?
   "Whether a node takes the width its row has left over.
@@ -80,18 +91,75 @@
   (and (vector? node)
        (= :entry (first node))
        (let [p (second node)]
-         (or (not (map? p)) (nil? (:width-request p)) (:hexpand p)))))
+         (or (not (map? p)) (nil? (width-of p)) (:hexpand p)))))
+
+(declare body)
+
+(defn- prose?
+  "Whether a subtree is prose — text that should wrap — rather than controls.
+
+  The distinction matters because of what Flexible does: it hands every such
+  child an equal share of the row, and a child whose natural size is larger
+  then shrinks into it. That is right for a message body, which wraps to fit,
+  and wrong for a button, whose label then wraps down the middle of the word.
+  A header of four buttons came out reading Ch/at/s."
+  [node]
+  (cond
+    (seq? node) (boolean (some prose? node))
+    (not (vector? node)) false
+    :else
+    (let [tag (first node)]
+      (cond
+        (contains? #{:button :entry :checkbutton :image :avatar :emoji :reaction} tag) false
+        (contains? #{:label :dim-label :text :title :title-2 :link} tag) true
+        (contains? #{:vbox :hbox :card} tag)
+        (let [kids (let [p (second node)] (if (map? p) (drop 2 node) (drop 1 node)))]
+          (and (some prose? kids)
+               (not (some #(and (vector? %)
+                                (contains? #{:button :entry :checkbutton} (first %)))
+                          kids))))
+        :else false))))
+
+(defn- flexes-in-row?
+  "Whether a node should be given the width a row has left, loosely.
+
+  iced wraps a line of text at whatever width is available; Flutter's Text in
+  an unbounded Row does not wrap at all, and the longest message then decides
+  the width of the conversation and overflows off the right. So prose in a row
+  is Flexible — it takes what is there and wraps inside it, rather than
+  insisting on it the way Expanded does."
+  [node]
+  (prose? node))
 
 (defn- fills-column?
   "Whether a node takes the height its column has left over.
 
   `:fill-height` is Length::Fill down the other axis — Expanded, not a taller
-  mainAxisSize. `:scroll` is excluded: it returns an Expanded of its own."
+  mainAxisSize. A `:scroll` fills by definition; it is what the space is left
+  over *for*.
+
+  And it is recursive, which is the part that is easy to miss: a plain `:vbox`
+  holding a `:scroll` fills too, because the scroll inside it needs a height
+  and a column sized to its contents hands its children an unbounded one. The
+  chat screen is three such wrappers deep, and each one has to pass the
+  question up or the innermost Expanded lands in unbounded space —
+  \"RenderFlex children have non-zero flex but incoming height constraints are
+  unbounded\", which paints nothing."
   [node]
   (and (vector? node)
-       (not= :scroll (first node))
-       (let [p (second node)]
-         (and (map? p) (:fill-height p)))))
+       (let [tag (first node)
+             p (second node)]
+         (or (= :scroll tag)
+             (and (map? p) (:fill-height p))
+             ;; Containers pass it up; `:page` does not, because a page
+             ;; scrolls and nothing inside a scroll can take what is left.
+             ;;
+             ;; `:hbox` is in the list for the chat screen: its message band is
+             ;; a fill-height column sitting in a row beside the people panel,
+             ;; so the row must be given a height before the column can take
+             ;; what is left of it.
+             (and (contains? #{:vbox :card :hbox} tag)
+                  (boolean (some fills-column? (body node))))))))
 
 (defn- children
   "Flatten seqs, drop nils. `(for [...] ...)` in a component yields a seq in
@@ -116,6 +184,15 @@
              (cond (nil? n) acc
                    (seq? n) (reduce conj! acc (flexed fills? n))
                    (fills? n) (conj! acc (m/Expanded .child (render n)))
+                   ;; A pane that fills the column takes the row's width too:
+                   ;; the message list sits in a row beside the people panel,
+                   ;; and left to its natural width it is as wide as its
+                   ;; longest line — which is one URL and a screen and a half
+                   ;; of overflow.
+                   (and (identical? fills? fills-row?) (fills-column? n))
+                   (conj! acc (m/Expanded .child (render n)))
+                   (and (identical? fills? fills-row?) (flexes-in-row? n))
+                   (conj! acc (m/Flexible .child (render n)))
                    :else (conj! acc (render n))))
            (transient []) nodes)))
 
@@ -174,10 +251,18 @@
    :context ctx
    (let [p (props node)
          kids (children (body node))
-         col (fn [sp cs] (m/Column .crossAxisAlignment m/CrossAxisAlignment.start
-                                   .mainAxisSize m/MainAxisSize.min
-                                   .spacing sp
-                                   .children cs))]
+         ;; One column builder for every container, so the rule about what
+         ;; fills is applied in one place: children that take what is left are
+         ;; wrapped, and a column holding one asks for the whole height rather
+         ;; than for its contents. Doing this only in `:vbox` left a `:card`
+         ;; and a `:scroll` handing their children unbounded space.
+         col (fn [sp nodes]
+               (m/Column .crossAxisAlignment m/CrossAxisAlignment.start
+                         .mainAxisSize (if (some fills-column? nodes)
+                                         m/MainAxisSize.max
+                                         m/MainAxisSize.min)
+                         .spacing sp
+                         .children (flexed fills-column? nodes)))]
      (case tag
        :vbox
        ;; `:fill-height` is what pins a tab bar to the bottom: the band above
@@ -185,7 +270,10 @@
        ;; contents has no rest to give.
        (let [c (m/Column
                 .crossAxisAlignment m/CrossAxisAlignment.start
-                .mainAxisSize (if (:fill-height p)
+                ;; Max when something inside wants the space left over: a
+                ;; column sized to its contents has none to give.
+                .mainAxisSize (if (or (:fill-height p)
+                                      (some fills-column? (body node)))
                                 m/MainAxisSize.max
                                 m/MainAxisSize.min)
                 .spacing (dbl (:spacing p) 0.0)
@@ -193,8 +281,8 @@
              c (if-let [mg (:margin p)]
                  (m/Padding .padding (m/EdgeInsets.all (dbl mg 0.0)) .child c)
                  c)]
-         (if-let [w (:width-request p)]
-           (m/SizedBox .width (dbl w 0.0) .child c)
+         (if-let [w (width-of p)]
+           (m/SizedBox .width w .child c)
            c))
 
        ;; `page` is jolt-cosmic's scrollable container, centred and capped.
@@ -214,18 +302,34 @@
                 .constraints (m/BoxConstraints .maxWidth (dbl (:max-width p) 520.0))
                 .child (m/Padding
                         .padding (m/EdgeInsets.all t/space-s)
-                        .child (col t/space-xs kids)))))
+                        .child (col t/space-xs (body node))))))
 
+       ;; `:wrap true` is a row that runs onto the next line — how a message
+       ;; body lays its words, its links and its emoji out, since a line of
+       ;; text is a row of runs here rather than one string. Flutter calls it
+       ;; Wrap. Without it the longest message decided the width of the
+       ;; conversation and the rest overflowed off the right.
        :hbox
-       (m/Row
-        .crossAxisAlignment m/CrossAxisAlignment.center
+       (if (true? (:wrap p))
+         (m/Wrap
+          .spacing (dbl (:spacing p) 0.0)
+          .runSpacing (dbl (:spacing p) 0.0)
+          .crossAxisAlignment m/WrapCrossAlignment.center
+          .children kids)
+         (m/Row
+        ;; Stretch when a child fills vertically: a Row hands its children a
+        ;; loose height by default, and a column that wants what is left of it
+        ;; needs a tight one.
+        .crossAxisAlignment (if (some fills-column? (body node))
+                              m/CrossAxisAlignment.stretch
+                              m/CrossAxisAlignment.center)
         ;; A row holding something that fills has to be given the width to
         ;; divide, so it is max rather than min whenever a child asks.
         .mainAxisSize (if (some fills-row? (body node))
                         m/MainAxisSize.max
                         m/MainAxisSize.min)
-        .spacing (dbl (:spacing p) 0.0)
-        .children (flexed fills-row? (body node)))
+          .spacing (dbl (:spacing p) 0.0)
+          .children (flexed fills-row? (body node))))
 
        :label     (txt ctx (:label p "") t/text-body t/on-bg)
        :dim-label (txt ctx (:label p "") t/text-caption t/dim)
@@ -251,7 +355,7 @@
         .decoration (m/BoxDecoration
                      .color t/card
                      .borderRadius (m/BorderRadius.circular t/radius-s))
-        .child (col (dbl (:spacing p) t/space-xxs) kids))
+        .child (col (dbl (:spacing p) t/space-xxs) (body node)))
 
        :separator (m/Divider .height 1.0 .thickness 1.0 .color t/divider)
 
@@ -311,7 +415,7 @@
        (let [on-change (:on-change p)
              on-activate (:on-activate p)
              rows (:rows p)
-             w (:width-request p)
+             w (width-of p)
              field (m/TextField
           .controller (controller-for (:key p) (:text p))
           .onChanged (when on-change #(on-change %))
@@ -345,7 +449,7 @@
          ;; Column hands its children bounded width — and a row wants the
          ;; width-request the caller already writes.
          (if w
-           (m/SizedBox .width (dbl w 200.0) .child field)
+           (m/SizedBox .width w .child field)
            field))
 
        :emoji
@@ -386,10 +490,13 @@
            (m/InkWell .onTap #(on) .child img)
            img))
 
+       ;; No Expanded of its own: `fills-column?` says a scroll takes what is
+       ;; left, so its parent column wraps it — and wrapping here as well put
+       ;; two ParentDataWidgets on one RenderObject, which Flutter calls
+       ;; "competing" and then draws nothing.
        :scroll
-       (m/Expanded
-        .child (m/SingleChildScrollView
-                .child (col (dbl (:spacing p) 0.0) kids)))
+       (m/SingleChildScrollView
+        .child (col (dbl (:spacing p) 0.0) (body node)))
 
        ;; A tag this backend has not grown yet still shows its children — which
        ;; is what libvidya did and what jolt-cosmic kept. The marker is here so
