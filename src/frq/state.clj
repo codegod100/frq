@@ -69,19 +69,13 @@
 ;; How much backlog to ask for when the server did not volunteer any.
 (def history-limit 100)
 
-(defonce draft (atom ""))
-;; The message the draft is answering, as {:id :from :text}, or nil. Held whole
-;; rather than as an id alone so the compose bar can say who is being answered
-;; without going looking for them.
-(defonce replying-to (atom nil))
+(def draft cells/draft)
+(def replying-to cells/replying-to)
 
 (defn reply-to! [m] (reset! replying-to (select-keys m [:id :from :text])))
 (defn cancel-reply! [] (reset! replying-to nil))
 
-;; The message the draft is a rewrite of, as `{:channel :id}`, or nil when the
-;; box is being used for something new. Only the id is kept: what is being
-;; rewritten is in the box, and the line on screen is the thing it will replace.
-(defonce editing (atom nil))
+(def editing cells/editing)
 
 ;; The message the emoji picker is choosing for, as `{:channel :id}`, or nil
 ;; when it is closed. The picker is a panel over the compose bar rather than a
@@ -97,22 +91,11 @@
 ;; so this is a screen of its own rather than a layer over the chat.
 (defonce lightbox (atom nil))            ; {:path :url}
 
-;; Whether the chat screen is showing who is in the channel. Off by default:
-;; the panel costs the conversation a column, and the reader is here for the
-;; conversation.
-(defonce show-users? (atom false))
+(def show-users? cells/show-users?)
 
 (defn toggle-users! [] (swap! show-users? not))
 
-;; Whether the wide window is holding the chats list back, leaving the whole
-;; row to the conversation. Only a wide window has anything to hide: below
-;; `wide-width` the list and the conversation already take turns, and hiding
-;; the list there would be hiding the only way to another room.
-;;
-;; Saved with the other settings rather than reset per launch: it is a choice
-;; about how this screen is read, and a reader who wants the conversation
-;; whole wants it whole again tomorrow.
-(defonce hide-chat-list? (atom false))
+(def hide-chat-list? cells/hide-chat-list?)
 
 (declare save-prefs!)
 
@@ -120,12 +103,7 @@
   (swap! hide-chat-list? not)
   (save-prefs!))
 
-;; Whether the conversation is sharing its room with the overview strip —
-;; every channel's last lines in one list, under the one you are reading.
-;; Saved for the same reason as the fold above it: it is a choice about how
-;; this screen is laid out, and a layout a reader chose should be the one they
-;; come back to.
-(defonce overview? (atom false))
+(def overview? cells/overview?)
 
 (defn toggle-overview! []
   (swap! overview? not)
@@ -189,11 +167,8 @@
   (or (= :chat @screen)
       (and (wide?) (= :chats @screen))))
 
-;; Whether the chat view is showing the newest line, and a counter the view
-;; watches to be told to go back to it. A counter rather than a flag: a flag
-;; would need clearing, and there is no frame in which to clear it.
-(defonce at-present? (atom true))
-(defonce jump-tick (atom 0))
+(def at-present? cells/at-present?)
+(def jump-tick cells/jump-tick)
 
 ;; How a backend answers "did that scroll end at the end?".
 ;;
@@ -1340,20 +1315,7 @@
 
 ;; ------------------------------------------------------------------ pasting
 
-;; The picture waiting to go out with the next line, or nil:
-;;
-;;   {:path  the copy on disk, which is what the preview paints
-;;    :url   where freeq serves it, once the upload has landed
-;;    :status :uploading | :ready}
-;;
-;; Held apart from the draft rather than written into it. A link pasted into
-;; the entry is a line of unreadable text in the middle of whatever the reader
-;; was typing, and it puts their cursor somewhere they did not put it. The
-;; picture is a picture until it is sent; the draft stays theirs.
-;;
-;; One at a time — a second paste replaces the first, which is what a reader
-;; who pasted the wrong thing means by pasting the right one.
-(defonce attachment (atom nil))
+(def attachment cells/attachment)
 
 ;; Each paste gets a file of its own rather than overwriting the last: the
 ;; preview is painted from the file, and an upload may still be reading it.
@@ -2040,4 +2002,21 @@
   :connected? connected?
   :join! join!
   :open-channel! open-channel!
-  :leave-channel! leave-channel!})
+  :leave-channel! leave-channel!
+  :send-draft! send-draft!
+  :cancel-edit! cancel-edit!
+  :cancel-reply! cancel-reply!
+  :clear-attachment! clear-attachment!
+  :open-image-picker! open-image-picker!
+  :paste-image! paste-image!
+  :jump-to-present! jump-to-present!
+  :scrolled! scrolled!
+  :toggle-users! toggle-users!
+  :toggle-chat-list! toggle-chat-list!
+  :toggle-overview! toggle-overview!
+  :wide? wide?
+  :member-count member-count
+  :start-call! start-call!
+  :in-call? av/in-call?
+  :call-in av/call-in
+  :call-available? av/available?})

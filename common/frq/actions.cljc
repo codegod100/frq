@@ -37,3 +37,47 @@
 (defn join! [name] (call :join! [name]))
 (defn open-channel! [name] (call :open-channel! [name]))
 (defn leave-channel! [name] (call :leave-channel! [name]))
+
+;; ------------------------------------------------------------------- chat
+;;
+;; The conversation screen's half. Commands where the screen asks for
+;; something to happen, queries where it asks what is true — `wide?` is the
+;; window's width and `member-count` is the server's answer, and neither is a
+;; cell any screen could read for itself.
+
+(defn send-draft! [] (call :send-draft! []))
+(defn cancel-edit! [] (call :cancel-edit! []))
+(defn cancel-reply! [] (call :cancel-reply! []))
+(defn clear-attachment! [] (call :clear-attachment! []))
+(defn open-image-picker! [] (call :open-image-picker! []))
+(defn paste-image! [] (call :paste-image! []))
+(defn jump-to-present! [] (call :jump-to-present! []))
+(defn scrolled! [& args] (call :scrolled! args))
+(defn toggle-users! [] (call :toggle-users! []))
+(defn toggle-chat-list! [] (call :toggle-chat-list! []))
+(defn toggle-overview! [] (call :toggle-overview! []))
+
+(defn wide? [] (boolean (call :wide? [])))
+(defn member-count [name] (call :member-count [name]))
+
+;; ------------------------------------------------------------------ calls
+;;
+;; The media plane, which a phone has none of — `frq.av/available?` says so on
+;; the desktop and nothing installs these here, so the call bar renders its
+;; unavailable shape rather than being special-cased in the screen.
+
+(defn start-call! [] (call :start-call! []))
+(defn in-call? [] (boolean (call :in-call? [])))
+(defn call-in [name] (call :call-in [name]))
+(defn call-available? [] (boolean (call :call-available? [])))
+
+;; ----------------------------------------------------------------- assets
+;;
+;; Where a face or a picture is on disk, once it is. Both are a fetch and a
+;; cache on the desktop, behind a glimmer reaction so one arriving wakes only
+;; the rows that read it; the phone has neither yet and answers nil, which the
+;; screens already treat as "not here".
+
+(defn avatar-path [actor] (call :avatar-path [actor]))
+(defn image-path [url] (call :image-path [url]))
+
