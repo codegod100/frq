@@ -15,7 +15,7 @@
   and keeps it, so glimmer's loop runs on a worker. The timers handed to
   `start!` are glimmer-cosmic's, which run on that worker.
 
-    just run"
+    just cosmic run"
   (:require [frq.app :as app]
             [frq.platform :as platform]
             [frq.state :as s]

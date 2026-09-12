@@ -54,15 +54,15 @@ Android is logcat.
 The app:
 
 ```bash
-just run
+just cosmic run
 ```
 
 Every recipe lives in the `justfile` itself. Each one that runs frq re-enters
-`nix develop` and comes back to the same recipe, so `just run` and
-`nix develop --command just run` are one code path rather than two. Nothing has
-to be installed for that but Nix.
+`nix develop` and comes back to the same recipe, so `just cosmic run` and
+`nix develop --command just cosmic run` are one code path rather than two.
+Nothing has to be installed for that but Nix.
 
-`just run` is `jolt -m frq.cosmic` inside `nix develop`, with
+`just cosmic run` is `jolt -m frq.cosmic` inside `nix develop`, with
 `LD_LIBRARY_PATH` pointed at the shell's `JOLT_NATIVE_LIB` — the flake's build
 of [jolt-native](https://gitlab.com/nandithebull/jolt-native), which carries
 the shared objects this client loads: `libjoltcosmic`, the retained-tree ABI
@@ -133,8 +133,9 @@ answer, because they are counted in rows of chrome rather than in lengths: a
 window's row is 34 points and a terminal's is one cell. `chrome-row` is where
 that is said, and `frq.tui` sets it.
 
-`just tui` is `just run`'s two halves with the other backend under them: this
-tree's source on the flake's everything-else, in the dev shell. jolt-native
+`just tui` is `just cosmic run`'s two halves with the other backend under
+them: this tree's source on the flake's everything-else, in the dev shell.
+jolt-native
 carries both native libraries and both Jolt sides — glimmer-cosmic for the
 window, glimmer-tui for the terminal — so one input answers for either, and
 nothing here needs a checkout beside the tree.

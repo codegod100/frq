@@ -93,8 +93,8 @@ just flutter-desktop run # and the window
 ### The desktop one
 
 There are two desktop GUIs now, and they are not a fallback for each other:
-`just run` is libcosmic under jolt, and `just flutter-desktop` is this tree
-under Flutter's Linux target. Same screens out of `common/frq/screens/`, two
+`just cosmic run` is libcosmic under jolt, and `just flutter-desktop` is this
+tree under Flutter's Linux target. Same screens out of `common/frq/screens/`, two
 renderers — `glimmer-cosmic` walks the hiccup on one side and `frq.hiccup`
 emits Flutter widgets on the other.
 
@@ -111,8 +111,8 @@ Flutter's engine artifacts are network. What it does *not* need is the
 writable-`ANDROID_HOME` dance, since nothing here writes into the store — so
 there is no `flutter/.home` on this path.
 
-nixGL off NixOS, for the reason `just run` needs it and `just tui` does not:
-Flutter paints through GL and the driver that can do that is the host's.
+nixGL off NixOS, for the reason `just cosmic run` needs it and `just tui` does
+not: Flutter paints through GL and the driver that can do that is the host's.
 
 `linux/` is the Flutter template's GTK runner, renamed — `frq` rather than
 `cljd_flutter`, and `uk.nandi.frq` rather than `com.example.cljd_flutter`, so

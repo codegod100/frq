@@ -51,10 +51,11 @@ because every backend that APK could paint with is retired.
 `just flutter-desktop`, out of `.#flutter-desktop` (the same clojure and
 flutter, with cmake, ninja, pkg-config and gtk3 where the JDK and the SDK are).
 Impure for the network half of the same reasons and no writable-SDK dance, since
-nothing writes into the store. nixGL off NixOS, like `just run`.
+nothing writes into the store. nixGL off NixOS, like `just cosmic run`.
 
-So there are two desktop GUIs and they are both first-class: `just run` is
-libcosmic under jolt, `just flutter-desktop` is Flutter's Linux target over
+So there are two desktop GUIs and they are both first-class: `just cosmic
+run` is libcosmic under jolt, `just flutter-desktop` is Flutter's Linux target
+over
 `frq.hiccup`. Same screens out of `common/frq/screens/`, two renderers. jvui and
 Vidya were experiments and are gone; libcosmic is a desktop window and does not
 cross to a phone, which is what the Flutter half is for.

@@ -7,7 +7,7 @@
 # it and come back to this same recipe; inside, hand jolt the deps overrides and
 # the library path the shell exported. The re-entry test is JOLT_NATIVE_LIB,
 # which only the shell sets — no flag to forget, and no second code path for
-# someone who runs `nix develop --command just run` by hand.
+# someone who runs `nix develop --command just cosmic run` by hand.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -35,8 +35,8 @@ default:
 # Re-read the COSMIC theme into the APK.
 #
 # libcosmic asks cosmic-config for the accent and the surfaces at run time, so
-# `just run` already follows COSMIC Settings as it changes. A phone has no
-# cosmic-config, so the APK carries them instead — read here, on the machine
+# `just cosmic run` already follows COSMIC Settings as it changes. A phone has
+# no cosmic-config, so the APK carries them instead — read here, on the machine
 # that has them, and compiled in. That is the one real difference between the
 # two, and it is why the generated file is in git rather than gitignored: a
 # checkout on a machine with no COSMIC still builds.
@@ -179,12 +179,22 @@ apk action="build":
 # window is libcosmic and the terminal is libjolttui, and those are the two.
 #
 # The app: this tree's source on the flake's everything-else, in the dev shell.
-run *args:
+#
+# Named for the backend rather than for the verb, the way `flutter-desktop`
+# is: two desktop GUIs, neither of them the default one.
+#
+#   just cosmic run [args...]       open the window
+cosmic action="run" *args:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{justfile_directory()}}"
+    if [ "{{action}}" != "run" ]; then
+        echo "usage: just cosmic run [args...]" >&2
+        exit 1
+    fi
+    shift
     if [ -z "${JOLT_NATIVE_LIB:-}" ]; then
-        exec {{nix}} develop . --max-jobs {{jobs}} --command just run "$@"
+        exec {{nix}} develop . --max-jobs {{jobs}} --command just cosmic run "$@"
     fi
 
     deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
@@ -197,11 +207,11 @@ run *args:
 
     exec "${runner[@]}" jolt -Sdeps "$deps" -m frq.cosmic "$@"
 
-# `run` with the other backend under it. Only libjolttui: `frq.app` names no
+# `cosmic` with the other backend under it. Only libjolttui: `frq.app` names no
 # backend at all any more, and `frq.tui` requires glimmer-tui so the one
 # installed is the terminal.
 #
-# No nixGL here, unlike `run`: a terminal wants nothing from the host's GL
+# No nixGL here, unlike `cosmic`: a terminal wants nothing from the host's GL
 # driver, which is the reason this output exists on machines that have none.
 #
 # What may appear in common/, checked — the half of the tree both backends
@@ -256,7 +266,8 @@ nrepl *args:
 # `jolt` in the repo root does not work on its own: deps.edn carries
 # :jolt/native, so every invocation here loads libvidya and libjoltmoq before it
 # reads a line, and dies naming the library if the loader cannot find them. So
-# this is `run` without the app — and `run` is this with a window's worth of
+# this is `cosmic` without the app — and `cosmic` is this with a window's
+# worth of
 # extra care about the GL driver.
 #
 # A jolt with the native libraries under it: a REPL, or `just repl nrepl-server`.
@@ -323,8 +334,8 @@ gen-moq lib="":
 # The other desktop GUI: the same screens, painted by Flutter instead of
 # libcosmic.
 #
-# `just run` and this one are two frontends over one tree, and the split is
-# the same one the APK already draws. Everything under `common/` — the
+# `just cosmic run` and this one are two frontends over one tree, and the
+# split is the same one the APK already draws. Everything under `common/` — the
 # screens, the cells, `frq.io` — is shared; what differs is who paints it and
 # who answers the host. So this recipe is `just apk` with the Android half
 # taken out: the same `clojure -M:cljd compile` over the same flutter/src,
@@ -336,7 +347,7 @@ gen-moq lib="":
 # writable-ANDROID_HOME dance — nothing here writes into the store — so there
 # is no `flutter/.home` on this path.
 #
-# nixGL for the reason `run` needs it and `tui` does not: Flutter paints
+# nixGL for the reason `cosmic` needs it and `tui` does not: Flutter paints
 # through GL, and off NixOS the driver is the host's.
 #
 #   just flutter-desktop            build the debug bundle

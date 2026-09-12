@@ -33,7 +33,7 @@
  ;; libopus, H.264 from openh264 through a shim, and the devices from V4L2
  ;; and ALSA. Signaling was always IRC and still lives in src/frq/av.clj.
  ;;
- ;;   just run
+ ;;   just cosmic run
  :jolt/native [;; The transport half of a call: MoQ over QUIC, the one
                ;; piece with no C implementation anywhere. Fetched from
                ;; moq-ffi's release rather than built — building it means a

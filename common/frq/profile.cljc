@@ -15,8 +15,8 @@
   a face, the grace period for crossing from the face to the card, and the card
   reporting its own pointer. That used to be jolt's alone, on the reading that
   a pointer meant libcosmic — but `just flutter-desktop` is a window with a
-  mouse in it as much as `just run` is, and the machine is a few atoms and a
-  timer with nothing host-shaped in it. The timer is the one thing that was,
+  mouse in it as much as `just cosmic run` is, and the machine is a few atoms
+  and a timer with nothing host-shaped in it. The timer is the one thing that was,
   and `frq.io/after!` is where that went. Whether there is a pointer at all is
   still the host's answer: `actions/desktop?`.
 

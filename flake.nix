@@ -39,7 +39,7 @@
 
     # The source half of jolt-native: the Jolt code under glimmer-backends/ that
     # binds the native objects, and the flake that builds them. This input is
-    # what `just run` builds against.
+    # what `just cosmic run` builds against.
     #
     # It carries both backends that are left — glimmer-cosmic over
     # libjoltcosmic for the window, glimmer-tui over libjolttui for the
@@ -645,8 +645,8 @@
           # The Flutter desktop GUI, built rather than run out of the tree.
           #
           # `just flutter-desktop` is the working-tree loop and this is its
-          # opposite number, the same way `nix build .#frq` is `just run`'s: the
-          # source is the flake's, the output is a store path, and the build is
+          # opposite number, the same way `nix build .#frq` is `just cosmic
+          # run`'s: the source is the flake's, the output is a store path, and the build is
           # a sandbox with no network. It is the first thing here that builds
           # purely — the APK cannot, because Gradle fetches as it goes.
           #
@@ -759,7 +759,7 @@
               '';
         });
 
-      # Where `just run` runs, and — because entering it realises what it
+      # Where `just cosmic run` runs, and — because entering it realises what it
       # names — what builds the half of frq that is not this working tree.
       #
       # The two halves, and the split is the whole point of the shell. The frq
@@ -779,7 +779,7 @@
       # this shell hands a builder are the same derivation.
       #
       # Nothing here says "nixbuild", though: it is a plain derivation, and
-      # where it gets built is the machine's business. The `run` recipe asks for
+      # where it gets built is the machine's business. The `cosmic` recipe asks for
       # the shell with --max-jobs 0, which is what sends it to the `builders`
       # entry rather than compiling egui on a laptop.
       devShells = forEachSystem (pkgs:
@@ -794,13 +794,13 @@
             # jolt, because the runtime frq is run by should be the flake's
             # too. nixGL for the same reason the launcher reaches for it — see
             # frqScript. just so the recipe runner comes from here too rather
-            # than the host — `nix develop` and then `just run` is the whole of
-            # what a machine with nix needs.
+            # than the host — `nix develop` and then `just cosmic run` is the
+            # whole of what a machine with nix needs.
             packages = [ jolt pkgs.just (nixGLFor pkgs) ];
 
             # Read by the recipes rather than baked into a wrapper: the frq
-            # source `just run` runs is the working tree, so the launcher has
-            # to live in that tree and the shell has to hand it its answers.
+            # source `just cosmic run` runs is the working tree, so the
+            # launcher has to live in that tree and the shell has to hand it its answers.
             # Naming these is also what makes the shell build them.
             JOLT_NATIVE_LIB = "${nativeAll}/lib";
             # Spelled out rather than shared with the packages block, which
@@ -959,9 +959,10 @@
             # pure Dart over the XDG directories.
             buildInputs = [ pkgs.gtk3 pkgs.glib ];
 
-            # Same reason `just run` reaches for it: Flutter paints through
-            # GL, and off NixOS the driver that can do that is the host's, not
-            # the store's. The recipe reads this exactly as `run` does.
+            # Same reason `just cosmic run` reaches for it: Flutter paints
+            # through GL, and off NixOS the driver that can do that is the
+            # host's, not the store's. The recipe reads this exactly as
+            # `cosmic` does.
             NIXGL = "${nixGLFor pkgs}/bin/nixGLIntel";
 
             # The `flutter` shell's, deliberately the same one and for the
