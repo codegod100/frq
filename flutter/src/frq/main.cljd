@@ -32,7 +32,6 @@
 
 (defonce ^:private lines (atom []))
 (defonce ^:private conn (atom nil))
-(defonce ^:private status (atom "Not connected"))
 
 (defn- note! [m]
   (swap! lines (fn [v] (vec (take-last 8 (conj v m))))))
@@ -52,7 +51,7 @@
   []
   (reset! cells/connecting? true)
   (reset! cells/error nil)
-  (reset! status (str "Connecting to " @cells/form-host "…"))
+  (reset! cells/status (str "Connecting to " @cells/form-host "…"))
   (reset! lines [])
   (try
     (let [sock (await (net/connect!
@@ -64,25 +63,29 @@
                                   (note! m)
                                   (when (= "001" (:command m))
                                     (reset! cells/connecting? false)
-                                    (reset! status
+                                    (reset! cells/status
                                             (str "Connected as " @cells/form-nick))))
                         :on-close (fn [why]
                                     (reset! cells/connecting? false)
-                                    (reset! status "Not connected")
+                                    (reset! cells/status "Not connected")
                                     (when why (reset! cells/error why)))}))]
       (reset! conn sock)
       (net/send-line! sock (str "NICK " @cells/form-nick))
       (net/send-line! sock (str "USER " @cells/form-nick " 0 * :frq")))
-    (catch Exception e
+    ;; Object, not Exception. Dart keeps Error and Exception in separate
+    ;; hierarchies, so a TypeError or a NoSuchMethodError is not an Exception
+    ;; and would leave `connecting?` true for ever — a spinner that never
+    ;; stops and no message saying why, which is exactly what this did.
+    (catch Object e
       (reset! cells/connecting? false)
-      (reset! status "Not connected")
+      (reset! cells/status "Not connected")
       (reset! cells/error (str e)))))
 
 (defn- disconnect! []
   (when-let [c @conn] (net/close! c))
   (reset! conn nil)
   (reset! cells/connecting? false)
-  (reset! status "Not connected"))
+  (reset! cells/status "Not connected"))
 
 (defonce ^:private handle (atom "nandi-test.bsky.social"))
 (defonce ^:private identity-out (atom nil))
@@ -97,57 +100,6 @@
     (catch Exception e
       (reset! identity-out [(str "failed: " e)]))))
 
-(defn- screen
-  "The phone's panels, in glimmer's tags.
-
-  NOT `frq.screens.connect` yet, and the reason is worth writing down rather
-  than leaving as a TODO: the extraction is done and the desktop renders the
-  shared file, but rendering it here paints nothing at all — no exception,
-  nothing in logcat, and the sibling widgets in the same `children` vector
-  disappear with it, which is what a Dart `Error` thrown while that vector is
-  being built looks like. `(catch Object ...)` around it did not surface one
-  either, so the failure is not where it appears to be.
-
-  What is already proven: `frq.cells` compiles under both compilers and holds
-  its values here — a probe read `cells/status` as \"Not connected\" and
-  `cells/form-nick` as \"frq-guest\" on the device. So the seam is sound and
-  what is left is one cljd-shaped bug between it and the screen."
-  []
-  [:page {:max-width 520}
-   [:title {:label "frq"}]
-   [:dim-label {:label "Painted by frq.hiccup in COSMIC's own theme."}]
-   [:card {}
-    [:title-2 {:label "Connection"}]
-    [:label {:label @status}]
-    [:hbox {:spacing 8}
-     [:button {:label "Connect" :kind :primary :on-click #(connect!)}]
-     [:button {:label "Disconnect" :destructive true :on-click #(disconnect!)}]]]
-   [:card {}
-    [:title-2 {:label "What the server said"}]
-    (if (empty? @lines)
-      [:dim-label {:label "nothing yet"}]
-      (for [[i m] (map-indexed vector @lines)]
-        [:label {:key i
-                 :label (str (:command m)
-                             (when-let [p (seq (:params m))]
-                               (str "  " (last p))))}]))]
-   [:card {}
-    [:title-2 {:label "Identity"}]
-    [:entry {:key :handle
-             :text @handle
-             :placeholder "alice.bsky.social"
-             :on-change #(reset! handle %)}]
-    [:button {:label "Resolve" :kind :primary :on-click #(resolve-identity!)}]
-    (when-let [out @identity-out]
-      (for [[i line] (map-indexed vector out)]
-        [:label {:key i :label line}]))]
-   [:card {}
-    [:title-2 {:label "Shared with the desktop"}]
-    [:label {:label (str "clock  " (clock/clock-time (clock/now-ms)))}]
-    [:label {:label (str "cells  " @cells/form-nick " @ " @cells/form-host
-                         ":" @cells/form-port)}]
-    [:dim-label {:label "frq.cells, compiled by both."}]]])
-
 (defn ^:async main []
   (m/WidgetsFlutterBinding.ensureInitialized)
   (let [dir (.-path (await (pp/getApplicationSupportDirectory)))]
@@ -158,8 +110,12 @@
     (f/run
       (m/MaterialApp .title "frq" .theme (t/app-theme))
       .home
-      (m/Scaffold .appBar (m/AppBar .title (m/Text "frq")))
+      ;; No AppBar. `connect-screen` opens with [:title {:label "frq"}] — the
+      ;; desktop has no bar above it either, the window's title is the
+      ;; window's — so a bar here says "frq" twice.
+      (m/Scaffold)
       .body
+      m/SafeArea
       (f/widget
        :let [c-status cells/status
              c-error cells/error
