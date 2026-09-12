@@ -14,6 +14,7 @@
   (:require [clojure.string :as str]
             [frq.actions :as actions]
             [frq.cells :as cells]
+            [frq.io :as io]
             [frq.metrics :refer [terminal?]]
             [frq.rooms :as rooms]
             [frq.screens.chat :refer [chat-screen emoji-picker reactor-dialog
@@ -83,6 +84,32 @@
 ;; row — so the panel is only ever on screen if the message list is given a
 ;; width that stops short of it.
 
+(defn- close-lightbox!
+  "Shut the lightbox, and take any note of a save with it: where the last
+  picture went is not news about the next one."
+  []
+  (reset! cells/saved-to nil)
+  (reset! cells/lightbox nil))
+
+(defn- save-name
+  "What to file a saved picture under: the last segment of the URL it came
+  from, which is the name the person who posted it gave it, and a plain one
+  where the URL has nothing usable on the end.
+
+  Not the cache name — that carries the hash `frq.media.core` puts in front to
+  keep two `image.png` apart, which is a fact about our cache directory and
+  means nothing in a downloads folder."
+  [url]
+  (let [tail (-> (str url) (str/split #"[?#]") first (str/split #"/") last)]
+    (if (re-find #"^[A-Za-z0-9._-]+\.[A-Za-z0-9]+$" (str tail)) tail "picture.png")))
+
+(defn- save-picture!
+  "Copy the picture being looked at to where this host keeps saved files, and
+  say where it went. The host decides which directory that is; see
+  `frq.io/save-to-downloads!`."
+  [path url]
+  (reset! cells/saved-to (or (io/save-to-downloads! path (save-name url)) :failed)))
+
 (defn lightbox-screen
   "One picture, as big as the window will paint it.
 
@@ -95,11 +122,16 @@
   gesture that opened it — but a way out you have to guess at is not one, and
   the row costs the picture a line."
   []
-  (let [{:keys [path]} @cells/lightbox]
+  (let [{:keys [path url]} @cells/lightbox
+        saved @cells/saved-to]
     [:vbox {:spacing 4 :margin 4}
      [:hbox {:spacing 8}
-      [:button {:label "← Back" :on-click #(reset! cells/lightbox nil)}]]
-     [:image {:src path :fit true :on-click #(reset! cells/lightbox nil)}]]))
+      [:button {:label "← Back" :on-click #(close-lightbox!)}]
+      [:button {:label "Save" :on-click #(save-picture! path url)}]
+      (cond
+        (= :failed saved) [:dim-label {:label "Could not save that picture."}]
+        (string? saved) [:dim-label {:label (str "Saved to " saved)}])]
+     [:image {:src path :fit true :on-click #(close-lightbox!)}]]))
 
 (defn- profile-dialog
   "Who someone is, as a dialog: centred over the window, with what you were

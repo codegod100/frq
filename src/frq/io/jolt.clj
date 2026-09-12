@@ -52,6 +52,44 @@
 (defn- spit* [path s]
   (try (spit path s) true (catch Exception _ false)))
 
+(defn- downloads-dir
+  "Where this desktop keeps saved files: XDG's answer if the user-dirs file
+  has one, otherwise ~/Downloads, otherwise home. Created if it is only
+  missing — a reader with no ~/Downloads still means \"save it\"."
+  []
+  (let [home (host/getenv "HOME")
+        xdg (let [v (host/getenv "XDG_DOWNLOAD_DIR")] (when (seq v) v))
+        dir (or xdg (when (seq home) (str home "/Downloads")) home)]
+    (when (seq dir)
+      (when-not (host/directory? dir) (host/mkdirs! dir))
+      (when (host/directory? dir) dir))))
+
+(defn- free-path
+  "`dir/name`, or the same with `-1`, `-2`… before the extension until it
+  names nothing. Nothing saved is ever written over."
+  [dir name]
+  (let [[_ stem ext] (re-find #"^(.+)(\.[A-Za-z0-9]+)$" name)
+        stem (or stem name)
+        ext (or ext "")]
+    (loop [n 0]
+      (let [p (str dir "/" stem (when (pos? n) (str "-" n)) ext)]
+        (cond
+          (not (host/file-exists? p)) p
+          (> n 99) nil
+          :else (recur (inc n)))))))
+
+(defn- save-to-downloads!
+  "`cp` and not a read-then-write: what is being copied is a picture, the
+  seam's `slurp` is a string, and bytes through a string is how a PNG comes
+  out the other side broken."
+  [path filename]
+  (try
+    (when-let [dir (downloads-dir)]
+      (when-let [dest (free-path dir (or filename "picture.png"))]
+        (host/sh (str "cp '" path "' '" dest "'"))
+        (when (host/file-exists? dest) dest)))
+    (catch Exception _ nil)))
+
 (defn- write-private-file!
   "Created before it is written, so the token is never on disk world-readable
   even for an instant."
@@ -75,6 +113,7 @@
   :slurp                slurp*
   :spit                 spit*
   :write-private-file!  write-private-file!
+  :save-to-downloads!   save-to-downloads!
   :utf8-bytes           (fn [s] (mapv #(bit-and (int %) 0xff) (.getBytes (str s))))
   :utf8-string          (fn [bs] (String. (byte-array (map unchecked-byte bs))))
   :wall-nanos           host/wall-nanos

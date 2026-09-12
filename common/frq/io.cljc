@@ -79,6 +79,24 @@
   [path s]
   (call :spit [path s]))
 
+(defn save-to-downloads!
+  "Put a copy of the file at `path` where this reader keeps the things they
+  save, under `filename`, and answer with where it landed — or nil.
+
+  Named for the result, like the rest of the seam, because \"where downloads
+  go\" is a different question on each of the three targets this has to answer
+  on: an XDG directory on a Linux desktop, the shared Download store on
+  Android, the app's own storage where neither of those is there. The caller
+  has a picture out of the media cache and wants it kept somewhere a file
+  manager will find it; which directory that is is the host's business.
+
+  The name is a request rather than a promise: a file already there is not
+  overwritten, so what comes back may be `picture-1.png` for a `picture.png`
+  that was asked for. Callers show the answer, which is the only honest way to
+  say where a thing went."
+  [path filename]
+  (call :save-to-downloads! [path filename]))
+
 (defn write-private-file!
   "`spit`, for a file nobody else may read — mode 600 where that means
   something. The broker token goes through this and nothing else does."

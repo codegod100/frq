@@ -137,6 +137,12 @@
 ;; so this is a screen of its own rather than a layer over the chat.
 (defonce lightbox (atom nil))            ; {:path :url}
 
+;; What the lightbox's Save has to say for itself: the path a picture landed
+;; at, or `:failed`, or nil before anyone asked. Saving is a file appearing
+;; somewhere off screen, so the one thing the reader needs back is where — a
+;; button that only stops looking pressed has told them nothing.
+(defonce saved-to (atom nil))
+
 ;; The room the reader was in when a line in the overview took them somewhere
 ;; else, or nil. The strip is the one place in the app that moves you without
 ;; you having asked to leave where you were — everything else is a room you
@@ -266,5 +272,5 @@
    join-input search broker-token login-url draft editing replying-to
    attachment jump-tick show-users? hide-chat-list? overview? at-present?
    emoji-group emoji-search highlight jump-to lightbox overview-return
-   reacting window-height window-width reaction-hover hide-join-part?
+   saved-to reacting window-height window-width reaction-hover hide-join-part?
    image-picker profile-viewing profile-hovering profile-tick])

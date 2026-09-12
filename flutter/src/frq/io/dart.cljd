@@ -67,6 +67,62 @@
         true)
       (catch Exception _ false))))
 
+(defn- dir-at
+  "`p` if there is a directory there, else nil."
+  [p]
+  (when (and (seq (str p)) (.existsSync (io/Directory. p))) p))
+
+(defn- downloads-dir
+  "Where a save lands, asked rather than assumed — this file compiles for a
+  Linux desktop and for Android, and they do not agree.
+
+  The desktop has XDG: `XDG_DOWNLOAD_DIR` where the user-dirs file names one,
+  otherwise `~/Downloads`, created if that is all that is missing. Android has
+  the shared `Download` store, which is writable without a permission on the
+  devices that still let an app see it at all, and where it is not, the app's
+  own storage is the honest answer — it is somewhere, and the caller shows
+  where."
+  [fallback]
+  (if (.-isAndroid io/Platform)
+    (or (dir-at "/storage/emulated/0/Download")
+        (dir-at "/sdcard/Download")
+        fallback)
+    (let [env (.-environment io/Platform)
+          xdg (get env "XDG_DOWNLOAD_DIR")
+          home (get env "HOME")
+          dir (cond (seq (str xdg)) (str xdg)
+                    (seq (str home)) (str home "/Downloads")
+                    :else nil)]
+      (when dir
+        (when-not (.existsSync (io/Directory. dir))
+          (try (.createSync (io/Directory. dir) .recursive true) (catch Exception _ nil))))
+      (or (dir-at dir) (dir-at (get env "HOME")) fallback))))
+
+(defn- free-path
+  "`dir/name`, or the same with `-1`, `-2`… before the extension until it
+  names a file that is not there. A save never writes over one."
+  [dir name]
+  (let [m (re-find #"^(.+)(\.[A-Za-z0-9]+)$" name)
+        stem (or (second m) name)
+        ext (or (nth m 2 nil) "")]
+    (loop [n 0]
+      (let [p (str dir "/" stem (when (pos? n) (str "-" n)) ext)]
+        (cond
+          (not (.existsSync (io/File. p))) p
+          (> n 99) nil
+          :else (recur (inc n)))))))
+
+(defn- save-to-downloads!
+  "`copySync` and not a read-then-write: what is copied is a PNG, and the
+  seam's `spit` takes a string."
+  [fallback path filename]
+  (try
+    (when-let [dir (downloads-dir fallback)]
+      (when-let [dest (free-path dir (or filename "picture.png"))]
+        (.copySync (io/File. path) dest)
+        (when (.existsSync (io/File. dest)) dest)))
+    (catch Exception _ nil)))
+
 (defn- local-offset-seconds
   "Dart carries the zone in the runtime; no TZ, no /etc/localtime, no getprop.
   The offset is per-instant, which is what the caller wants."
@@ -115,6 +171,7 @@
     :slurp                slurp*
     :spit                 spit*
     :write-private-file!  write-private-file!
+    :save-to-downloads!   (fn [p f] (save-to-downloads! dir p f))
     :utf8-bytes           (fn [s] (vec (.encode conv/utf8 (str s))))
     :utf8-string          utf8-string
     :wall-nanos           (fn [] (* 1000 (.-microsecondsSinceEpoch (DateTime/now))))
