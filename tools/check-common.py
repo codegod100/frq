@@ -184,6 +184,27 @@ def select(src):
         i = hit + 2
 
 
+def cells_enumerated(root):
+    """frq.cells/all-cells against the cells actually defined.
+
+    The phone watches what this list names and nothing else, so a cell missing
+    from it is a control that flips state and repaints nothing — which is a
+    bug that looks like a dead button and gets reported as one.
+    """
+    path = root / "frq" / "cells.cljc"
+    if not path.exists():
+        return []
+    src = strip(path.read_text())
+    defined = re.findall(r"\(defonce ([\w?!*<>+-]+) \(atom ", src)
+    body = src[src.index("(defn all-cells"):] if "(defn all-cells" in src else ""
+    listed = set(re.findall(r"[\w?!*<>+-]+", body[body.index("[", body.index("[]") + 2):])) if body else set()
+    missing = [d for d in defined if d not in listed]
+    return [
+        (path, 0, d, "defined but missing from frq.cells/all-cells — the phone will not repaint for it")
+        for d in missing
+    ]
+
+
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "common")
     bad = []
@@ -194,13 +215,15 @@ def main():
                 m = pattern.search(line)
                 if m:
                     bad.append((path, lineno, m.group(0).strip(), why))
+    bad += cells_enumerated(root)
     for path, lineno, tok, why in bad:
-        print(f"{path}:{lineno}: {tok!r} is {why}", file=sys.stderr)
+        where = f"{path}:{lineno}" if lineno else str(path)
+        print(f"{where}: {tok!r} is {why}", file=sys.stderr)
     if bad:
         print(
-            f"\n{len(bad)} thing(s) under {root}/ that ClojureDart cannot compile.\n"
-            "common/ is built by both backends: ask frq.io for the host, and add\n"
-            "the call to both implementations. See CLAUDE.md.",
+            f"\n{len(bad)} thing(s) wrong under {root}/, which both backends compile.\n"
+            "If it needs the host, ask frq.io and add the call to both\n"
+            "implementations. See CLAUDE.md.",
             file=sys.stderr,
         )
         return 1

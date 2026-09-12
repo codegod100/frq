@@ -143,6 +143,57 @@
   [node]
   (prose? node))
 
+;; A ScrollController per `:scroll-key`, and what was last done with it.
+;;
+;; Kept outside the widget tree because `render` is a plain function, not a
+;; `f/widget` with state of its own: the tree is rebuilt from scratch on every
+;; repaint, and a controller made during a build would start at the top each
+;; time and forget where the reader was.
+(defonce ^:private scroll-controllers (atom {}))
+(defonce ^:private scroll-marks (atom {}))
+
+(defn- scroll-controller-for
+  "The one controller for `k`, made the first time it is asked for.
+
+  Named apart from the text-editing `controller-for` above deliberately: they
+  are the same idea for two different widgets, and when they shared a name the
+  compiler took the second and left every entry on screen calling it with an
+  argument too many."
+  [k]
+  (or (get @scroll-controllers k)
+      (let [c (m/ScrollController)]
+        (swap! scroll-controllers assoc k c)
+        c)))
+
+(defn- end-ward!
+  "Put `k` at the end after this frame, when it should be.
+
+  Two reasons to, and they are not the same reason. The token — what the
+  screen passes as `:scroll-to-bottom`, which is `jump-tick` — changing means
+  someone asked to be taken to the present. Already being at the end means new
+  lines should push the view along rather than pile up below it, which is what
+  a conversation does and the whole reason a chat opens at the bottom.
+
+  And not otherwise: someone reading back through the backlog is at neither,
+  and yanking them to the end as each message arrives is the one behaviour
+  worse than not following at all.
+
+  After the frame, because the extent being scrolled to is the height of
+  content that has not been laid out yet at the point this is called."
+  [k ctrl token]
+  (let [mark (get @scroll-marks k ::fresh)
+        pos (when (.-hasClients ctrl) (.-position ctrl))
+        at-end (or (= mark ::fresh)
+                   (nil? pos)
+                   (>= (.-pixels pos) (- (.-maxScrollExtent pos) 24.0)))]
+    (when (or (not= mark token) at-end)
+      (swap! scroll-marks assoc k token)
+      (.addPostFrameCallback
+       (.-instance m/WidgetsBinding)
+       (fn [_]
+         (when (.-hasClients ctrl)
+           (.jumpTo ctrl (.-maxScrollExtent (.-position ctrl)))))))))
+
 (defn- fills-column?
   "Whether a node takes the height its column has left over.
 
@@ -513,8 +564,12 @@
        ;; two ParentDataWidgets on one RenderObject, which Flutter calls
        ;; "competing" and then draws nothing.
        :scroll
-       (m/SingleChildScrollView
-        .child (col (dbl (:spacing p) 0.0) (body node)))
+       (let [k (str (:scroll-key p))
+             ctrl (when (seq k) (scroll-controller-for k))]
+         (when ctrl (end-ward! k ctrl (:scroll-to-bottom p)))
+         (m/SingleChildScrollView
+          .controller ctrl
+          .child (col (dbl (:spacing p) 0.0) (body node))))
 
        ;; A tag this backend has not grown yet still shows its children — which
        ;; is what libvidya did and what jolt-cosmic kept. The marker is here so

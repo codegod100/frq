@@ -88,6 +88,28 @@
 
 (defonce ^:private attempt (atom 0))
 
+;; Ticked whenever any cell changes, so one `:watch` covers all of them.
+;;
+;; What this replaced was a list of cells named by hand in the widget below,
+;; and everything not on it was a control that flipped its cell and repainted
+;; nothing — People, Overview and hide join/part all did.
+(defonce ^:private repaint (atom 0))
+
+(defn- watch-cells!
+  "Every cell in `frq.cells` ticking `repaint` when it changes.
+
+  Called from `main` rather than run from a top-level `defonce`, and that is
+  not a style preference: ClojureDart compiles a `def` to a Dart top-level
+  variable, Dart initialises those on first read, and a `defonce` whose value
+  nothing ever reads simply never runs. The first attempt at this installed no
+  watches at all and printed nothing to say so."
+  []
+  (doseq [c (cells/all-cells)]
+    (add-watch c ::repaint
+               (fn [_ _ old new]
+                 (when (not= old new) (swap! repaint inc))
+                 nil))))
+
 (defonce ^:private caps
   ;; What the server has agreed to on this connection. `frq.irc.handshake`
   ;; holds none of it: it takes the set and hands a new one back, so the
@@ -289,9 +311,13 @@
         room (str @cells/current)]
     (when (and (seq text) (seq room) @conn)
       (net/send-line! @conn (str "PRIVMSG " room " :" text))
-      ;; Echoed locally: the server does not send our own PRIVMSG back.
-      (swap! cells/channels update room
-             #(update % :messages conj {:from @cells/form-nick :text text}))
+      ;; Echoed locally only when the server will not echo it back. With
+      ;; `echo-message` negotiated it does — that is what the cap is for, and
+      ;; it is how a client learns the msgid of its own line — so adding one
+      ;; here as well put every sent message in the room twice.
+      (when-not (handshake/acked? @caps "echo-message")
+        (swap! cells/channels update room
+               #(update % :messages conj {:from @cells/form-nick :text text})))
       (reset! cells/draft ""))))
 
 (defn ^:async main []
@@ -311,6 +337,9 @@
     ;; same signature OpenSSL gives on the desktop, so a signature minted
     ;; here verifies the same way at the server.
     (crypto-dart/install!)
+    ;; Before any widget is built: a cell that changes before its watch is on
+    ;; is a change the screen never hears about.
+    (watch-cells!)
     ;; What the shared screen calls. The desktop installs frq.state's
     ;; reducers here; this installs the phone's.
     (actions/install!
@@ -369,29 +398,10 @@
       .body
       m/SafeArea
       (f/widget
-       :let [c-status cells/status
-             c-error cells/error
-             c-connecting cells/connecting?
-             c-mode cells/auth-mode
-             c-handle cells/form-handle
-             c-nick cells/form-nick
-             c-host cells/form-host
-             c-port cells/form-port
-             c-tls cells/form-tls?
-             c-apppw cells/form-app-password
-             c-broker cells/broker-token
-             c-login cells/login-url
-             c-screen cells/screen
-             c-draft cells/draft
-             c-channels cells/channels
-             c-current cells/current]
-       :watch [st c-status er c-error cn c-connecting am c-mode
-               fh c-handle nk c-nick hs c-host pt c-port tl c-tls
-               ap c-apppw bt c-broker lu c-login ls lines sc c-screen dr c-draft ch c-channels cu c-current]
-       ;; No scroll view around the screen. A `:page` scrolls itself now, and a
-       ;; `:vbox :fill-height` wants the bounded height the Scaffold gives it —
-       ;; wrapping the tree took that away, and `:scroll`'s Expanded then sat
-       ;; in an unbounded column.
+       ;; One watch, not twenty. `lines` is a local atom and not a cell, so it
+       ;; is named beside the tick; everything under `frq.cells` arrives
+       ;; through `repaint`.
+       :watch [tick repaint ls lines]
        (h/render
         ;; `frq.screens.app` decides which screen shows, the same way it does
         ;; on the desktop. The phone was switching by hand until this moved.

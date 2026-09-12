@@ -212,3 +212,33 @@
 ;; Where the picker is looking, or nil when it is closed. A path, so the
 ;; browsing is just this cell moving.
 (defonce image-picker (atom nil))
+
+
+;; ------------------------------------------------------------- enumeration
+
+(defn all-cells
+  "Every cell above, for a backend that has to be told what to watch.
+
+  glimmer needs no such list: a component that derefs a ratom is subscribed to
+  it by the act of dereferencing, so the desktop hears about a change it never
+  declared an interest in. `cljd.flutter` works from the other end — `:watch`
+  names what a widget rebuilds for — and the phone kept that list in the
+  widget, where it drifted: People, Overview and hide join/part each flipped
+  the cell they were meant to flip and repainted nothing, because the cell was
+  not named there.
+
+  A function and not a `def`, which is the part ClojureDart makes you care
+  about: a `def` becomes a Dart top-level variable, those initialise on first
+  read, and a list nothing has read yet is still empty at the moment the
+  watches are installed. Calling it also forces every cell it names.
+
+  `tools/check-common.py` fails the build if this falls behind the
+  definitions, because a list kept by hand is only as good as what checks it."
+  []
+  [screen status error connecting? form-host form-port form-tls? form-nick
+   auth-mode form-handle form-app-password session channels current
+   join-input search broker-token login-url draft editing replying-to
+   attachment jump-tick show-users? hide-chat-list? overview? at-present?
+   emoji-group emoji-search highlight jump-to lightbox overview-return
+   reacting window-height window-width reaction-hover hide-join-part?
+   image-picker])
