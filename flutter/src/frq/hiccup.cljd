@@ -469,7 +469,18 @@
                    (and (identical? fills? fills-row?) (fills-column? n)
                         (not (asks-width? n)))
                    (conj! acc (m/Expanded .child (render n)))
-                   (and (identical? fills? fills-row?) (flexes-in-row? n))
+                   ;; And not if it has said how wide it is, for the reason
+                   ;; the Expanded arm above says it: a child with a width
+                   ;; needs no share of the row. The people panel is where it
+                   ;; showed — every row there is a 14-point mode slot holding
+                   ;; a dim label and a nick beside it, and a box of text with
+                   ;; no control in it is prose. So the slot took a flex of
+                   ;; its own, the two children halved the row between them,
+                   ;; and every nick ellipsised at the width of three letters
+                   ;; while the slot sat in 60 points of air it had asked for
+                   ;; 14 of.
+                   (and (identical? fills? fills-row?) (flexes-in-row? n)
+                        (not (asks-width? n)))
                    (conj! acc (m/Flexible .child (render n)))
                    ;; A button in a row is loosely flexible for the same
                    ;; reason prose is, and it is the people panel that says
