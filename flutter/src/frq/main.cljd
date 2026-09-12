@@ -23,6 +23,9 @@
             [frq.hiccup :as h]
             [frq.theme :as t]
             [frq.io.dart :as host]
+            ;; The seam, not the implementation above: `open-url!` is asked for
+            ;; the same way the shared half asks for it.
+            [frq.io :as fio]
             [frq.crypto.dart :as crypto-dart]
             [frq.net.dart :as net]
             [frq.atproto.dart :as atproto]
@@ -38,6 +41,7 @@
             [frq.rooms :as rooms]
             [frq.members :as members]
             [frq.oauth.core :as oauth]
+            [frq.oauth.dart :as oauth-dart]
             [frq.irc.parse :as irc]
             [frq.irc.handshake :as handshake]))
 
@@ -196,10 +200,22 @@
         ;; it does.
         (store/save-session! tokens)
         (assoc tokens :kind :web-token)))
-    (throw (ex-info (str "Bluesky sign-in opens a browser, which the phone "
-                         "cannot catch the answer to yet — sign in with an "
-                         "app password instead")
-                    {}))))
+    ;; No saved token: the browser leg. `frq.oauth.dart` binds the loopback,
+    ;; and what comes back through it is the first broker token.
+    (let [tokens (await (oauth-dart/await-callback!
+                         oauth/default-broker
+                         (str @cells/form-handle)
+                         (fn [url]
+                           (reset! cells/login-url url)
+                           (reset! cells/status
+                                   (if (fio/open-url! url)
+                                     "Waiting for the browser…"
+                                     "Open the sign-in link below to continue"))
+                           nil)))]
+      (reset! cells/login-url nil)
+      (reset! cells/broker-token (:broker-token tokens))
+      (store/save-session! tokens)
+      (assoc tokens :kind :web-token))))
 
 (defn ^:async sign-in!
   "Fill `cells/session` for the mode that was chosen, or say why not.
@@ -219,6 +235,20 @@
                        (do (reset! cells/status "Signing in…")
                            (atproto/create-session @cells/form-handle
                                                    @cells/form-app-password)))))
+      ;; An authenticated connection still needs a nick — the DID is the
+      ;; identity, the nick is only what the channel calls you. Same order the
+      ;; desktop picks it in: what the broker said, else the first label of the
+      ;; handle, else whatever is in the box.
+      (let [sess @cells/session
+            nick (or (:nick sess)
+                     (first (.split (str (or (:handle sess) "")) "."))
+                     nil)]
+        (when (seq (str (or (:handle sess) "")))
+          (reset! cells/form-handle (:handle sess)))
+        (when (seq (str (or nick "")))
+          (reset! cells/form-nick nick))
+        ;; The password did its work at the PDS; do not keep it.
+        (reset! cells/form-app-password ""))
       true
       (catch Object e
         (reset! cells/session nil)
@@ -417,6 +447,17 @@
     ;; Before any widget is built: a cell that changes before its watch is on
     ;; is a change the screen never hears about.
     (watch-cells!)
+    ;; A sign-in that already happened. Only the durable broker token comes
+    ;; back — the connection mints a fresh web-token from it — so this is not
+    ;; a session, it is the means to ask for one.
+    (when-let [saved (store/load-session)]
+      (reset! cells/broker-token (:broker-token saved))
+      (when (seq (str (or (:handle saved) "")))
+        (reset! cells/form-handle (:handle saved)))
+      (when (seq (str (or (:nick saved) "")))
+        (reset! cells/form-nick (:nick saved)))
+      (reset! cells/auth-mode :bluesky)
+      (reset! cells/status (str "Signed in as " (:handle saved) " — Connect to resume")))
     ;; What the shared screen calls. The desktop installs frq.state's
     ;; reducers here; this installs the phone's.
     (actions/install!

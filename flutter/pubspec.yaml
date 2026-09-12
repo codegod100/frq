@@ -37,6 +37,10 @@ dependencies:
   path_provider: ^2.1.6
   ed25519_edwards: ^0.3.2
   crypto: ^3.0.7
+  # Opening the system browser, which is the only part of the OAuth handoff
+  # dart:io cannot do on its own — the loopback listener that catches the
+  # answer is plain dart:io.
+  url_launcher: ^6.3.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

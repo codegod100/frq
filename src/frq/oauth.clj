@@ -38,38 +38,10 @@
 
 ;; ------------------------------------------------------------------ capture
 
-(defn- capture-html
-  "The page the browser lands on with the handoff in its fragment. Its one job
-  is to POST that fragment back, since a fragment never reaches a server.
-
-  `return-url` is the deep link back to the app, or nil where there is nowhere
-  to go — on a desktop the browser sits beside the app and the reader switches
-  windows. On Android the app is behind the browser and something has to bring
-  it forward: the page tries the link on its own, and offers it as a tap for
-  the case Chrome refuses a scheme it was not asked for by hand."
-  [return-url]
-  (str "<!doctype html><meta charset=utf-8><title>frq</title>"
-       "<body style=\"font:15px system-ui;background:#242424;color:#fff;padding:40px\">"
-       "<p id=m>Finishing sign-in…</p>"
-       (when return-url
-         (str "<p><a id=b href=\"" return-url "\" hidden "
-              "style=\"display:inline-block;padding:12px 20px;border-radius:8px;"
-              "background:#5a7fd0;color:#fff;text-decoration:none\">Return to frq</a></p>"))
-       "<script>"
-       "var h=location.hash.replace(/^#/,'');"
-       "var p=new URLSearchParams(h).get('oauth')||h.replace(/^oauth=/,'');"
-       "if(!p){document.getElementById('m').textContent='No sign-in payload in this URL.';}"
-       "else{fetch('/capture',{method:'POST',body:p})"
-       ".then(function(){document.getElementById('m').textContent="
-       (if return-url "'Signed in — returning to frq…';" "'Signed in — you can close this tab.';")
-       (when return-url
-         (str "var b=document.getElementById('b');b.hidden=false;"
-              ;; Chrome answers a scripted navigation to a scheme of its own
-              ;; only sometimes; the link is there for when it does not.
-              "location.href=b.href;"))
-       "})"
-       ".catch(function(e){document.getElementById('m').textContent='Handoff failed: '+e;});}"
-       "</script></body>"))
+(def capture-html
+  "Moved to `frq.oauth.core`: it is a string, and the phone serves the same one
+  from a `dart:io` HttpServer. Re-exported so callers did not move."
+  core/capture-html)
 
 (defn- respond! [fd body content-type]
   (let [head (str "HTTP/1.1 200 OK\r\nContent-Type: " content-type

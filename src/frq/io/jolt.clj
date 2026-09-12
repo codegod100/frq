@@ -6,6 +6,7 @@
   backend. Every desktop entry point requires this before `frq.app`."
   (:require [clojure.string :as str]
             [frq.io :as io]
+            [frq.platform :as platform]
             [jolt.host :as host]))
 
 (def ^:private zone
@@ -64,6 +65,7 @@
 
 (io/install!
  {:getenv               host/getenv
+  :open-url!            platform/open-url!
   :config-dir           config-dir
   :file-exists?         host/file-exists?
   :directory?           host/directory?

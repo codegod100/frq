@@ -17,6 +17,7 @@
   shape it should take rather than as code known to compile."
   (:require ["dart:convert" :as conv]
             ["dart:io" :as io]
+            ["package:url_launcher/url_launcher.dart" :as launcher]
             [frq.io :as fio]))
 
 (defonce ^:private uptime
@@ -74,6 +75,15 @@
   [dir]
   (fio/install!
    {:getenv               (fn [n] (get (.-environment io/Platform) n))
+    ;; Android picks the activity: whatever answers an https VIEW intent,
+    ;; which is the browser the reader already uses and is already signed in
+    ;; to. `externalApplication` and not an in-app web view on purpose — a
+    ;; login the app could see inside is the thing OAuth exists to avoid.
+    :open-url!            (fn [url]
+                            (launcher/launchUrl
+                             (Uri.parse (str url))
+                             .mode launcher/LaunchMode.externalApplication)
+                            true)
     :config-dir           (fn [] dir)
     :file-exists?         (fn [p] (.existsSync (io/File. p)))
     :directory?           (fn [p] (.existsSync (io/Directory. p)))

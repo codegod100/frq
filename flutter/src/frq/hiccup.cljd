@@ -143,27 +143,13 @@
   [node]
   (prose? node))
 
-;; A ScrollController per `:scroll-key`, and what was last done with it.
+;; What was last done with each `:scroll-key`.
 ;;
-;; Kept outside the widget tree because `render` is a plain function, not a
-;; `f/widget` with state of its own: the tree is rebuilt from scratch on every
-;; repaint, and a controller made during a build would start at the top each
-;; time and forget where the reader was.
-(defonce ^:private scroll-controllers (atom {}))
+;; The controller itself is not here — it belongs to the widget, see `:scroll`
+;; below. This outlives it on purpose: whether a reader had been taken to the
+;; end is a fact about the conversation, not about the widget currently
+;; showing it, and it has to survive the rebuild that replaces one.
 (defonce ^:private scroll-marks (atom {}))
-
-(defn- scroll-controller-for
-  "The one controller for `k`, made the first time it is asked for.
-
-  Named apart from the text-editing `controller-for` above deliberately: they
-  are the same idea for two different widgets, and when they shared a name the
-  compiler took the second and left every entry on screen calling it with an
-  argument too many."
-  [k]
-  (or (get @scroll-controllers k)
-      (let [c (m/ScrollController)]
-        (swap! scroll-controllers assoc k c)
-        c)))
 
 (defn- end-ward!
   "Put `k` at the end after this frame, when it should be.
@@ -565,11 +551,20 @@
        ;; "competing" and then draws nothing.
        :scroll
        (let [k (str (:scroll-key p))
-             ctrl (when (seq k) (scroll-controller-for k))]
-         (when ctrl (end-ward! k ctrl (:scroll-to-bottom p)))
-         (m/SingleChildScrollView
-          .controller ctrl
-          .child (col (dbl (:spacing p) 0.0) (body node))))
+             token (:scroll-to-bottom p)]
+         (f/widget
+          ;; `:managed`, so the controller belongs to this widget and is
+          ;; disposed with it. One controller per key in a global map was the
+          ;; obvious thing and the wrong thing: Flutter builds a new subtree
+          ;; before unmounting the old one whenever the tree changes shape, so
+          ;; two live scroll views briefly shared it and it asserted —
+          ;; "ScrollController attached to multiple scroll views", which took
+          ;; the whole screen.
+          :managed [ctrl (m/ScrollController)]
+          :let [_ (end-ward! k ctrl token)]
+          (m/SingleChildScrollView
+           .controller ctrl
+           .child (col (dbl (:spacing p) 0.0) (body node)))))
 
        ;; A tag this backend has not grown yet still shows its children — which
        ;; is what libvidya did and what jolt-cosmic kept. The marker is here so

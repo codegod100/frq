@@ -10,7 +10,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
@@ -28,6 +28,23 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- What brings frq back to the front when the browser has
+                 finished signing in. Chrome is on top of the app rather than
+                 beside it, so the capture page navigates here once it has
+                 handed the payload to the loopback listener.
+
+                 The broker never sees this: `return_to` is the loopback URL on
+                 both desktop and phone, and the scheme is claimed by this
+                 manifest and used only on this device. Nothing is read out of
+                 the intent either — the tokens arrived over the socket, and
+                 this only has to raise the window. singleTask above is what
+                 makes that the running app rather than a second copy. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="frq" android:host="auth"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
@@ -41,6 +58,13 @@
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
+        <!-- url_launcher asks Android who can show an https page. Without
+             this, package visibility on Android 11+ answers "nobody" and the
+             sign-in URL silently fails to open. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

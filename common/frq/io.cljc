@@ -104,6 +104,16 @@
 
 ;; ------------------------------------------------------------------- time
 
+(defn open-url!
+  "Hand `url` to whatever shows web pages here, and say whether that worked.
+
+  Named for the result and not the mechanism, like the rest of this seam: the
+  desktop shells out to the portal and the phone asks Android to pick an
+  activity, and neither is the other's business. A false answer is not fatal —
+  the OAuth screen shows the URL so it can be opened by hand."
+  [url]
+  (boolean (call :open-url! [url])))
+
 (defn wall-nanos [] (call :wall-nanos []))
 (defn mono-nanos [] (call :mono-nanos []))
 
