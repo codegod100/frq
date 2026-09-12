@@ -25,7 +25,7 @@
             [frq.glyphs :as glyphs]
             [frq.media :as media]
             [frq.platform :as platform]
-            [frq.profile :as profile]
+            [frq.profile.pointer :as profile]
             ;; The connect screen lives in common/ now — the same file the
             ;; phone renders. It reads frq.cells and calls frq.actions, and
             ;; this requires it exactly where its own copy used to be.

@@ -214,6 +214,20 @@
 (defonce image-picker (atom nil))
 
 
+;; ------------------------------------------------------------------ profiles
+
+;; Who is being looked at, or nil — `{:nick :actor}`, where `actor` is the DID
+;; or handle, and nil for a guest.
+(defonce profile-viewing (atom nil))
+
+;; The face the pointer is resting on, the same shape. A card is painted for
+;; this one alone rather than hung under every avatar in the column.
+(defonce profile-hovering (atom nil))
+
+;; Bumped when a profile fetch lands, so the screen re-renders without
+;; watching the cache map itself.
+(defonce profile-tick (atom 0))
+
 ;; ------------------------------------------------------------- enumeration
 
 (defn all-cells
@@ -241,4 +255,4 @@
    attachment jump-tick show-users? hide-chat-list? overview? at-present?
    emoji-group emoji-search highlight jump-to lightbox overview-return
    reacting window-height window-width reaction-hover hide-join-part?
-   image-picker])
+   image-picker profile-viewing profile-hovering profile-tick])

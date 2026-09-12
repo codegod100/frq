@@ -471,6 +471,30 @@
                                      .fontSize (* 0.85 size)
                                      .color (if mine t/on-accent t/on-card)))]))))))
 
+       ;; libcosmic's dialog is centred over the window with what you were
+       ;; reading dimmed behind it. There is no behind on a phone worth
+       ;; keeping: the screen is the width of the dialog already, so this is a
+       ;; sheet — the title, a rule, and the body — drawn where the tree puts
+       ;; it, above the conversation it was opened from.
+       ;;
+       ;; `:modal` and the hover pair are read and ignored. They are what a
+       ;; pointer needs to tell a card it opened by resting from one it opened
+       ;; by pressing, and a finger only ever presses.
+       :dialog
+       (m/Container
+        .width double/infinity
+        .margin (m/EdgeInsets.only .bottom t/space-xs)
+        .padding (m/EdgeInsets.all t/space-xs)
+        .decoration (m/BoxDecoration
+                     .color t/card
+                     .border (m/Border.all .color t/divider .width 1.0)
+                     .borderRadius (m/BorderRadius.circular t/radius-m))
+        .child
+        (col t/space-xxs
+             (into [[:title-2 {:label (:label p "")}]
+                    [:separator {}]]
+                   (body node))))
+
        :separator (m/Divider .height 1.0 .thickness 1.0 .color t/divider)
 
        ;; A 16px indeterminate circle, with the label as a caption beside it.
@@ -569,17 +593,30 @@
        :emoji
        (m/Text (str (:emoji p "")) .style (m/TextStyle .fontSize (dbl (:size p) 16.0)))
 
+       ;; A face is a way in to who someone is, so it takes the press that
+       ;; opens their profile. It was drawn without one and the chat screen's
+       ;; `:on-click` went nowhere — the one gesture a phone has for this.
+       ;; `:on-hover` and `:on-unhover` come with it on the desktop and are
+       ;; nothing here.
        :avatar
        (let [s (dbl (:size p) 32.0)
-             src (:src p)]
-         (m/CircleAvatar
-          .radius (/ s 2.0)
-          .backgroundColor t/component
-          .backgroundImage (when (and src (not= "" src)) (m/NetworkImage src))
-          .child (when (or (nil? src) (= "" src))
-                   (txt ctx (let [l (str (:label p ""))]
-                              (if (pos? (count l)) (.toUpperCase (subs l 0 1)) "?"))
-                        t/text-body t/on-bg))))
+             src (:src p)
+             face (m/CircleAvatar
+                   .radius (/ s 2.0)
+                   .backgroundColor t/component
+                   .backgroundImage (when (and src (not= "" src))
+                                      (m/NetworkImage src))
+                   .child (when (or (nil? src) (= "" src))
+                            (txt ctx (let [l (str (:label p ""))]
+                                       (if (pos? (count l))
+                                         (.toUpperCase (subs l 0 1))
+                                         "?"))
+                                 t/text-body t/on-bg)))]
+         (if-let [on (:on-click p)]
+           (m/InkWell .onTap #(on)
+                      .customBorder (m/CircleBorder)
+                      .child face)
+           face))
 
        :image
        (let [src (or (:src p) (:path p))

@@ -10,33 +10,19 @@
   The thumbnail preset, and `@png` rather than the CDN's default: the tree
   backend decodes PNG, and 128×128 is what a 24-point avatar needs."
   (:require [clojure.string :as str]
+            [frq.profile :as profile]
             [frq.atproto :as atproto]
             [jolt.host :as host]
             [jolt.mvn-http :as http]))
 
 (def ^:private directory-host "public.api.bsky.app")
 
-;; A handle is a domain: labels joined by dots, ending in something alphabetic.
-;; An IRC nick cannot be one by accident — `sleek5209` and `eve` are not.
-(def ^:private handle-pattern #"(?i)^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*\.[a-z]{2,}$")
+(def handle?
+  "Moved to `frq.profile`, which is what asks: whether a nick is worth looking
+  a profile up by is the same question under either compiler."
+  profile/handle?)
 
-(defn handle?
-  "Whether this nick is an AT Protocol handle, and so worth a lookup."
-  [nick]
-  (boolean (and nick (re-matches handle-pattern nick))))
-
-(defn actor
-  "The identity to look a profile up by, or nil when there is none.
-
-  A DID from the message's `account` tag when the server sent one — it is the
-  identity itself, and holds whatever the nick happens to be today. Otherwise
-  the nick, but only when it is handle-shaped: freeq gives an authenticated
-  user their handle by default, while `sleek5209` is a guest with no profile."
-  [did nick]
-  (cond
-    (and did (str/starts-with? did "did:")) did
-    (handle? nick) nick
-    :else nil))
+(def actor profile/actor)
 
 (defn cache-dir []
   (let [xdg (host/getenv "XDG_CACHE_HOME")

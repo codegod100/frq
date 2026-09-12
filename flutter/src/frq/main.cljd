@@ -42,6 +42,7 @@
             [frq.members :as members]
             [frq.reactions :as reactions]
             [frq.edits :as edits]
+            [frq.profile :as profile]
             [frq.irc.mutate :as mutate]
             [frq.oauth.core :as oauth]
             [frq.oauth.dart :as oauth-dart]
@@ -157,6 +158,11 @@
                             {:from who
                              :text text
                              :did (:account m)
+                             ;; Who to look a profile up by: the DID the
+                             ;; server put on the line, or the nick when that
+                             ;; is handle-shaped. A guest has neither and gets
+                             ;; no lookup, which is the honest answer.
+                             :actor (profile/actor (:account m) who)
                              :id (irc/tag-value tags "msgid")
                              ;; The server canonicalises +draft/reply to
                              ;; +reply; a client that sent the draft name may
@@ -563,6 +569,13 @@
     ;; same signature OpenSSL gives on the desktop, so a signature minted
     ;; here verifies the same way at the server.
     (crypto-dart/install!)
+    ;; How this half asks the directory who someone is. `frq.profile` decides
+    ;; when to ask and remembers the answer; only the awaiting is here.
+    (profile/install-fetch!
+     (fn [actor]
+       (.then (atproto/fetch (profile/profile-req actor))
+              (fn [body] (profile/deliver-profile! actor body) nil)
+              .onError (fn [_ _] (profile/deliver-profile! actor nil) nil))))
     ;; Before any widget is built: a cell that changes before its watch is on
     ;; is a change the screen never hears about.
     (watch-cells!)
@@ -622,6 +635,29 @@
       ;; so there is nothing here to raise a card about.
       :hover-reaction! (fn [_ _] nil)
       :unhover-reaction! (fn [_ _] nil)
+
+      ;; Who someone is, behind the nick on a line. `frq.profile` holds the
+      ;; cache and the fields; this is the tapping.
+      :profile-open! profile/open!
+      :profile-close! profile/close!
+      :profile-dismiss! profile/close!
+      :profile-entry profile/entry
+      :profile-tick (fn [] @profile/tick)
+      :profile-stats-line profile/stats-line
+      :profile-truncate profile/truncate
+      :profile-web-url profile/web-url
+      :viewing (fn [] @profile/viewing)
+      ;; The pointer half of a profile, which a phone does not have: there is
+      ;; no hovering a face, no crossing from the face to the card, and so no
+      ;; card to hold open while it happens.
+      :hovering (fn [] nil)
+      :profile-hover! (fn [_ _] nil)
+      :profile-unhover! (fn [_] nil)
+      :profile-enter-dialog! (fn [] nil)
+      :profile-leave-dialog! (fn [] nil)
+      ;; Their profile on the web, handed to the browser the same way the
+      ;; sign-in link is.
+      :open-url! (fn [url] (fio/open-url! url))
       :wide? (fn [] false)
       :desktop? (fn [] false)
       :mine? (fn [m] (rooms/mine? m (str @cells/form-nick)))
