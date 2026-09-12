@@ -446,7 +446,9 @@
   leaves the rest of its half empty — the row then has slack, `:align :end`
   pushes what is in it to the right, and the box the reader types into starts
   halfway across the card. A button beside something that fills takes the width
-  of its label and no share at all; the thing that fills is what gives."
+  of its label and no share at all; the thing that fills is what gives. Prose
+  gives way the same way, and for the same arithmetic — the message heading is
+  where that one showed."
   ([fills? nodes]
    (flexed fills? nodes
            (and (identical? fills? fills-row?) (any-fills-row? nodes))))
@@ -479,7 +481,17 @@
                    ;; and every nick ellipsised at the width of three letters
                    ;; while the slot sat in 60 points of air it had asked for
                    ;; 14 of.
+                   ;;
+                   ;; And not beside something that fills, for the reason the
+                   ;; button arm below says it: the message heading is a face,
+                   ;; a nick, a clock, an "(edited)" and the chip row that
+                   ;; fills, so four flex children took a quarter of the row
+                   ;; each, the chips were allotted less than three pills are
+                   ;; wide, and every line you had rewritten wore Flutter's
+                   ;; overflow stripes. Prose beside a filling sibling takes
+                   ;; the width of its words; what fills is what gives.
                    (and (identical? fills? fills-row?) (flexes-in-row? n)
+                        (not sibling-fills?)
                         (not (asks-width? n)))
                    (conj! acc (m/Flexible .child (render n)))
                    ;; A button in a row is loosely flexible for the same
