@@ -216,7 +216,13 @@
          ;; them. What is focused is a widget, so the highlight would stay in
          ;; the slot the reader clicked while the row that moved into it is
          ;; someone else's conversation.
-         (for [b buffers] ^{:key (:name b)} [conversation-row b])
+         ;; The gap between cards, and it has to be here rather than on the
+         ;; card: a card is padded inside by the backend and takes no margin of
+         ;; its own, so cards handed straight to the scroll sit edge to edge and
+         ;; the list reads as one ruled block instead of a row per conversation.
+         ;; 8, the same step the bands above use.
+         [:vbox {:spacing 8}
+          (for [b buffers] ^{:key (:name b)} [conversation-row b])]
          [:vbox {:margin-right list-gutter}
           [:card {} [:dim-label {:label "No conversations yet — join a channel."}]]])]]
      [:vbox {:key :foot :spacing 8}
