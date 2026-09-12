@@ -176,9 +176,4 @@
     :utf8-string          utf8-string
     :wall-nanos           (fn [] (* 1000 (.-microsecondsSinceEpoch (DateTime/now))))
     :mono-nanos           (fn [] (* 1000 (.-inMicroseconds (.-elapsed ^Stopwatch uptime))))
-    :local-offset-seconds local-offset-seconds
-    ;; Dart has one event loop and the UI runs on it, so there is no thread to
-    ;; hand the callback back to — a timer is the whole of it.
-    :after!               (fn [ms f]
-                            (Future.delayed (Duration .milliseconds (int ms)) f)
-                            nil)}))
+    :local-offset-seconds local-offset-seconds}))

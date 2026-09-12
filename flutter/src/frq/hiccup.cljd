@@ -873,14 +873,12 @@
        ;; On a phone there is no behind worth keeping — the screen is the width
        ;; of the dialog already — so this is a sheet: the title, a rule, and
        ;; the body, drawn where the tree puts it, above the conversation it was
-       ;; opened from. `:modal` and the hover pair are read and ignored, since
-       ;; they are what a pointer needs to tell a card it opened by resting
-       ;; from one it opened by pressing, and a finger only ever presses.
+       ;; opened from. `:modal` is read and ignored: a sheet the width of the
+       ;; screen has nothing behind it to make deaf.
        ;;
        ;; In a window it is what libcosmic's is: capped at `:max-width`,
-       ;; centred over the screen, the buttons gathered into a foot, and the
-       ;; hover pair heard — so a card a pointer raised can be moved into and
-       ;; read rather than only glanced at. Nothing about the floating is here,
+       ;; centred over the screen, and the buttons gathered into a foot.
+       ;; Nothing about the floating is here,
        ;; though; a widget cannot lift itself out of the column it is in. That
        ;; is `render-root`, which takes the dialog out of the tree and stacks
        ;; it over what is left. This arm only has to draw the card.
@@ -910,59 +908,57 @@
                ;; one nearest the corner the pointer leaves by.
                foot (concat (remove #(= "primary" (:slot (props %))) foot)
                             (filter #(= "primary" (:slot (props %))) foot))]
-           (hovered
-            p
-            (m/ConstrainedBox
-             ;; Capped both ways. The width is what libcosmic is asked for; the
-             ;; height is so that a long bio is a card with a scroll in it
-             ;; rather than a card taller than the window. The body is the part
-             ;; that gives — the title and the buttons are why it is a dialog.
-             .constraints (m/BoxConstraints
-                           .maxWidth (dbl (:max-width p) 520.0)
-                           .maxHeight (* 0.8 (.-height (.-size (m/MediaQuery.of ctx)))))
+           (m/ConstrainedBox
+            ;; Capped both ways. The width is what libcosmic is asked for; the
+            ;; height is so that a long bio is a card with a scroll in it
+            ;; rather than a card taller than the window. The body is the part
+            ;; that gives — the title and the buttons are why it is a dialog.
+            .constraints (m/BoxConstraints
+                          .maxWidth (dbl (:max-width p) 520.0)
+                          .maxHeight (* 0.8 (.-height (.-size (m/MediaQuery.of ctx)))))
+            .child
+            (m/Container
+             ;; Infinity under a maxWidth of 520 is 520, and under a narrower
+             ;; window it is the window: the card is as wide as it is allowed
+             ;; to be, never as wide as its longest line. Without it the
+             ;; Column is sized to its children and the rules inside it ask
+             ;; for an unbounded width, which is a layout error rather than a
+             ;; narrow dialog.
+             .width double/infinity
+             .padding (m/EdgeInsets.all t/space-s)
+             .decoration (m/BoxDecoration
+                          .color t/card
+                          .border (m/Border.all .color t/divider .width 1.0)
+                          .borderRadius (m/BorderRadius.circular t/radius-m))
              .child
-             (m/Container
-              ;; Infinity under a maxWidth of 520 is 520, and under a narrower
-              ;; window it is the window: the card is as wide as it is allowed
-              ;; to be, never as wide as its longest line. Without it the
-              ;; Column is sized to its children and the rules inside it ask
-              ;; for an unbounded width, which is a layout error rather than a
-              ;; narrow dialog.
-              .width double/infinity
-              .padding (m/EdgeInsets.all t/space-s)
-              .decoration (m/BoxDecoration
-                           .color t/card
-                           .border (m/Border.all .color t/divider .width 1.0)
-                           .borderRadius (m/BorderRadius.circular t/radius-m))
-              .child
-              ;; Built out rather than handed to `col`, because the foot is a
-              ;; Row aligned to the end and `:hbox` has no word for that. One
-              ;; place that wants it and no prop invented for it.
-              (m/Column
-               .crossAxisAlignment m/CrossAxisAlignment.start
-               .mainAxisSize m/MainAxisSize.min
-               .spacing t/space-xxs
-               .children
-               (concat [(render [:title-2 {:label (:label p "")}])
-                        (render [:separator {}])]
-                       ;; Flexible and loose: the body takes what it needs up
-                       ;; to what the cap leaves, and scrolls inside that. A
-                       ;; short profile is still a short card.
-                       [(m/Flexible
-                         .child
-                         (m/SingleChildScrollView
-                          .child (m/Column
-                                  .crossAxisAlignment m/CrossAxisAlignment.start
-                                  .mainAxisSize m/MainAxisSize.min
-                                  .spacing t/space-xxs
-                                  .children (children (remove slotted kids)))))]
-                       (when (seq foot)
-                         [(render [:separator {}])
-                          (m/Row
-                           .mainAxisSize m/MainAxisSize.max
-                           .mainAxisAlignment m/MainAxisAlignment.end
-                           .spacing t/space-xxs
-                           .children (children foot))]))))))))
+             ;; Built out rather than handed to `col`, because the foot is a
+             ;; Row aligned to the end and `:hbox` has no word for that. One
+             ;; place that wants it and no prop invented for it.
+             (m/Column
+              .crossAxisAlignment m/CrossAxisAlignment.start
+              .mainAxisSize m/MainAxisSize.min
+              .spacing t/space-xxs
+              .children
+              (concat [(render [:title-2 {:label (:label p "")}])
+                       (render [:separator {}])]
+                      ;; Flexible and loose: the body takes what it needs up
+                      ;; to what the cap leaves, and scrolls inside that. A
+                      ;; short profile is still a short card.
+                      [(m/Flexible
+                        .child
+                        (m/SingleChildScrollView
+                         .child (m/Column
+                                 .crossAxisAlignment m/CrossAxisAlignment.start
+                                 .mainAxisSize m/MainAxisSize.min
+                                 .spacing t/space-xxs
+                                 .children (children (remove slotted kids)))))]
+                      (when (seq foot)
+                        [(render [:separator {}])
+                         (m/Row
+                          .mainAxisSize m/MainAxisSize.max
+                          .mainAxisAlignment m/MainAxisAlignment.end
+                          .spacing t/space-xxs
+                          .children (children foot))])))))))
 
        :separator (m/Divider .height 1.0 .thickness 1.0 .color t/divider)
 
@@ -1074,14 +1070,9 @@
        (m/Text (str (:emoji p "")) .style (t/emoji-style (dbl (:size p) 16.0)))
 
        ;; A face is a way in to who someone is, so it takes the press that
-       ;; opens their profile. It was drawn without one and the chat screen's
-       ;; `:on-click` went nowhere — the one gesture a phone has for this.
-       ;;
-       ;; And, in a window, the gesture that comes before the press: resting on
-       ;; a face raises the card without pinning it. `hovered` is what hears
-       ;; that; the card it raises is the `:dialog` arm above, floated by
-       ;; `render-root`. On the phone the screens do not even hang a hover on a
-       ;; face — they ask `desktop?` first — and `hovered` is a no-op besides.
+       ;; opens their profile — the one gesture a phone has for this, and the
+       ;; only one either target uses. It was drawn without one and the chat
+       ;; screen's `:on-click` went nowhere.
        :avatar
        (let [s (dbl (:size p) 32.0)
              src (:src p)
@@ -1111,13 +1102,11 @@
                                          (.toUpperCase (subs l 0 1))
                                          "?"))
                                  t/text-body t/on-bg)))]
-         (hovered
-          p
-          (if-let [on (:on-click p)]
-            (m/InkWell .onTap #(on)
-                       .customBorder (m/CircleBorder)
-                       .child face)
-            face)))
+         (if-let [on (:on-click p)]
+           (m/InkWell .onTap #(on)
+                      .customBorder (m/CircleBorder)
+                      .child face)
+           face))
 
        :image
        (let [src (or (:src p) (:path p))

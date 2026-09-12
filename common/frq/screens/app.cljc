@@ -149,33 +149,22 @@
   opens is a dialog that moves under the pointer, and the fetch lands whenever
   it lands.
 
-  Who it is about comes from either of two places, and that — with the
-  modality below — is the whole of what hovering and pressing a face do
-  differently. Resting on one sets `hovering`, which the pointer takes away
-  again when it leaves; pressing one sets `viewing`, which nothing takes away
-  but Close. `viewing` is read first, so a pinned profile is not swapped out
-  from under the reader by a face the pointer crosses on the way to it.
-
-  And a dialog the pointer is holding open is not modal. A modal one makes
-  the window underneath it deaf — libcosmic wraps the app in a popover that
-  hands its content an `Unavailable` cursor while a popup is up, and Flutter's
-  side of this puts a scrim over the screens that absorbs what lands on it — so
-  the face that opened it never hears the pointer leave, and what a hover opened
-  could never close itself. Non-modal, the face keeps hearing, and moving away
-  shuts it. A pinned one is modal, which is what being pinned means: it is the
-  thing on the screen until it is dismissed."
+  Who it is about is `viewing`, and there is nothing else it could be: a press
+  sets it and only Close clears it. So the dialog is modal, which is what it
+  always wanted to be — the thing on the screen until it is closed. It was
+  modal only some of the time while a hovered face could raise it too: a modal
+  dialog makes the window underneath it deaf, and the face that opened one
+  would then never hear the pointer leave to close it again. See `frq.profile`
+  for why that second way in is gone."
   []
-  (let [pinned? (some? (actions/viewing))
-        {:keys [nick actor]} (or (actions/viewing) (actions/hovering))
+  (let [{:keys [nick actor]} (actions/viewing)
         _ (actions/profile-tick)
         _ (actions/media-tick)
         pr (actions/profile-entry actor)
         ready? (= :ready (:status pr))
         display (or (:display-name pr) nick)
         url (when ready? (actions/profile-web-url pr))]
-    [:dialog {:label display :max-width 520 :modal pinned?
-              :on-hover actions/profile-enter-dialog!
-              :on-unhover actions/profile-leave-dialog!}
+    [:dialog {:label display :max-width 520 :modal true}
      ;; The body is the screen's card without its heading: the dialog's own
      ;; title is the name now, so repeating it under the picture is a line
      ;; that says nothing.
@@ -215,15 +204,9 @@
      ;; `slot` is where libcosmic puts a button: the two actions go to the
      ;; foot of the dialog, and anything else here would be another control
      ;; stacked in the body.
-     ;;
-     ;; Both are here whether the profile is pinned or only hovered. They were
-     ;; hidden while hovering, back when a hover could not be walked into: the
-     ;; dialog reports its own pointer now, so moving towards a button in it
-     ;; keeps it open instead of closing it, and a button you can reach is a
-     ;; button worth drawing.
      [:button {:key :close :slot "primary"
-               :label (if pinned? "Close" "Dismiss")
-               :on-click actions/profile-dismiss!}]
+               :label "Close"
+               :on-click actions/profile-close!}]
      [:button {:key :web :slot "secondary" :label "Bluesky ↗"
                :sensitive (boolean url)
                :on-click #(when url (actions/open-url! url))}]]))
@@ -388,13 +371,13 @@
   ;; paint its contents inline at the bottom of the screen. So there it stays
   ;; a screen you go to and come back from, which is `profile-screen`.
   [:vbox {:key :root :fill-height true}
-   ;; One dialog at a time, and a pinned profile outranks both pointers: it is
-   ;; the only one of the three that was asked for by a press rather than by
-   ;; where the pointer happens to be resting.
+   ;; One dialog at a time, and the profile outranks the reaction card: it is
+   ;; the one of the two that was asked for by a press rather than by where the
+   ;; pointer happens to be resting.
    [:vbox {:key :dialog}
     (when-not @terminal?
       (cond
-        (or (actions/viewing) (actions/hovering)) [profile-dialog]
+        (actions/viewing) [profile-dialog]
         @cells/reaction-hover [reactor-dialog]))]
    (cond
     @cells/lightbox [:vbox {:key :screen-lightbox} [lightbox-screen]]

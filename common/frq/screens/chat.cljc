@@ -735,9 +735,6 @@
        ;; The face is also the way to the person behind it: Vidya's plain
        ;; label does not answer the pointer, so the tap sleek puts on the
        ;; nick lives here, on the one thing in the row that does.
-       ;; And, where there is a pointer to ask with, resting on the face
-       ;; answers before the click does: the card under it is the profile
-       ;; screen's first few lines, painted beside the pointer.
        ;; And no face on this line in a terminal: the initial that stands in
        ;; for a portrait in a window is a letter printed twice in a cell grid,
        ;; which only pushed every nick in past the words it heads. Where the
@@ -745,17 +742,15 @@
        ;; the whole message rather than off its heading — `message-row` has it.
        (when-not @terminal?
          (let [src (actions/avatar-path (:actor m))]
-           ;; One profile, two gestures, and no card hung under the face: the
-           ;; pointer opens the dialog and the press pins it. What makes that
-           ;; work is the dialog being non-modal while the pointer is what is
-           ;; holding it open — see `profile-dialog`.
-           [:avatar (cond-> {:label (:from m)
-                             :src (or src "")
-                             :size face-size
-                             :on-click #(actions/profile-open! (:from m) (:actor m))}
-                      (actions/desktop?)
-                      (assoc :on-hover #(actions/profile-hover! (:from m) (:actor m))
-                             :on-unhover #(actions/profile-unhover! (:from m))))]))
+           ;; One profile and one gesture: the press opens the dialog, on a
+           ;; phone and in a window alike. Resting a pointer on the face used
+           ;; to open it too, which made the card something that arrived
+           ;; unasked for every face crossed on the way somewhere else — see
+           ;; `frq.profile`.
+           [:avatar {:label (:from m)
+                     :src (or src "")
+                     :size face-size
+                     :on-click #(actions/profile-open! (:from m) (:actor m))}]))
        ;; The name carries the row, so it is set at body size in the plain
        ;; text colour: dimmed caption made the one thing you scan a column
        ;; for the faintest thing on it.

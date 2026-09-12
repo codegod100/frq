@@ -1176,28 +1176,12 @@
                        (avatars/fetch! actor bump!)
                        (profile/open! nick actor))
       :profile-close! profile/close!
-      ;; `dismiss!` and not `close!`: the card is shown for `viewing` or for
-      ;; `hovering`, and a Close that cleared only the first leaves the one a
-      ;; pointer opened on screen with its own button doing nothing.
-      :profile-dismiss! profile/dismiss!
       :profile-entry profile/entry
       :profile-tick (fn [] @profile/tick)
       :profile-stats-line profile/stats-line
       :profile-truncate profile/truncate
       :profile-web-url profile/web-url
       :viewing (fn [] @profile/viewing)
-      ;; The pointer half of a profile. These were no-ops while this file was
-      ;; only ever an APK — a finger is either on a face or not on it — and
-      ;; `just flutter-desktop` has a mouse, so the machine under them is the
-      ;; shared one now. Nothing reaches them on the phone anyway: the screens
-      ;; ask `desktop?` before they hang a hover on a face at all.
-      :hovering (fn [] @profile/hovering)
-      :profile-hover! (fn [nick actor]
-                        (avatars/fetch! actor bump!)
-                        (profile/hover! nick actor))
-      :profile-unhover! profile/unhover!
-      :profile-enter-dialog! profile/enter-dialog!
-      :profile-leave-dialog! profile/leave-dialog!
       ;; Their profile on the web, handed to the browser the same way the
       ;; sign-in link is.
       :open-url! (fn [url] (fio/open-url! url))

@@ -118,8 +118,4 @@
   :utf8-string          (fn [bs] (String. (byte-array (map unchecked-byte bs))))
   :wall-nanos           host/wall-nanos
   :mono-nanos           host/mono-nanos
-  :local-offset-seconds (fn [secs] (host/tz-offset-seconds @zone secs))
-  ;; The window's own timer and not a thread that sleeps: a callback that
-  ;; repaints has to arrive on the thread the toolkit draws from, and
-  ;; `frq.platform` is where each backend lends this one its loop.
-  :after!               platform/after!})
+  :local-offset-seconds (fn [secs] (host/tz-offset-seconds @zone secs))})

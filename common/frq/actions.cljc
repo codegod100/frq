@@ -90,7 +90,6 @@
 
 (defn desktop? [] (boolean (call :desktop? [])))
 (defn quit! [] (call :quit! []))
-(defn hovering [] (call :hovering []))
 (defn viewing [] (call :viewing []))
 (defn accept-policy! [& args] (call :accept-policy! args))
 (defn close-picker! [& args] (call :close-picker! args))
@@ -135,8 +134,6 @@
 
 ;; ---------------------------------------------------------------- profile
 
-(defn profile-hover! [& args] (call :profile-hover! args))
-(defn profile-unhover! [& args] (call :profile-unhover! args))
 (defn profile-open! [& args] (call :profile-open! args))
 (defn toggle-hide-join-part! [] (call :toggle-hide-join-part! []))
 
@@ -156,10 +153,7 @@
 (defn avatar-ready [& args] (call :avatar-ready args))
 
 (defn profile-close! [& args] (call :profile-close! args))
-(defn profile-dismiss! [& args] (call :profile-dismiss! args))
-(defn profile-enter-dialog! [& args] (call :profile-enter-dialog! args))
 (defn profile-entry [& args] (call :profile-entry args))
-(defn profile-leave-dialog! [& args] (call :profile-leave-dialog! args))
 (defn profile-stats-line [& args] (call :profile-stats-line args))
 (defn profile-tick [] (call :profile-tick []))
 (defn profile-truncate [& args] (call :profile-truncate args))

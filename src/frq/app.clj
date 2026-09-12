@@ -25,7 +25,7 @@
             [frq.glyphs :as glyphs]
             [frq.media :as media]
             [frq.platform :as platform]
-            [frq.profile.pointer :as profile]
+            [frq.profile.host :as profile]
             ;; The connect screen lives in common/ now — the same file the
             ;; phone renders. It reads frq.cells and calls frq.actions, and
             ;; this requires it exactly where its own copy used to be.
@@ -208,18 +208,12 @@
  {:avatar-path (fn [actor] @(avatar-path actor))
   :image-path (fn [url] @(image-path url))
   ;; The profile half lives here rather than in frq.state, which does not
-  ;; require frq.profile — who is hovered and whose card is open is a question
-  ;; about the screen, not about the connection.
-  :hovering (fn [] @profile/hovering)
+  ;; require frq.profile — whose card is open is a question about the screen,
+  ;; not about the connection.
   :viewing (fn [] @profile/viewing)
-  :profile-hover! profile/hover!
-  :profile-unhover! profile/unhover!
   :profile-open! profile/open!
   :profile-close! profile/close!
-  :profile-dismiss! profile/dismiss!
-  :profile-enter-dialog! profile/enter-dialog!
   :profile-entry profile/entry
-  :profile-leave-dialog! profile/leave-dialog!
   :profile-stats-line profile/stats-line
   :profile-tick (fn [] @profile/tick)
   :profile-truncate profile/truncate

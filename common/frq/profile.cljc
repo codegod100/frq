@@ -11,22 +11,22 @@
   them the screen is the nick and a line saying so, which is the honest answer
   rather than a spinner that never lands.
 
-  What a pointer does about one is here too, at the foot of this file: hovering
-  a face, the grace period for crossing from the face to the card, and the card
-  reporting its own pointer. That used to be jolt's alone, on the reading that
-  a pointer meant libcosmic — but `just flutter-desktop` is a window with a
-  mouse in it as much as `just cosmic run` is, and the machine is a few atoms
-  and a timer with nothing host-shaped in it. The timer is the one thing that was,
-  and `frq.io/after!` is where that went. Whether there is a pointer at all is
-  still the host's answer: `actions/desktop?`.
+  One gesture opens it, on every backend: a press. A pointer resting on a face
+  used to open the card too, with a grace period for crossing from the face to
+  it and the card reporting its own pointer back, so that leaving the face was
+  not the end of it. That is gone. It made the card something that could arrive
+  and leave without being asked for — crossing a column of faces on the way to
+  the scrollbar flickered one open per row — and it bought a second way in at
+  the price of a dialog that had to be non-modal to be able to close itself.
+  Pressing a face is the whole of it now, and what it opens stays until it is
+  closed.
 
   The fetch is a seam, because it is the one part that differs — a future and a
   blocking request on one side, an awaited one on the other. Nothing is fetched
   until a backend installs one, and `entry` simply answers nil."
   (:require [clojure.string :as str]
             [frq.atproto.core :as atproto]
-            [frq.cells :as cells]
-            [frq.io :as io]))
+            [frq.cells :as cells]))
 
 (def directory-host atproto/directory-host)
 
@@ -37,7 +37,6 @@
 (defonce ^:private cache (atom {}))
 
 (def viewing cells/profile-viewing)
-(def hovering cells/profile-hovering)
 (def tick cells/profile-tick)
 
 ;; A handle is a domain: labels joined by dots, ending in something alphabetic.
@@ -153,86 +152,10 @@
   (reset! viewing {:nick nick :actor actor})
   (fetch! actor))
 
-(defn close! [] (reset! viewing nil))
-
-;; ------------------------------------------------------- what a pointer does
-
-;; Whether the pointer is on the dialog the hover put up.
-;;
-;; This is what makes a hovered profile something you can move into and read
-;; rather than something you can only glance at: the dialog reports its own
-;; pointer, so leaving the face is not the end of the hover if the pointer
-;; turned up here instead.
-(defonce ^:private over-dialog? (atom false))
-
-(defn dismiss!
-  "Put the profile away, however it was opened.
-
-  The dialog is shown for `viewing` or for `hovering`, so a Close that cleared
-  only the first left one the pointer had opened on screen with its own button
-  doing nothing to it."
+(defn close!
+  "Put the profile away."
   []
-  (reset! viewing nil)
-  (reset! hovering nil)
-  ;; And the pointer's claim on it. Close takes the dialog out from under the
-  ;; pointer, so there is no leaving edge coming to say so — left set, it
-  ;; would hold the next hover open for good.
-  (reset! over-dialog? false))
-
-;; How long the pointer may be on neither the face nor the dialog before the
-;; dialog goes.
-;;
-;; There is a gap between the two — the dialog is centred and the face is
-;; wherever the message is — and a hover that ended the instant the pointer
-;; left the face would close it halfway across every time. Long enough to
-;; cross, short enough that a pointer moving somewhere else entirely does not
-;; drag it along.
-(def ^:private grace-ms 400)
-
-(defn- release!
-  "Let `nick`'s hover go, unless something has taken it up again.
-
-  Three things can have happened in the grace period: the pointer arrived on
-  the dialog, it went back to the face, or it landed on someone else's. In all
-  three there is a hover to keep, and it is not this one's to end — which is
-  what the nick guard says."
-  [nick]
-  (when-not @over-dialog?
-    (swap! hovering #(when-not (= nick (:nick %)) %))))
-
-(defn hover!
-  "The pointer has come to rest on someone's face. Starts the fetch opening
-  them would, so the card has something on it by the time it is read.
-
-  Their picture is not asked for here. It is the one part of this that needs
-  the host — the desktop downloads a file and the phone hands the CDN URL
-  straight to the widget — so each backend asks for it at the seam, beside the
-  call to this."
-  [nick actor]
-  (reset! hovering {:nick nick :actor actor})
-  (fetch! actor))
-
-(defn unhover!
-  "The pointer has left `nick`'s face — which is not yet the end of it.
-
-  Guarded by who is being left, so the leaving of one face cannot take down
-  the card of the next one: both edges arrive in the same frame when the
-  pointer crosses straight over."
-  [nick]
-  (io/after! grace-ms #(release! nick)))
-
-(defn enter-dialog!
-  "The pointer is on the dialog. Whatever hover put it there is now this."
-  []
-  (reset! over-dialog? true))
-
-(defn leave-dialog!
-  "The pointer has left the dialog, and with it the last thing holding the
-  profile open — unless it went back to the face it came from."
-  []
-  (reset! over-dialog? false)
-  (let [nick (:nick @hovering)]
-    (io/after! grace-ms #(release! nick))))
+  (reset! viewing nil))
 
 (defn web-url
   "Their profile on the web, by handle where there is one and DID otherwise."
