@@ -14,34 +14,14 @@
   written down — it says only \"the account on this session did this\", which
   is all the server is asking.
 
-  The primitives are OpenSSL's, reached through the same libcrypto jolt already
-  loads for TLS. There is no other crypto here to borrow, and an Ed25519
-  written by hand is not a thing to put in a chat client."
+  Shared, because all of that is the same everywhere. What is not is the four
+  primitives underneath — Ed25519, SHA-256 and a source of random bytes — and
+  those are `frq.crypto`, which the desktop answers with OpenSSL and the phone
+  with its own. A platform that answers none of them signs nothing, and this
+  namespace already knew how to be in that state."
   (:require [clojure.string :as str]
-            [jolt.ffi :as ffi]
-            [jolt.host :as host]
-            [jolt.mvn-http :as tls]))
-
-;; ---------------------------------------------------------------- libcrypto
-
-(ffi/defcfn c-rand-bytes "RAND_bytes" [:pointer :int] :int)
-(ffi/defcfn c-new-raw-priv "EVP_PKEY_new_raw_private_key"
-  [:int :pointer :pointer :size_t] :pointer)
-(ffi/defcfn c-get-raw-pub "EVP_PKEY_get_raw_public_key"
-  [:pointer :pointer :pointer] :int)
-(ffi/defcfn c-pkey-free "EVP_PKEY_free" [:pointer] :void)
-(ffi/defcfn c-md-ctx-new "EVP_MD_CTX_new" [] :pointer)
-(ffi/defcfn c-md-ctx-free "EVP_MD_CTX_free" [:pointer] :void)
-(ffi/defcfn c-sign-init "EVP_DigestSignInit"
-  [:pointer :pointer :pointer :pointer :pointer] :int)
-(ffi/defcfn c-sign "EVP_DigestSign" [:pointer :pointer :pointer :pointer :size_t] :int)
-(ffi/defcfn c-sha256 "SHA256" [:pointer :size_t :pointer] :pointer)
-
-;; EVP_PKEY_ED25519. The one NID this namespace needs, and the one number in
-;; OpenSSL's table that would be a silent wrong key if it were wrong.
-(def ^:private nid-ed25519 1087)
-
-;; ---------------------------------------------------------------- encoding
+            [frq.crypto :as crypto]
+            [frq.io :as io]))
 
 (def ^:private b64url-alphabet
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
@@ -65,35 +45,26 @@
              (nth b64url-alphabet
                   (bit-and (bit-shift-right v (* 6 (- 3 i))) 0x3f))))))
 
-(defn- random-bytes
-  "`n` bytes from OpenSSL's CSPRNG, or nil if it will not give them."
-  [n]
-  (let [buf (ffi/alloc n)]
-    (try (when (= 1 (c-rand-bytes buf n)) (ffi/read-array buf n))
-         (finally (ffi/free buf)))))
 
-(defn- sha256 [bs]
-  (let [n (alength bs)
-        in (ffi/alloc (max 1 n))
-        out (ffi/alloc 32)]
-    (try (ffi/write-array in bs)
-         (c-sha256 in n out)
-         (ffi/read-array out 32)
-         (finally (ffi/free in) (ffi/free out)))))
 
 ;; ---------------------------------------------------------------- the key
 
-;; One key per connection: {:pkey <EVP_PKEY*> :public <b64url> :kid <b64url>
-;; :did <did>}. Held here rather than on the connection because a signature is
-;; not something the transport should be able to hand out.
+
+
+
+
+
+;; One key per connection: {:public <b64url> :kid <b64url> :did <did>}. The
+;; private half is not here and never was — `frq.crypto` keeps it, because a
+;; signature is not something this namespace, or the transport under it,
+;; should be able to hand out.
 (defonce ^:private signer (atom nil))
 
 (defn forget!
   "Drop the session key. Called when the connection goes, so a reconnect signs
   with a key the server has actually been told about."
   []
-  (when-let [{:keys [pkey]} @signer]
-    (try (c-pkey-free pkey) (catch Exception _ nil)))
+  (crypto/ed25519-forget!)
   (reset! signer nil))
 
 (defn public-key
@@ -103,58 +74,31 @@
 
 (defn generate!
   "Mint this connection's signing key for `did`, and return the public half as
-  base64url — the argument `MSGSIG` takes. nil if libcrypto will not play, and
-  then nothing is signed and reactions stay a thing only this client sees.
+  base64url — the argument `MSGSIG` takes. nil where the platform has no
+  Ed25519, and then nothing is signed and reactions stay a thing only this
+  client sees.
 
   The private key is a random 32-byte seed rather than a keygen context: for
-  Ed25519 the seed *is* the key, and `EVP_PKEY_new_raw_private_key` is the
-  whole of it."
+  Ed25519 the seed *is* the key."
   [did]
   (forget!)
-  (try
-    (tls/ensure-native!)
-    (when-let [seed (random-bytes 32)]
-      (let [buf (ffi/alloc 32)]
-        (try
-          (ffi/write-array buf seed)
-          (let [pkey (c-new-raw-priv nid-ed25519 ffi/null buf 32)]
-            (when-not (ffi/null? pkey)
-              (let [pub (ffi/alloc 32)
-                    plen (ffi/alloc (ffi/sizeof :size_t))]
-                (try
-                  (ffi/write plen :size_t 32)
-                  (when (= 1 (c-get-raw-pub pkey pub plen))
-                    (let [raw (ffi/read-array pub 32)]
-                      (reset! signer
-                              {:pkey pkey
-                               :did did
-                               :public (b64url raw)
-                               ;; The key id freeq names a signature by: the
-                               ;; first half of the key's own SHA-256.
-                               :kid (b64url (take 16 (sha256 raw)))})
-                      (:public @signer)))
-                  (finally (ffi/free pub) (ffi/free plen))))))
-          (finally (ffi/free buf)))))
-    (catch Exception _ nil)))
+  (when-let [seed (crypto/random-bytes 32)]
+    (when-let [raw (crypto/ed25519-generate! seed)]
+      (reset! signer
+              {:did did
+               :public (b64url raw)
+               ;; The key id freeq names a signature by: the first half of the
+               ;; key's own SHA-256.
+               :kid (b64url (take 16 (crypto/sha256 raw)))})
+      (:public @signer))))
 
 (defn- sign-bytes
   "An Ed25519 signature over `bs`, as `ed25519:<kid>:<b64url>` — the shape
   freeq's `+freeq.at/sig` carries."
   [bs]
-  (when-let [{:keys [pkey kid]} @signer]
-    (let [n (alength bs)
-          msg (ffi/alloc (max 1 n))
-          sig (ffi/alloc 64)
-          slen (ffi/alloc (ffi/sizeof :size_t))
-          ctx (c-md-ctx-new)]
-      (try
-        (ffi/write-array msg bs)
-        (ffi/write slen :size_t 64)
-        (when (and (= 1 (c-sign-init ctx ffi/null ffi/null ffi/null pkey))
-                   (= 1 (c-sign ctx sig slen msg n)))
-          (str "ed25519:" kid ":" (b64url (ffi/read-array sig (ffi/read slen :size_t)))))
-        (catch Exception _ nil)
-        (finally (ffi/free msg) (ffi/free sig) (ffi/free slen) (c-md-ctx-free ctx))))))
+  (when-let [{:keys [kid]} @signer]
+    (when-let [sig (crypto/ed25519-sign bs)]
+      (str "ed25519:" kid ":" (b64url sig)))))
 
 ;; ---------------------------------------------------------------- canonical
 
@@ -169,11 +113,13 @@
   no space in it. Both ends build this string from the same fields and neither
   sends it — a signature over anything else is a signature over nothing."
   [m]
-  (.getBytes (str "{"
-                  (str/join "," (for [[k v] (into (sorted-map) m)]
-                                  (str (json-string k) ":" (json-string v))))
-                  "}")
-             "UTF-8"))
+  ;; UTF-8 through `frq.io`: `.getBytes` is Java and there is none of it under
+  ;; ClojureDart, and the bytes have to be the same on both or a signature
+  ;; made on one would not verify against the other.
+  (io/utf8-bytes (str "{"
+                      (str/join "," (for [[k v] (into (sorted-map) m)]
+                                      (str (json-string k) ":" (json-string v))))
+                      "}")))
 
 (def ^:private crockford "0123456789ABCDEFGHJKMNPQRSTVWXYZ")
 
@@ -182,11 +128,11 @@
   chance. Sortable like the msgids the server hands out, and unguessable
   enough that two clients cannot mint the same one."
   []
-  (let [t (loop [t (quot (host/wall-nanos) 1000000) out ""]
+  (let [t (loop [t (quot (io/wall-nanos) 1000000) out ""]
             (if (>= (count out) 10)
               out
               (recur (quot t 32) (str (nth crockford (mod t 32)) out))))]
-    (apply str t (for [b (or (random-bytes 16) (repeat 16 0))]
+    (apply str t (for [b (or (crypto/random-bytes 16) (repeat 16 0))]
                    (nth crockford (mod (bit-and (int b) 0xff) 32))))))
 
 (defn signing-target
@@ -212,7 +158,7 @@
   [text]
   (str "sha256:"
        (apply str
-              (for [b (sha256 (.getBytes (or text "") "UTF-8"))
+              (for [b (crypto/sha256 (io/utf8-bytes (or text "")))
                     :let [v (bit-and (int b) 0xff)]
                     c [(nth hex-digits (bit-shift-right v 4))
                        (nth hex-digits (bit-and v 0xf))]]

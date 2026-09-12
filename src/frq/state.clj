@@ -15,6 +15,9 @@
             [frq.clock :as clock]
             [frq.emoji :as emoji]
             [frq.irc :as irc]
+            ;; For the side effect: it installs the desktop crypto behind
+            ;; `frq.crypto`, which the shared `frq.msgsig` signs through.
+            [frq.crypto.openssl]
             [frq.msgsig :as msgsig]
             [frq.avatars :as avatars]
             [frq.media :as media]

@@ -211,8 +211,15 @@ the first move rather than the tenth.
    browser it does not own. That wants an app link or a custom scheme, an
    intent filter, and a redirect URI the broker will accept — a decision about
    freeq's broker, not a porting problem.
-3. **`frq.msgsig`** (268), **`frq.wire`** (81) — need a crypto seam beside the
-   io one.
+3. ~~**`frq.msgsig`**~~ — done. The signing is shared; the four primitives
+   under it are `frq.crypto`, which the desktop answers with the same OpenSSL
+   it loads for TLS and the phone with `package:ed25519_edwards` and
+   `package:crypto`, both pure Dart and both synchronous — a signature is
+   minted in the middle of sending a reaction and there is nothing to await
+   on. Verified on both against RFC 8032 test 1: same public key, same
+   signature, byte for byte.
+
+   **`frq.wire`** (81) still wants the seam extended.
 4. **`frq.avatars`**, **`frq.media`**, **`frq.profile`**, **`frq.platform`** —
    small, and mostly fetch-and-cache.
 5. **`frq.state`** moves to `common/` as `.cljc`, with `atom` resolved per

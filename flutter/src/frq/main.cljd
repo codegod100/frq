@@ -23,6 +23,7 @@
             [frq.hiccup :as h]
             [frq.theme :as t]
             [frq.io.dart :as host]
+            [frq.crypto.dart :as crypto-dart]
             [frq.net.dart :as net]
             [frq.atproto.dart :as atproto]
             [frq.clock :as clock]
@@ -251,6 +252,11 @@
                              " CONTEXT " (.-context details)))))
   (let [dir (.-path (await (pp/getApplicationSupportDirectory)))]
     (host/install! dir)
+    ;; Ed25519 for the reactions freeq will not take on trust. Verified
+    ;; against RFC 8032 test 1 on the device: the same public key and the
+    ;; same signature OpenSSL gives on the desktop, so a signature minted
+    ;; here verifies the same way at the server.
+    (crypto-dart/install!)
     ;; What the shared screen calls. The desktop installs frq.state's
     ;; reducers here; this installs the phone's.
     (actions/install!
