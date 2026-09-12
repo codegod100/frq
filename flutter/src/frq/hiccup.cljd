@@ -87,10 +87,30 @@
   `[chat-screen]` is a function, and asking whether it fills means calling it —
   the root wraps every screen in a plain `:vbox`, and without this the wrapper
   could not see that the screen inside it wants the whole height. Expanded
-  once and both asked and rendered, so the component runs once either way."
+  once and both asked and rendered, so the component runs once either way.
+
+  Two rules taken from glimmer, because the screens are written against it
+  and a renderer that reads them differently reads them wrong.
+
+  A leading map carrying `:key` is for the reconciler, not for the component:
+  `:key` is dropped, and a map that held nothing else goes with it.
+  `[action-chips {:key :actions} channel m]` is a two-argument call, and
+  passing the map on threw NoSuchMethodError on the one line in the shared
+  screens written that way — the line that draws react and reply.
+
+  And a component may answer with its render function rather than with
+  hiccup: glimmer's Form-2, where the outer call is the mount and the inner
+  one is the render. Nothing here caches the inner fn the way glimmer does,
+  so this calls it every time — a call more, and the same output."
   [node]
   (if (and (vector? node) (seq node) (not (keyword? (first node))))
-    (expand (apply (first node) (rest node)))
+    (let [raw (rest node)
+          args (if (and (seq raw) (map? (first raw)) (contains? (first raw) :key))
+                 (let [m (dissoc (first raw) :key)]
+                   (if (seq m) (cons m (rest raw)) (rest raw)))
+                 raw)
+          out (apply (first node) args)]
+      (expand (if (fn? out) (out) out)))
     node))
 
 (defn- fills-row?
@@ -412,6 +432,45 @@
                      .borderRadius (m/BorderRadius.circular t/radius-s))
         .child (col (dbl (:spacing p) t/space-xxs) (body node)))
 
+       ;; A reaction pill: the glyph, and the tally beside it where there is
+       ;; one to show. The same shape whether it is a reaction under a message,
+       ;; a swatch in the picker or the react/reply/edit chips on the sender's
+       ;; row — which is the point, as `action-chips` says: what you press to
+       ;; react and what appears once you have should look like one family.
+       ;;
+       ;; A count of zero is no count. The picker passes 0 for every swatch
+       ;; because none of them has been pressed, and a grid of little grey
+       ;; zeroes is noise where a reader is scanning for a face.
+       ;;
+       ;; `:mine` is the accent, because the only thing a pill has to say at a
+       ;; glance is whether pressing it again would take yours off.
+       :reaction
+       (let [size (dbl (:size p) 14.0)
+             n (:count p)
+             mine (boolean (:mine p))
+             pad (max 2.0 (* 0.25 size))]
+         (m/InkWell
+          .onTap (when-let [on (:on-click p)] #(on))
+          .borderRadius (m/BorderRadius.circular t/radius-s)
+          .child
+          (m/Container
+           .padding (m/EdgeInsets.symmetric .horizontal pad .vertical (* 0.5 pad))
+           .decoration (m/BoxDecoration
+                        .color (if mine t/accent t/card-component)
+                        .borderRadius (m/BorderRadius.circular t/radius-s))
+           .child
+           (m/Row
+            .mainAxisSize m/MainAxisSize.min
+            .children
+            (into [(m/Text (str (:emoji p ""))
+                           .style (m/TextStyle .fontSize size))]
+                  (when (and (number? n) (pos? n))
+                    [(m/SizedBox .width pad)
+                     (m/Text (str n)
+                             .style (m/TextStyle
+                                     .fontSize (* 0.85 size)
+                                     .color (if mine t/on-accent t/on-card)))]))))))
+
        :separator (m/Divider .height 1.0 .thickness 1.0 .color t/divider)
 
        ;; A 16px indeterminate circle, with the label as a caption beside it.
@@ -580,9 +639,14 @@
 (defn render
   "One hiccup node as a Flutter widget.
 
-  A vector whose head is a function is a component: glimmer calls it with the
-  rest of the vector as arguments and renders what comes back, and so does
-  this. Everything else is a tag."
+  A vector whose head is a function is a component, and `expand` is what calls
+  one — here as well as in the fills- questions above. It used to be applied
+  again right here, which is how a component could be asked whether it fills
+  by one set of rules and rendered by another: the `:key` map that `expand`
+  learned to strip still reached the function on the way to the screen, and
+  the chat screen still threw. One door now.
+
+  Everything else is a tag."
   [node]
   (cond
     (nil? node) (m/SizedBox .width 0.0 .height 0.0)
@@ -591,7 +655,7 @@
     (let [head (first node)]
       (if (keyword? head)
         (render-tag head node)
-        (render (apply head (rest node)))))
+        (render (expand node))))
     (seq? node)
     (m/Column .crossAxisAlignment m/CrossAxisAlignment.start
               .mainAxisSize m/MainAxisSize.min

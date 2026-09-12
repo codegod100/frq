@@ -363,11 +363,18 @@
       [:button {:label "✕" :on-click actions/close-picker!}]]
      ;; The groups are what the search box is not: a way in for someone who has
      ;; no word for what they want. Their first word is enough to tell them
-     ;; apart, and is what keeps them to two rows. They give way to the
+     ;; apart, and is what keeps them to a couple of rows. They give way to the
      ;; search's own answer while something is typed.
+     ;;
+     ;; Four to a row on a phone and five in a window. The row does not wrap —
+     ;; it is a row — so the count is the only thing deciding whether the last
+     ;; button is on screen, and five of them ran off the right-hand edge of a
+     ;; handset by about the width of the word they were trying to show.
      [:vbox {:key :groups :spacing 4}
       (when-not searching?
-        (for [[i row] (map-indexed vector (partition-all 5 (cons nil emoji-groups)))]
+        (for [[i row] (map-indexed vector
+                                   (partition-all (if (actions/desktop?) 5 4)
+                                                  (cons nil emoji-groups)))]
           [:hbox {:key i :spacing 4}
            (for [g row]
              [:button {:key (or g "popular")

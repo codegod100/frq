@@ -7,6 +7,7 @@
   (:require [clojure.string :as str]
             [frq.rooms :as rooms]
             [frq.members :as members]
+            [frq.reactions :as reactions]
             [glimmer.ratom :as r :refer [atom]]
             [frq.actions :as actions]
             [frq.cells :as cells]
@@ -553,48 +554,14 @@
     (reset! screen :chats))
   (remember-rooms! true))
 
-(defn- parse-reactions
-  "The server's tally of what is already on a message, as
-  `emoji:nick,nick;emoji:nick` — what CHATHISTORY sends so reactions survive a
-  reconnect rather than starting empty every time the app opens."
-  [encoded]
-  (when (seq (or encoded ""))
-    (reduce (fn [acc part]
-              (let [[emoji nicks] (str/split part #":" 2)]
-                (if (and (seq emoji) (seq (or nicks "")))
-                  (assoc acc emoji (vec (remove str/blank? (str/split nicks #","))))
-                  acc)))
-            {}
-            (str/split encoded #";"))))
-
-(defn- with-reaction
-  "One nick's reaction added to or taken off a tally. An emoji nobody is left
-  on goes away with them: an empty pill is a pill that says nothing."
-  [reactions emoji nick on?]
-  (let [nicks (vec (get reactions emoji []))
-        nicks (if on?
-                (if (some #{nick} nicks) nicks (conj nicks nick))
-                (vec (remove #{nick} nicks)))]
-    (if (seq nicks)
-      (assoc reactions emoji nicks)
-      (dissoc reactions emoji))))
+(def ^:private parse-reactions reactions/parse-tally)
+(def ^:private with-reaction reactions/with-reaction)
 
 (defn update-reaction!
-  "Fold one reaction into the buffer it belongs to. The message it names may
-  not be there — a reaction on something older than the backlog we asked for —
-  and then there is nothing to show it on, so nothing happens."
+  "One reaction folded into the buffer it belongs to. `frq.reactions` says what
+  that means; this is the atom it means it to."
   [channel msgid emoji nick on?]
-  (when (and channel msgid (seq (or emoji "")))
-    (swap! channels
-           (fn [m]
-             (if-let [msgs (get-in m [channel :messages])]
-               (assoc-in m [channel :messages]
-                         (mapv (fn [msg]
-                                 (if (= msgid (:id msg))
-                                   (update msg :reactions with-reaction emoji nick on?)
-                                   msg))
-                               msgs))
-               m)))))
+  (swap! channels reactions/update-reaction channel msgid emoji nick on?))
 
 (defn edit-message!
   "Rewrite a message in place, and say so. `msgid` names the line as it was
@@ -1450,15 +1417,9 @@
         (reset! error (str "Could not read that picture: " (or (ex-message e) e)))))))
 
 (defn- dm-peer-did
-  "The DID of whoever this DM buffer is with, from the last thing they said.
-  nil for a channel, and for a conversation where nobody with a DID has spoken
-  — a signature over a DM needs both sides named, and there is nothing to name."
+  "Who this DM is with. `frq.reactions` reads it out of the buffer."
   [channel]
-  (when-not (str/starts-with? (or channel "") "#")
-    (->> (get-in @channels [channel :messages])
-         (remove #(= @form-nick (:from %)))
-         (keep :did)
-         last)))
+  (reactions/peer-did @channels channel @form-nick))
 
 (defn mine?
   "Whether we are the one who said this. Nick against nick, which is what the
@@ -1596,29 +1557,16 @@
 
 (defn close-picker! [] (reset! reacting nil))
 
-(defn picker-emoji
-  "What the picker is showing right now: the popular row, one group, or
-  whatever the search matches — by name, so \"cat\" finds the cat and the cat
-  face, and by the emoji itself, so pasting one finds it."
-  []
-  (let [q (str/lower-case (str/trim @emoji-search))
-        ;; A blank group is no group: the popular row is what nothing selected
-        ;; means, and an empty string would filter the catalog down to nothing.
-        group (when (seq (or @emoji-group "")) @emoji-group)]
-    (cond
-      (seq q) (->> emoji/catalog
-                   (filter (fn [[glyph name _]]
-                             (or (str/includes? (str/lower-case name) q)
-                                 (str/includes? glyph q))))
-                   vec)
-      group (vec (filter (fn [[_ _ g]] (= g group)) emoji/catalog))
-      :else (mapv (fn [glyph] [glyph glyph nil]) emoji/popular))))
+(def picker-emoji
+  "Moved to `frq.reactions`: it is the cells and the catalog, both of which
+  are shared, and the phone shows the same picker."
+  reactions/picker-emoji)
 
 (defn my-reaction?
   "Whether this nick is already on that emoji — which is what makes a second
   click take it off rather than send the same reaction twice."
   [m emoji]
-  (boolean (some #{@form-nick} (get (:reactions m) emoji))))
+  (reactions/mine? m emoji @form-nick))
 
 (def reaction-hover cells/reaction-hover)
 

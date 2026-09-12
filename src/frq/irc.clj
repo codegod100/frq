@@ -18,6 +18,7 @@
             [frq.atproto :as atproto]
             [frq.irc.parse :as parse]
             [frq.irc.handshake :as handshake]
+            [frq.irc.mutate :as mutate]
             [frq.msgsig :as msgsig]
             [frq.wire :as wire]
             [jolt.ffi :as ffi]
@@ -269,25 +270,17 @@
 (defn react!
   "Put `emoji` on the message `msgid`, for everyone in `target` to see.
 
-  Signed when this connection has a key. `peer-did` is who the DM is with, and
-  is what a DM signature names the conversation by; a channel does not need it."
+  The line is `frq.irc.mutate`'s; this writes it."
   ([conn target msgid emoji] (react! conn target msgid emoji nil))
   ([conn target msgid emoji peer-did]
-   (tagmsg! conn target (merge {"+react" emoji "+reply" msgid}
-                               (msgsig/mutation-tags "react" target msgid
-                                                     emoji peer-did)))))
+   (send-line! conn (mutate/react-line target msgid emoji peer-did))))
 
 (defn unreact!
-  "Take it off again. The server keys the removal by DID where there is one, so
-  it survives a nick change and cannot be done on someone else's behalf.
-
-  Signed like the reaction it undoes — taking a pill off is as much a change to
-  a message as putting one on, and the server asks for the same proof."
+  "Take it off again."
   ([conn target msgid emoji] (unreact! conn target msgid emoji nil))
   ([conn target msgid emoji peer-did]
-   (tagmsg! conn target (merge {"+freeq.at/unreact" emoji "+reply" msgid}
-                               (msgsig/mutation-tags "unreact" target msgid
-                                                     emoji peer-did)))))
+   (send-line! conn (mutate/unreact-line target msgid emoji peer-did))))
+
 
 (defn close! [conn]
   ;; Written straight out rather than queued: the reader may already be gone,

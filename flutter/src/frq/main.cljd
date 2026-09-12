@@ -40,6 +40,8 @@
             [frq.screens.app :as screens]
             [frq.rooms :as rooms]
             [frq.members :as members]
+            [frq.reactions :as reactions]
+            [frq.irc.mutate :as mutate]
             [frq.oauth.core :as oauth]
             [frq.oauth.dart :as oauth-dart]
             [frq.irc.parse :as irc]
@@ -123,12 +125,49 @@
              (first params) (nth params 1 "") (drop 2 params))
 
       (= "PRIVMSG" cmd)
-      (let [target (first params)
+      (let [tags (:tags m)
+            target (first params)
             text (last params)
             name (if (rooms/dm? target) who target)]
         (swap! cells/channels update name
                #(-> (merge {:name name :messages [] :unread 0} %)
-                    (update :messages conj {:from who :text text})))))))
+                    (update :messages conj
+                            ;; The msgid is what everything after a message
+                            ;; names it by — a reply points at one, a reaction
+                            ;; lands on one. Without it a line is on screen and
+                            ;; nothing can be said about it.
+                            {:from who
+                             :text text
+                             :did (:account m)
+                             :id (irc/tag-value tags "msgid")
+                             ;; The server canonicalises +draft/reply to
+                             ;; +reply; a client that sent the draft name may
+                             ;; still reach us before it does.
+                             :reply-to (or (irc/tag-value tags "+reply")
+                                           (irc/tag-value tags "+draft/reply"))
+                             ;; What is already on it, so a reconnect does not
+                             ;; start every message empty.
+                             :reactions (reactions/parse-tally
+                                         (irc/tag-value tags
+                                                        "+freeq.at/reactions"))}))))
+
+      ;; A message that is only tags. A reaction is the one this reads:
+      ;; `+react` puts an emoji on the message `+reply` names, and the
+      ;; server's own `+freeq.at/unreact` takes it off again.
+      (= "TAGMSG" cmd)
+      (let [tags (:tags m)
+            target (first params)
+            buffer (if (rooms/dm? target) who target)
+            msgid (or (irc/tag-value tags "+reply")
+                      (irc/tag-value tags "+draft/reply"))
+            add (or (irc/tag-value tags "+react")
+                    (irc/tag-value tags "+draft/react"))
+            gone (irc/tag-value tags "+freeq.at/unreact")]
+        (cond
+          add (swap! cells/channels reactions/update-reaction
+                     buffer msgid add who true)
+          gone (swap! cells/channels reactions/update-reaction
+                      buffer msgid gone who false))))))
 
 (defn- note! [m]
   (reset! last-line (str (:command m) " " (last (:params m))))
@@ -443,6 +482,31 @@
                #(update % :messages conj {:from @cells/form-nick :text text})))
       (reset! cells/draft ""))))
 
+(defn- message-by-id [room id]
+  (when id
+    (first (filter #(= id (rooms/row-id %))
+                   (get-in @cells/channels [room :messages])))))
+
+(defn- toggle-reaction!
+  "Put my emoji on a message, or take it off if it is already mine.
+
+  Applied here as well as sent: the server relays a TAGMSG to everyone in the
+  channel *except* the client that sent it, so without this the pill would
+  only appear once someone else reacted too."
+  [channel m emoji]
+  (when-let [msgid (:id m)]
+    (let [me (str @cells/form-nick)
+          on? (not (reactions/mine? m emoji me))
+          peer (reactions/peer-did @cells/channels channel me)]
+      (when-let [c @conn]
+        (net/send-line! c (if on?
+                            (mutate/react-line channel msgid emoji peer)
+                            (mutate/unreact-line channel msgid emoji peer))))
+      (swap! cells/channels reactions/update-reaction
+             channel msgid emoji me on?))))
+
+(defn- close-picker! [] (reset! cells/reacting nil))
+
 (defn ^:async main []
   (m/WidgetsFlutterBinding.ensureInitialized)
   ;; Layout errors do not come back as exceptions — they happen after the
@@ -488,6 +552,37 @@
                         (when-let [c @conn] (net/send-line! c (str "PART " name)))
                         (swap! cells/channels dissoc name))
       :send-draft! send-draft!
+
+      ;; Answering. Both are a cell and nothing else — what the composer does
+      ;; with `replying-to` is the shared screen's business.
+      :reply-to! (fn [m] (reset! cells/replying-to (select-keys m [:id :from :text])))
+      :cancel-reply! (fn [] (reset! cells/replying-to nil))
+
+      ;; Reacting. The pill itself, then the picker behind it.
+      :toggle-reaction! toggle-reaction!
+      :my-reaction? (fn [m emoji]
+                      (reactions/mine? m emoji (str @cells/form-nick)))
+      :open-picker! (fn [channel m]
+                      (when (:id m)
+                        ;; Fresh: a leftover search from last time is a screen
+                        ;; of somebody else's question.
+                        (reset! cells/emoji-search "")
+                        (reset! cells/emoji-group nil)
+                        (reset! cells/reacting {:channel channel :id (:id m)})))
+      :close-picker! close-picker!
+      :picker-emoji reactions/picker-emoji
+      :react-from-picker! (fn [emoji]
+                            ;; One choice and back to the conversation: a
+                            ;; picker left open is asking a question that has
+                            ;; been answered.
+                            (when-let [{:keys [channel id]} @cells/reacting]
+                              (when-let [m (message-by-id channel id)]
+                                (toggle-reaction! channel m emoji))
+                              (close-picker!)))
+      ;; Hover is a pointer idea. A finger is either on a pill or not on it,
+      ;; so there is nothing here to raise a card about.
+      :hover-reaction! (fn [_ _] nil)
+      :unhover-reaction! (fn [_ _] nil)
       :wide? (fn [] false)
       :desktop? (fn [] false)
       :mine? (fn [from] (= (str from) (str @cells/form-nick)))
