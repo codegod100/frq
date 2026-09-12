@@ -6,6 +6,8 @@
   is the only place a wire message turns into UI state."
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
+            [frq.actions :as actions]
+            [frq.cells :as cells]
             [jolt.host :as host]
             [frq.atproto :as atproto]
             [frq.av :as av]
@@ -20,8 +22,32 @@
             [frq.store :as store]
             [frq.upload :as upload]))
 
-(def default-host "irc.freeq.at")
-(def default-port "6697")
+(def default-host cells/default-host)
+(def default-port cells/default-port)
+
+;; The cells the connect screen reads live in `frq.cells` now, so that screen
+;; could move to common/ and be the same file on the phone. Re-defined here
+;; rather than left to the callers: a thousand lines below this say
+;; `@form-nick` and `@connecting?`, and none of them care which namespace the
+;; atom was made in.
+(def screen cells/screen)
+;; Not in frq.cells: this holds the live IRC connection, which is jolt's
+;; socket and a reader thread. The phone's equivalent is a dart:io Socket and
+;; nothing shared could hold either.
+(defonce conn (atom nil))
+(def status cells/status)
+(def error cells/error)
+(def connecting? cells/connecting?)
+(def form-host cells/form-host)
+(def form-port cells/form-port)
+(def form-tls? cells/form-tls?)
+(def form-nick cells/form-nick)
+(def auth-mode cells/auth-mode)
+(def form-handle cells/form-handle)
+(def form-app-password cells/form-app-password)
+(def session cells/session)
+(def broker-token cells/broker-token)
+(def login-url cells/login-url)
 
 (def popular-channels
   [["#general" "General discussion"]
@@ -31,31 +57,6 @@
    ["#music"   "Music recommendations"]
    ["#random"  "Off-topic chat"]])
 
-;; screen: :connect | :chats | :chat | :discover | :settings
-(defonce screen (atom :connect))
-(defonce conn (atom nil))
-(defonce status (atom "Not connected"))
-(defonce error (atom nil))
-(defonce connecting? (atom false))
-
-(defonce form-host (atom default-host))
-(defonce form-port (atom default-port))
-;; TLS is the default; untick it for a server's plain :6667 listener
-(defonce form-tls? (atom true))
-(defonce form-nick (atom "frq-guest"))
-
-;; Bluesky sign-in. The app password reaches the user's own PDS and nothing
-;; else: freeq is handed the session token it mints, and verifies that token by
-;; asking the same PDS. It is never written to disk.
-(defonce auth-mode (atom :guest))         ; :guest | :bluesky | :app-password
-(defonce form-handle (atom ""))
-(defonce form-app-password (atom ""))
-(defonce session (atom nil))              ; a pds-session or a web-token one
-
-;; The durable half of an OAuth sign-in. The web-token beside it is single-use,
-;; so a reconnect mints a fresh one from this rather than replaying the old.
-(defonce broker-token (atom nil))
-(defonce login-url (atom nil))            ; shown while the browser is open
 
 ;; joined as soon as the server sends 001
 (def auto-join "#test")
@@ -1928,3 +1929,11 @@
   (if-let [m (last (:messages buffer))]
     (str (:from m) ": " (:text m))
     "No messages yet"))
+
+;; What the shared connect screen calls. Installed here rather than in an
+;; entry point because these are this namespace's own reducers, and the screen
+;; that calls them is no longer in a position to name them.
+(actions/install!
+ {:connect! connect!
+  :disconnect! disconnect!
+  :forget-session! forget-session!})

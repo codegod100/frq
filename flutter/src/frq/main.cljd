@@ -25,54 +25,69 @@
             [frq.net.dart :as net]
             [frq.atproto.dart :as atproto]
             [frq.clock :as clock]
-            [frq.store :as store]))
+            [frq.store :as store]
+            [frq.actions :as actions]
+            [frq.cells :as cells]
+            [frq.screens.connect :as connect]))
 
 (defonce ^:private lines (atom []))
-(defonce ^:private status (atom "not connected"))
 (defonce ^:private conn (atom nil))
-
-(def ^:private host-name "irc.freeq.at")
-(def ^:private host-port 6697)
+(defonce ^:private status (atom "Not connected"))
 
 (defn- note! [m]
-  ;; Bounded, because a backlog is hundreds of lines and this is a proof
-  ;; rather than a message list — `frq.state/apply-msg!` is what turns these
-  ;; into rooms, and it is not portable yet.
-  (swap! lines (fn [v] (vec (take-last 14 (conj v m))))))
+  (swap! lines (fn [v] (vec (take-last 8 (conj v m))))))
 
-(defn ^:async connect! []
-  (reset! status (str "connecting to " host-name ":" host-port " over TLS…"))
+(defn ^:async connect!
+  "What `frq.actions/connect!` is on the phone.
+
+  The desktop's is `frq.state/connect!` — jolt's TLS, SASL, a reader thread.
+  This is the dart:io one, and it reads the same cells the screen wrote: the
+  host, the port and the TLS tick are `frq.cells`, filled in by the entry and
+  the checkbutton on screen.
+
+  Guest registration only. SASL wants `frq.msgsig`, which is not portable
+  yet — so `frq.actions` answering a name it cannot fully honour is the point
+  of that seam: the screen renders and the button works, and what is behind it
+  grows."
+  []
+  (reset! cells/connecting? true)
+  (reset! cells/error nil)
+  (reset! status (str "Connecting to " @cells/form-host "…"))
   (reset! lines [])
   (try
     (let [sock (await (net/connect!
-                       {:host host-name
-                        :port host-port
-                        :tls? true
+                       {:host @cells/form-host
+                        ;; The cell is a string, because it is what an :entry holds.
+                        :port (or (parse-long (str @cells/form-port)) 6697)
+                        :tls? (boolean @cells/form-tls?)
                         :on-msg (fn [m]
                                   (note! m)
                                   (when (= "001" (:command m))
-                                    (reset! status "registered")))
+                                    (reset! cells/connecting? false)
+                                    (reset! status
+                                            (str "Connected as " @cells/form-nick))))
                         :on-close (fn [why]
-                                    (reset! status (str "closed" (when why (str ": " why)))))}))]
+                                    (reset! cells/connecting? false)
+                                    (reset! status "Not connected")
+                                    (when why (reset! cells/error why)))}))]
       (reset! conn sock)
-      (reset! status "TLS up — registering")
-      ;; A guest registration and nothing else. No SASL: that is frq.msgsig
-      ;; and frq.atproto, neither of which is portable yet.
-      (net/send-line! sock "NICK frq-phone")
-      (net/send-line! sock "USER frq-phone 0 * :frq"))
+      (net/send-line! sock (str "NICK " @cells/form-nick))
+      (net/send-line! sock (str "USER " @cells/form-nick " 0 * :frq")))
     (catch Exception e
-      (reset! status (str "failed: " e)))))
+      (reset! cells/connecting? false)
+      (reset! status "Not connected")
+      (reset! cells/error (str e)))))
+
+(defn- disconnect! []
+  (when-let [c @conn] (net/close! c))
+  (reset! conn nil)
+  (reset! cells/connecting? false)
+  (reset! status "Not connected"))
 
 (defonce ^:private handle (atom "nandi-test.bsky.social"))
 (defonce ^:private identity-out (atom nil))
 
-(defn ^:async resolve-identity!
-  "handle → DID → PDS, over HTTPS from the phone.
-
-  The same three calls `frq.atproto` makes on the desktop, off the same
-  `frq.atproto.core`: core says what to ask and what the answer means, and
-  only who waits for it differs."
-  []
+(defn ^:async resolve-identity! []
   (reset! identity-out ["resolving…"])
   (try
     (let [h @handle
@@ -83,59 +98,68 @@
       (reset! identity-out [(str "failed: " e)]))))
 
 (defn- screen
-  "glimmer's tags, painted by `frq.hiccup`. Nothing here is Flutter."
+  "The phone's panels, in glimmer's tags.
+
+  NOT `frq.screens.connect` yet, and the reason is worth writing down rather
+  than leaving as a TODO: the extraction is done and the desktop renders the
+  shared file, but rendering it here paints nothing at all — no exception,
+  nothing in logcat, and the sibling widgets in the same `children` vector
+  disappear with it, which is what a Dart `Error` thrown while that vector is
+  being built looks like. `(catch Object ...)` around it did not surface one
+  either, so the failure is not where it appears to be.
+
+  What is already proven: `frq.cells` compiles under both compilers and holds
+  its values here — a probe read `cells/status` as \"Not connected\" and
+  `cells/form-nick` as \"frq-guest\" on the device. So the seam is sound and
+  what is left is one cljd-shaped bug between it and the screen."
   []
-  [:page {:max-width 560}
+  [:page {:max-width 520}
    [:title {:label "frq"}]
-   [:dim-label {:label "TLS from dart:io, parsed by the desktop's own frq.irc.parse."}]
+   [:dim-label {:label "Painted by frq.hiccup in COSMIC's own theme."}]
    [:card {}
     [:title-2 {:label "Connection"}]
     [:label {:label @status}]
     [:hbox {:spacing 8}
-     [:button {:label "Connect" :primary true :on-click #(connect!)}]
-     [:button {:label "Disconnect"
-               :destructive true
-               :on-click #(do (when-let [c @conn] (net/close! c))
-                              (reset! status "closed"))}]]]
+     [:button {:label "Connect" :kind :primary :on-click #(connect!)}]
+     [:button {:label "Disconnect" :destructive true :on-click #(disconnect!)}]]]
    [:card {}
     [:title-2 {:label "What the server said"}]
     (if (empty? @lines)
       [:dim-label {:label "nothing yet"}]
       (for [[i m] (map-indexed vector @lines)]
-        [:vbox {:key i :spacing 0}
-         [:label {:label (str (:command m)
-                              (when-let [p (seq (:params m))]
-                                (str "  " (last p))))}]]))]
+        [:label {:key i
+                 :label (str (:command m)
+                             (when-let [p (seq (:params m))]
+                               (str "  " (last p))))}]))]
    [:card {}
     [:title-2 {:label "Identity"}]
     [:entry {:key :handle
              :text @handle
              :placeholder "alice.bsky.social"
              :on-change #(reset! handle %)}]
-    [:button {:label "Resolve" :primary true :on-click #(resolve-identity!)}]
+    [:button {:label "Resolve" :kind :primary :on-click #(resolve-identity!)}]
     (when-let [out @identity-out]
       (for [[i line] (map-indexed vector out)]
         [:label {:key i :label line}]))]
    [:card {}
     [:title-2 {:label "Shared with the desktop"}]
     [:label {:label (str "clock  " (clock/clock-time (clock/now-ms)))}]
-    [:label {:label (str "store  " (if-let [s (store/load-session)]
-                                     (str "signed in as " (:handle s))
-                                     "no saved session"))}]]])
+    [:label {:label (str "cells  " @cells/form-nick " @ " @cells/form-host
+                         ":" @cells/form-port)}]
+    [:dim-label {:label "frq.cells, compiled by both."}]]])
 
 (defn ^:async main []
   (m/WidgetsFlutterBinding.ensureInitialized)
   (let [dir (.-path (await (pp/getApplicationSupportDirectory)))]
     (host/install! dir)
+    ;; What the shared screen calls. The desktop installs frq.state's
+    ;; reducers here; this installs the phone's.
+    (actions/install! {:connect! connect! :disconnect! disconnect!})
     (f/run
       (m/MaterialApp .title "frq" .theme (t/app-theme))
       .home
       (m/Scaffold .appBar (m/AppBar .title (m/Text "frq")))
       .body
-      ;; One f/widget with the render as its body, rather than `:watch` as a
-      ;; link in the chain. A bare directive in the chain builds nothing to
-      ;; rebuild, so the cells changed and the screen did not — which looks
-      ;; exactly like a button that does not fire.
       (f/widget
        :watch [st status ls lines io identity-out hh handle]
        (m/SingleChildScrollView

@@ -98,8 +98,15 @@
   for destructive, and a component-coloured fill for standard — COSMIC's
   standard button is a filled surface, not an outline."
   [ctx p on]
-  (let [kind (cond (:destructive p) :destructive
-                   (or (:primary p) (= "primary" (:kind p))) :suggested
+  ;; `:kind` carries a keyword in frq.app's own hiccup — `:kind :primary` —
+  ;; and a string was what this compared against, so the connect screen's
+  ;; Connect button came out standard. Both spellings, since `:primary true`
+  ;; is also written.
+  (let [k (:kind p)
+        kind (cond (or (:destructive p) (= :destructive k) (= "destructive" k))
+                   :destructive
+                   (or (:primary p) (= :primary k) (= "primary" k))
+                   :suggested
                    :else :standard)
         bg (case kind
              :suggested t/accent
@@ -143,8 +150,16 @@
            c))
 
        ;; `page` is jolt-cosmic's scrollable container, centred and capped.
+       ;;
+       ;; Align with a heightFactor rather than Center: a Center inside an
+       ;; unbounded height — which is what a scroll view gives — grows to
+       ;; infinity and centres its content somewhere far below the screen.
+       ;; The page looked blank and nothing was logged, because nothing was
+       ;; wrong: the content was exactly where it had been asked to go.
        :page
-       (m/Center
+       (m/Align
+        .alignment m/Alignment.topCenter
+        .heightFactor 1.0
         .child (m/ConstrainedBox
                 .constraints (m/BoxConstraints .maxWidth (dbl (:max-width p) 520.0))
                 .child (m/Padding

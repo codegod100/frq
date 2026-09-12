@@ -26,23 +26,13 @@
             [frq.media :as media]
             [frq.platform :as platform]
             [frq.profile :as profile]
+            ;; The connect screen lives in common/ now — the same file the
+            ;; phone renders. It reads frq.cells and calls frq.actions, and
+            ;; this requires it exactly where its own copy used to be.
+            [frq.screens.connect :as connect :refer [connect-screen error-note]]
             [frq.state :as s]))
 
 ;; ---------------------------------------------------------------- pieces
-
-(defn error-note
-  "Always a node, never nil.
-
-  A conditional child that disappears shifts every sibling after it, and the
-  reconciler matches children by position — so an error appearing mid-screen
-  would patch the header into a card. A stable wrapper with a stable key keeps
-  the shape of the tree fixed and only its contents changing."
-  []
-  [:vbox {:key :error-note :spacing 6}
-   (when-let [e @s/error]
-     [:card {}
-      [:label {:label (str "⚠ " e)}]
-      [:button {:label "Dismiss" :on-click #(reset! s/error nil)}]])])
 
 (defn tab-bar []
   [:hbox {:spacing 8}
@@ -52,98 +42,6 @@
                :kind (if (= k @s/screen) :primary :default)
                :on-click #(reset! s/screen k)}])])
 
-;; ---------------------------------------------------------------- connect
-
-(defn- mode-tabs []
-  [:hbox {:spacing 8}
-   (for [[k label] [[:guest "Guest"] [:bluesky "Bluesky"] [:app-password "App password"]]]
-     [:button {:key k
-               :label label
-               :kind (if (= k @s/auth-mode) :primary :default)
-               :on-click #(reset! s/auth-mode k)}])])
-
-(defn- server-fields []
-  [:vbox {:spacing 6}
-   [:label {:label "Server"}]
-   [:hbox {:spacing 8}
-    [:entry {:text @s/form-host
-             :width-request 220
-             :placeholder "host"
-             :on-change #(reset! s/form-host %)}]
-    [:entry {:text @s/form-port
-             :width-request 90
-             :placeholder "6697"
-             :on-change #(reset! s/form-port %)}]]
-   [:checkbutton {:label "TLS"
-                  :active @s/form-tls?
-                  :on-toggled #(do (swap! s/form-tls? not)
-                                   (reset! s/form-port
-                                           (if @s/form-tls? "6697" "6667")))}]])
-
-(defn- connect-action []
-  (if @s/connecting?
-    [:hbox {:spacing 8}
-     [:spinner {}]
-     [:dim-label {:label @s/status}]]
-    [:hbox {:spacing 8}
-     [:button {:label "Connect" :kind :primary :on-click s/connect!}]
-     [:dim-label {:label @s/status}]]))
-
-(defn connect-screen []
-  [:page {:max-width 520}
-   [:title {:label "frq"}]
-   [:dim-label {:label "freeq client — guest, or your Bluesky identity."}]
-   [error-note]
-   [:card {}
-    [mode-tabs]
-    (case @s/auth-mode
-      :bluesky
-      [:vbox {:spacing 6}
-       [:title-2 {:label "Sign in with Bluesky"}]
-       [:dim-label {:label "Opens your browser for AT Protocol OAuth. freeq's broker hands back a token; no password passes through frq."}]
-       [:label {:label "Handle"}]
-       [:entry {:text @s/form-handle
-                :width-request 320
-                :placeholder "alice.bsky.social"
-                :on-change #(reset! s/form-handle %)}]
-       [:vbox {:key :remembered :spacing 4}
-        (when @s/broker-token
-          [:vbox {:spacing 4}
-           [:dim-label {:label "Session remembered — Connect will not need the browser."}]
-           [:button {:label "Forget saved session" :on-click s/forget-session!}]])]
-       [:vbox {:key :login-url :spacing 4}
-        (when-let [url @s/login-url]
-          [:vbox {:spacing 4}
-           [:dim-label {:label "If the browser did not open, visit:"}]
-           [:label {:label url}]])]]
-
-      :app-password
-      [:vbox {:spacing 6}
-       [:title-2 {:label "Sign in with an app password"}]
-       [:dim-label {:label "No browser. Your app password goes to your own PDS; freeq is handed the session it mints."}]
-       [:label {:label "Handle"}]
-       [:entry {:text @s/form-handle
-                :width-request 320
-                :placeholder "alice.bsky.social"
-                :on-change #(reset! s/form-handle %)}]
-       [:label {:label "App password"}]
-       [:entry {:text @s/form-app-password
-                :width-request 320
-                :placeholder "xxxx-xxxx-xxxx-xxxx"
-                :on-change #(reset! s/form-app-password %)}]
-       [:dim-label {:label "Make one at bsky.app → Settings → App Passwords."}]]
-
-      [:vbox {:spacing 6}
-       [:title-2 {:label "Connect as guest"}]
-       [:label {:label "Nick"}]
-       [:entry {:text @s/form-nick
-                :width-request 320
-                :placeholder "your nick"
-                :on-change #(reset! s/form-nick %)}]])
-    [server-fields]
-    [:separator {}]
-    [connect-action]]
-   [:dim-label {:label "TLS rides jolt's OpenSSL bindings; untick it for a plain :6667 listener. Sign-in needs TLS, so it is desktop-only."}]])
 
 ;; Whether the backend under this tree is a terminal, set by `frq.tui` before
 ;; the first paint and never again. Two things in a message hang on it, and
