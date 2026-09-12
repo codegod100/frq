@@ -623,11 +623,17 @@
   are stacked in: a row is what puts an emoji *in* a sentence instead of
   breaking the sentence around it, and `:hbox` wraps its children by default,
   so a long line still folds at the column's edge. A run with no emoji in it
-  is still one plain label — the row is only paid for where it is needed."
+  is still one plain label — the row is only paid for where it is needed.
+
+  A run is drawn with the spaces it was typed with. Each used to be trimmed,
+  which cost nothing while every run was a line of its own and costs the space
+  before a link now that they share one: `i should write a` and the URL after
+  it ran together into one word. `text-runs` trims the message's own two ends
+  instead."
   [j [kind value] system?]
   (if (= :link kind)
     [:link {:key j :label value :on-click #(actions/open-url! value)}]
-    (let [pieces (glyphs/runs (str/trim value))]
+    (let [pieces (glyphs/runs value)]
       (if (glyphs/emoji? pieces)
         ;; Runs alternate text and picture, so this gap only ever falls either
         ;; side of an emoji — never between two words, whose spacing is the
@@ -640,7 +646,7 @@
                           [:emoji {:key k :emoji pvalue :size text-emoji-size}]
                           (word-node k pvalue system?)))
                       pieces)]
-        (word-node j (str/trim value) system?)))))
+        (word-node j value system?)))))
 
 (defn- trim-trailing-punctuation
   "A URL at the end of a sentence would otherwise keep the sentence's
@@ -657,13 +663,32 @@
 
 (def ^:private url-pattern #"https?://[^\s<>\"]+")
 
+(defn- trim-ends
+  "The message's leading and trailing whitespace, off the runs that carry it.
+
+  Only the two ends: every space between the runs is a space somebody typed
+  between two words, and the paragraph they now share is where it shows."
+  [runs]
+  (let [edge (fn [rs i f]
+               (let [[kind value] (nth rs i nil)]
+                 (if (= :text kind)
+                   (let [v (f value)]
+                     (if (seq v)
+                       (assoc (vec rs) i [:text v])
+                       (vec (concat (take i rs) (drop (inc i) rs)))))
+                   (vec rs))))
+        runs (vec runs)
+        runs (if (seq runs) (edge runs 0 #(str/triml %)) runs)]
+    (if (seq runs) (edge runs (dec (count runs)) #(str/trimr %)) runs)))
+
 (defn text-runs
   "Message text as alternating [:text s] and [:link url] runs.
 
-  Runs because a link has to be its own widget to be clickable, and stacked
-  rather than laid out in a row because a wrapping label inside a horizontal
-  row lays out against the row's width, not the column's — which is what drags
-  long URLs off the left edge."
+  Runs because a link has to be styled and clickable on its own. They are laid
+  out by `message-body` as one `:inline` row — a paragraph — rather than
+  stacked: stacking gave every link a line of its own, and a plain wrapping row
+  measures each label against the row's width rather than the column's, which
+  is what drags long URLs off the left edge."
   [text]
   (let [text (or text "")]
     (loop [pos 0 acc []]
@@ -673,8 +698,9 @@
               before (subs text pos at)
               acc (cond-> acc (seq before) (conj [:text before]))]
           (recur (+ at (count url)) (conj acc [:link url])))
-        (let [tail (subs text pos)]
-          (cond-> acc (seq tail) (conj [:text tail])))))))
+        (let [tail (subs text pos)
+              acc (cond-> acc (seq tail) (conj [:text tail]))]
+          (trim-ends acc))))))
 
 (defn- message-body
   "A message without its face: the sender's line, the words, and what hangs
@@ -766,8 +792,16 @@
      [:vbox {:key :reply-chip}
       (when-let [reply-to (:reply-to m)]
         [reply-chip @cells/current reply-to])]
-     (map-indexed (fn [j run] (run-node j run (:system? m)))
-                  (text-runs (:text m)))])
+     ;; The words themselves, as one sentence rather than a stack of runs.
+     ;; `:inline` asks the renderer to lay the runs out in a single paragraph,
+     ;; so the text either side of a link stays on the link's line and the
+     ;; break falls where the width runs out instead of at every URL. The
+     ;; column here is still what the paragraph wraps against, which is the
+     ;; thing the stack was protecting: a row measured against a row is what
+     ;; drags a long URL off the left edge.
+     [:hbox {:key :runs :wrap true :inline true}
+      (map-indexed (fn [j run] (run-node j run (:system? m)))
+                   (text-runs (:text m)))]])
    ;; And the picker, when this is the message it was opened on: under the
    ;; line it is about, where the reader is already looking.
    ;;

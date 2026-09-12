@@ -26,6 +26,7 @@
   read it — fine at this size, and the thing to revisit if a message list ever
   feels it."
   (:require ["dart:io" :as io]
+            ["package:flutter/gestures.dart" :as g]
             ["package:flutter/material.dart" :as m]
             [cljd.flutter :as f]
             [frq.theme :as t]))
@@ -517,6 +518,81 @@
                               .height 1.35
                               .fontWeight (or weight m/FontWeight.w400))))
 
+;; ------------------------------------------------------------ inline text
+
+(defn- inline-style [size color]
+  (m/TextStyle .fontSize size .color color .height 1.35))
+
+(defn- inline?
+  "Whether a node can be a run *inside* a paragraph rather than a box beside
+  one.
+
+  Only the tags a sentence is made of: words, a link, an emoji, and a row
+  holding nothing but those. Anything with a shape of its own — a button, a
+  card, a picture — is a box, and a box in a Wrap is what a Wrap is for."
+  [node]
+  (let [n (expand node)]
+    (cond
+      (nil? n) true
+      (seq? n) (every? inline? n)
+      (not (vector? n)) false
+      :else (let [tag (first n)]
+              (cond
+                (contains? #{:label :dim-label :link :emoji} tag) true
+                (= :hbox tag) (every? inline? (body n))
+                :else false)))))
+
+(defn- inline-spans
+  "The runs of a paragraph as Flutter InlineSpans.
+
+  Nested rows are flattened rather than nested, and their `:spacing` goes with
+  them: spacing is a gap between boxes, and there are no boxes left here. What
+  an emoji needs instead is the air `run-node` already gives it, which is the
+  WidgetSpan's own — a picture set in a line of text sits on the baseline like
+  a letter does.
+
+  A link's tap is a TapGestureRecognizer rather than an InkWell, because an
+  InkWell is a widget and a widget is a box: it is precisely the box that
+  stops the line breaker seeing the URL as part of the sentence. The
+  recognizers are never disposed — Flutter asks that they be, and the honest
+  note is that these live as long as the message list does and a conversation
+  is at most a screen of them."
+  [ctx nodes]
+  (persistent!
+   (reduce
+    (fn [acc n0]
+      (let [n (expand n0)]
+        (cond
+          (nil? n) acc
+          (seq? n) (reduce conj! acc (inline-spans ctx n))
+          (not (vector? n)) acc
+          :else
+          (let [p (props n)]
+            (case (first n)
+              :label
+              (conj! acc (m/TextSpan .text (str (:label p ""))
+                                     .style (inline-style t/text-body t/on-bg)))
+              :dim-label
+              (conj! acc (m/TextSpan .text (str (:label p ""))
+                                     .style (inline-style t/text-caption t/dim)))
+              :link
+              (conj! acc (m/TextSpan
+                          .text (str (:label p ""))
+                          .style (inline-style t/text-body t/accent)
+                          .recognizer (when-let [on (:on-click p)]
+                                        (let [r (g/TapGestureRecognizer)]
+                                          (set! (.-onTap r) #(on))
+                                          r))))
+              :emoji
+              (conj! acc (m/WidgetSpan
+                          .alignment m/PlaceholderAlignment.middle
+                          .child (m/Text (str (:emoji p ""))
+                                         .style (t/emoji-style (dbl (:size p) 16.0)))))
+              :hbox
+              (reduce conj! acc (inline-spans ctx (body n)))
+              acc)))))
+    (transient []) nodes)))
+
 ;; ---------------------------------------------------------------- buttons
 
 (defn- cosmic-button
@@ -657,12 +733,30 @@
        ;; Wrap. Without it the longest message decided the width of the
        ;; conversation and the rest overflowed off the right.
        :hbox
-       (let [row (if (true? (:wrap p))
+       (let [row (cond
+                   ;; `:inline true` is a row that is a *sentence*: its runs
+                   ;; go into one paragraph, so Flutter's line breaker sees
+                   ;; the whole line at once and may break inside a run as
+                   ;; well as between two. A Wrap cannot — it hands each child
+                   ;; unbounded width and then places the finished box, so a
+                   ;; URL is an atom that either fits on the line or starts a
+                   ;; new one, and a message with two links in it came out as
+                   ;; five lines with a link alone on two of them.
+                   ;;
+                   ;; The check is not just the prop: a sentence with a button
+                   ;; in it is not a sentence, and a caller that asks for one
+                   ;; anyway gets the Wrap it would have got before.
+                   (and (true? (:inline p)) (inline? (body node)))
+                   (m/Text.rich (m/TextSpan .children (inline-spans ctx (body node)))
+                                .softWrap true)
+
+                   (true? (:wrap p))
                    (m/Wrap
                     .spacing (dbl (:spacing p) 0.0)
                     .runSpacing (dbl (:spacing p) 0.0)
                     .crossAxisAlignment m/WrapCrossAlignment.center
                     .children kids)
+
                    ;; `:align` is where in the row its children sit, and it is
                    ;; glimmer's meaning that the shared screens are written
                    ;; against: `:end` lays them out *from* the right, so the
@@ -672,6 +766,7 @@
                    ;; first so it would land beside the words — hanging off the
                    ;; end of a phone's width, which is why a line you wrote had
                    ;; no way to rewrite it.
+                   :else
                    (let [end? (= :end (:align p))
                          kids (flexed fills-row? (body node))]
                      (m/Row
