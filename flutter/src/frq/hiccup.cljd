@@ -560,27 +560,15 @@
                      ;; It only ever comes up because `flexed` below hands a
                      ;; button a bounded width — unbounded, this changes
                      ;; nothing.
-                     ;;
-                     ;; Unless the caller says the whole label is the point.
-                     ;; The people panel is where that is true: a column of
-                     ;; nicks in which "chadfowler.c…" and "chadfowler.co…"
-                     ;; are the same word is a column you cannot read, and a
-                     ;; lozenge two lines tall is a smaller price than not
-                     ;; knowing who is in the channel. So `:wrap-label` lets
-                     ;; it run onto the next line instead of ending.
-                     .child (let [lbl (str (:label p ""))
-                                  st (m/TextStyle
-                                      .fontSize t/text-body
-                                      .color fg
-                                      .height 1.35
-                                      .fontWeight m/FontWeight.w500)]
-                              (if (:wrap-label p)
-                                (m/Text lbl .softWrap true .style st)
-                                (m/Text lbl
-                                        .maxLines 1
-                                        .softWrap false
-                                        .overflow m/TextOverflow.ellipsis
-                                        .style st))))))))
+                     .child (m/Text (str (:label p ""))
+                                    .maxLines 1
+                                    .softWrap false
+                                    .overflow m/TextOverflow.ellipsis
+                                    .style (m/TextStyle
+                                            .fontSize t/text-body
+                                            .color fg
+                                            .height 1.35
+                                            .fontWeight m/FontWeight.w500)))))))
 
 ;; ----------------------------------------------------------------- widget
 
