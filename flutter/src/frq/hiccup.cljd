@@ -189,6 +189,17 @@
 ;; showing it, and it has to survive the rebuild that replaces one.
 (defonce ^:private scroll-marks (atom {}))
 
+;; Where a jump is aiming, once the frame that paints it has a context to
+;; aim at.
+;;
+;; `message-row` marks one row `:scroll-here` while a jump is on it, and a
+;; row is not a widget this backend can find afterwards — the tree is rebuilt
+;; from the top every time a cell fires, so there is no handle on it that
+;; outlives the build. The build itself has one: the marked row's own
+;; BuildContext, recorded here as it is built and read back by the scroll
+;; around it after the frame.
+(defonce ^:private jump-context (atom nil))
+
 (defn- end-ward!
   "Put `k` at the end after this frame, when it should be.
 
@@ -221,7 +232,12 @@
       (.addPostFrameCallback
        (.-instance m/WidgetsBinding)
        (fn [_]
-         (when (.-hasClients ctrl)
+         ;; Not when a jump is pending: being taken to a line and being taken
+         ;; to the end are the same gesture as far as `jump-tick` is
+         ;; concerned — the screen renames the viewport either way — and the
+         ;; end is the wrong one of the two. By now the marked row has been
+         ;; built, so this knows which gesture it was.
+         (when (and (nil? @jump-context) (.-hasClients ctrl))
            (.jumpTo ctrl (.-maxScrollExtent (.-position ctrl)))))))))
 
 (defonce ^:private scroll-watch
@@ -263,6 +279,29 @@
                  (swap! scroll-watch assoc-in [k :said] said)
                  (when f (f said)))))
            nil))))))
+
+(defn- here-ward!
+  "Bring the row a jump is aiming at into view, when one was built.
+
+  After the frame, for the reason `end-ward!` is: the row is built inside
+  this scroll and so does not exist yet when the scroll is, and a context
+  with no render object behind it cannot be scrolled to.
+
+  Aimed a third of the way down rather than at the top edge, because a line
+  arrived at reads as an answer to the lines above it, and pinned to the top
+  it has none of them."
+  []
+  (.addPostFrameCallback
+   (.-instance m/WidgetsBinding)
+   (fn [_]
+     (when-let [^m/BuildContext c @jump-context]
+       ;; Cleared here rather than when the jump does: `jump-to` comes off a
+       ;; frame or two later and this has to have happened by then, and a
+       ;; context kept past the frame that made it is a context to a widget
+       ;; that may be gone.
+       (reset! jump-context nil)
+       (when (.-mounted c)
+         (m/Scrollable.ensureVisible c .alignment 0.3))))))
 
 (defn- fills-column?
   "Whether a node takes the height its column has left over.
@@ -417,6 +456,10 @@
   (f/widget
    :context ctx
    (let [p (props node)
+         ;; The row a jump is aiming at, saying so as it is built. Here and
+         ;; not in an arm of the `case` below, because the mark is a property
+         ;; any tag may carry — it happens to be a `:vbox` today.
+         _ (when (:scroll-here p) (reset! jump-context ctx))
          kids (children (body node))
          ;; One column builder for every container, so the rule about what
          ;; fills is applied in one place: children that take what is left are
@@ -785,8 +828,13 @@
           ;; "ScrollController attached to multiple scroll views", which took
           ;; the whole screen.
           :managed [ctrl (m/ScrollController)]
+          ;; `here-ward!` after `end-ward!`, so the callback that aims at a
+          ;; line is queued behind the one that aims at the end: the end's
+          ;; runs first, sees the pending jump and stands down, and then this
+          ;; one clears it.
           :let [_ (watch-end! k ctrl on-change)
-                _ (end-ward! k ctrl token)]
+                _ (end-ward! k ctrl token)
+                _ (here-ward!)]
           (m/SingleChildScrollView
            .controller ctrl
            .child (col (dbl (:spacing p) 0.0) (body node)))))
