@@ -7,11 +7,17 @@
   components do not know what is under the reconciler. So the screens do not
   get rewritten for the phone; this interprets them.
 
-  The tags are glimmer's, and where Flutter has no equivalent the shape is
-  chosen to match what jvui and libcosmic drew rather than what Material would
-  do on its own: `:card` is a surface with a border and not an elevation,
-  `:dim-label` is the body colour at 60%, and `:page` is a max-width column
-  centred in whatever it is given.
+  The tags are glimmer's and so is the styling: every arm below is what
+  `crates/jolt-cosmic` asks libcosmic for, in `frq.theme`'s tokens. `:title` is
+  title3 and `:title-2` is title4; `:card` is Container::Card — padding 12,
+  spacing 8, a surface a step from the background rather than an elevation,
+  because COSMIC does not float things; `:button` is suggested, destructive or
+  standard; `:dim-label` is the caption class, which is the body colour stepped
+  back rather than a colour of its own.
+
+  Material is underneath and deliberately not visible. No elevation, no ripple
+  shadows, no Material 3 pill heights — a screen laid out against libcosmic's
+  4/8/12/16/24 spacing lands at the same proportions here.
 
   What this does NOT do is glimmer's reconciliation. glimmer patches the tree
   it painted last; Flutter rebuilds from the top and diffs its own element
@@ -21,18 +27,13 @@
   feels it."
   (:require ["dart:io" :as io]
             ["package:flutter/material.dart" :as m]
-            [cljd.flutter :as f]))
+            [cljd.flutter :as f]
+            [frq.theme :as t]))
 
-;; ------------------------------------------------------------------ theme
-
-(def ^:private gap 8.0)
 
 (defn- dbl [x default]
   (cond (number? x) (double x)
         :else default))
-
-(defn- muted [ctx]
-  (-> (m/Theme.of ctx) .-colorScheme .-onSurface (.withValues .alpha 0.6)))
 
 ;; ------------------------------------------------------------- text entry
 
@@ -67,8 +68,6 @@
 (defn- body [node]
   (let [p (second node)] (if (map? p) (drop 2 node) (drop 1 node))))
 
-;; --------------------------------------------------------------- children
-
 (declare render)
 
 (defn- children
@@ -82,183 +81,240 @@
                    :else (conj! acc (render n))))
            (transient []) nodes)))
 
+;; ------------------------------------------------------------------ text
+
+(defn- txt
+  [ctx s size color & {:keys [weight]}]
+  (m/Text (str s)
+          .style (m/TextStyle .fontSize size
+                              .color color
+                              .height 1.35
+                              .fontWeight (or weight m/FontWeight.w400))))
+
+;; ---------------------------------------------------------------- buttons
+
+(defn- cosmic-button
+  "libcosmic's three button classes. Filled accent for suggested, filled red
+  for destructive, and a component-coloured fill for standard — COSMIC's
+  standard button is a filled surface, not an outline."
+  [ctx p on]
+  (let [kind (cond (:destructive p) :destructive
+                   (or (:primary p) (= "primary" (:kind p))) :suggested
+                   :else :standard)
+        bg (case kind
+             :suggested t/accent
+             :destructive t/destructive
+             t/component)
+        ;; COSMIC names the foreground for each role, and for this theme both
+        ;; accent.on and destructive.on are black — a cream accent with white
+        ;; text on it is unreadable, which is exactly what guessing produced.
+        fg (case kind
+             :suggested t/on-accent
+             :destructive t/on-destructive
+             t/on-bg)]
+    (m/Material
+     .color bg
+     .borderRadius (m/BorderRadius.circular t/radius-m)
+     .child (m/InkWell
+             .borderRadius (m/BorderRadius.circular t/radius-m)
+             .onTap (when on #(on))
+             .child (m/Padding
+                     .padding (m/EdgeInsets.symmetric .horizontal t/space-s
+                                                      .vertical t/space-xxs)
+                     .child (txt ctx (:label p "") t/text-body fg
+                                 :weight m/FontWeight.w500))))))
+
 ;; ----------------------------------------------------------------- widget
 
-(defn- text-style [ctx kind]
-  (let [t (.-textTheme (m/Theme.of ctx))]
-    (case kind
-      :title (.-headlineSmall t)
-      :title-2 (.-titleMedium t)
-      (.-bodyMedium t))))
-
 (defn- render-tag [tag node]
-  (let [p (props node)
-        kids (children (body node))
-        one (fn [] (if (seq kids) (first kids) (m/SizedBox .width 0.0 .height 0.0)))]
-    (case tag
-      (:vbox :page)
-      (let [col (m/Column
-                 .crossAxisAlignment m/CrossAxisAlignment.start
-                 .mainAxisSize m/MainAxisSize.min
-                 .spacing (dbl (:spacing p) 0.0)
-                 .children kids)]
-        (if-let [w (:max-width p)]
-          (m/Center .child (m/ConstrainedBox
-                            .constraints (m/BoxConstraints .maxWidth (dbl w 520.0))
-                            .child (m/Padding .padding (m/EdgeInsets.all gap) .child col)))
-          col))
+  (f/widget
+   :context ctx
+   (let [p (props node)
+         kids (children (body node))
+         col (fn [sp cs] (m/Column .crossAxisAlignment m/CrossAxisAlignment.start
+                                   .mainAxisSize m/MainAxisSize.min
+                                   .spacing sp
+                                   .children cs))]
+     (case tag
+       :vbox
+       (let [c (col (dbl (:spacing p) 0.0) kids)]
+         (if-let [w (:width-request p)]
+           (m/SizedBox .width (dbl w 0.0) .child c)
+           c))
 
-      :hbox
-      (m/Row
-       .crossAxisAlignment m/CrossAxisAlignment.center
-       .mainAxisSize m/MainAxisSize.min
-       .spacing (dbl (:spacing p) 0.0)
-       .children kids)
+       ;; `page` is jolt-cosmic's scrollable container, centred and capped.
+       :page
+       (m/Center
+        .child (m/ConstrainedBox
+                .constraints (m/BoxConstraints .maxWidth (dbl (:max-width p) 520.0))
+                .child (m/Padding
+                        .padding (m/EdgeInsets.all t/space-s)
+                        .child (col t/space-xs kids))))
 
-      :label
-      (f/widget
-       :context ctx
-       (m/Text (str (:label p "")) .style (text-style ctx :body)))
+       :hbox
+       (m/Row
+        .crossAxisAlignment m/CrossAxisAlignment.center
+        .mainAxisSize m/MainAxisSize.min
+        .spacing (dbl (:spacing p) 0.0)
+        .children kids)
 
-      :dim-label
-      (f/widget
-       :context ctx
-       (m/Text (str (:label p ""))
-               .style (.copyWith (text-style ctx :body) .color (muted ctx))))
+       :label     (txt ctx (:label p "") t/text-body t/on-bg)
+       :dim-label (txt ctx (:label p "") t/text-caption t/dim)
+       :title     (txt ctx (:label p "") t/text-title-3 t/on-bg
+                       :weight m/FontWeight.w600)
+       :title-2   (txt ctx (:label p "") t/text-title-4 t/on-bg
+                       :weight m/FontWeight.w600)
 
-      :title
-      (f/widget
-       :context ctx
-       (m/Text (str (:label p "")) .style (text-style ctx :title)))
+       :button (cosmic-button ctx p (:on-click p))
 
-      :title-2
-      (f/widget
-       :context ctx
-       (m/Text (str (:label p "")) .style (text-style ctx :title-2)))
+       ;; button::link — accent text, no underline. COSMIC links are buttons.
+       :link
+       (m/InkWell
+        .onTap (when-let [on (:on-click p)] #(on))
+        .child (txt ctx (:label p "") t/text-body t/accent))
 
-      :button
-      (let [on (:on-click p)
-            press (when on #(on))]
-        (cond
-          (:destructive p)
-          (m/OutlinedButton .onPressed press .child (m/Text (str (:label p ""))))
-          (:primary p)
-          (m/FilledButton .onPressed press .child (m/Text (str (:label p ""))))
-          :else
-          (m/TextButton .onPressed press .child (m/Text (str (:label p ""))))))
-
-      :link
-      (let [on (:on-click p)]
-        (m/InkWell
-         .onTap (when on #(on))
-         .child (f/widget
-                 :context ctx
-                 (m/Text (str (:label p ""))
-                         .style (.copyWith (text-style ctx :body)
-                                           .decoration m/TextDecoration.underline
-                                           .color (-> (m/Theme.of ctx) .-colorScheme .-primary))))))
-
-      :entry
-      (let [on-change (:on-change p)
-            on-activate (:on-activate p)
-            rows (:rows p)]
-        (m/TextField
-         .controller (controller-for (:key p) (:text p))
-         .onChanged (when on-change #(on-change %))
-         .onSubmitted (when on-activate (fn [_] (on-activate)))
-         .maxLines (if rows (int rows) 1)
-         .decoration (m/InputDecoration
-                      .isDense true
-                      .border (m/OutlineInputBorder)
-                      .hintText (:placeholder p))))
-
-      :card
-      (f/widget
-       :context ctx
+       ;; Container::Card: padding 12, spacing 8, fills its width unless it is
+       ;; sitting in a row.
+       :card
        (m/Container
-        .padding (m/EdgeInsets.all (* 1.5 gap))
+        .width double/infinity
+        .padding (m/EdgeInsets.all t/space-xs)
         .decoration (m/BoxDecoration
-                     .borderRadius (m/BorderRadius.circular 12.0)
-                     .border (m/Border.all
-                              .color (-> (m/Theme.of ctx) .-colorScheme .-outlineVariant)))
-        .child (m/Column
-                .crossAxisAlignment m/CrossAxisAlignment.start
-                .mainAxisSize m/MainAxisSize.min
-                .spacing (dbl (:spacing p) gap)
-                .children kids)))
+                     .color t/card
+                     .borderRadius (m/BorderRadius.circular t/radius-s))
+        .child (col (dbl (:spacing p) t/space-xxs) kids))
 
-      :separator (m/Divider .height 1.0)
+       :separator (m/Divider .height 1.0 .thickness 1.0 .color t/divider)
 
-      :spinner
-      (m/SizedBox .width 16.0 .height 16.0
-                  .child (m/CircularProgressIndicator .strokeWidth 2.0))
+       ;; A 16px indeterminate circle, with the label as a caption beside it.
+       :spinner
+       (m/Row
+        .mainAxisSize m/MainAxisSize.min
+        .spacing t/space-xxs
+        .children (into [(m/SizedBox
+                          .width 16.0 .height 16.0
+                          .child (m/CircularProgressIndicator
+                                  .strokeWidth 2.0
+                                  .color t/accent))]
+                        (when-let [l (not-empty (str (:label p "")))]
+                          [(txt ctx l t/text-caption t/dim)])))
 
-      :spacer
-      (let [s (dbl (or (:size p) (:gap p) (:width-request p)) gap)]
-        (m/SizedBox .width s .height s))
+       ;; A dot that says whether the thing is live, and the words beside it.
+       :status
+       (m/Row
+        .mainAxisSize m/MainAxisSize.min
+        .spacing 6.0
+        .children [(m/Container
+                    .width 8.0 .height 8.0
+                    .decoration (m/BoxDecoration
+                                 .color (if (:live p) t/success t/dim)
+                                 .borderRadius (m/BorderRadius.circular t/radius-xs)))
+                   (txt ctx (:label p "") t/text-caption t/dim)])
 
-      :checkbutton
-      (let [on (:on-toggled p)]
-        (m/Row
-         .mainAxisSize m/MainAxisSize.min
-         .children [(m/Checkbox .value (boolean (:active p))
-                                .onChanged (when on (fn [v] (on (boolean v)))))
-                    (m/Text (str (:label p "")))]))
+       :spacer
+       (let [size (dbl (or (:size p) (:gap p) (:width-request p)) t/space-xxs)]
+         (m/SizedBox .width size .height size))
 
-      :emoji
-      (m/Text (str (:emoji p "")) .style (m/TextStyle .fontSize (dbl (:size p) 16.0)))
+       :checkbutton
+       (let [on (:on-toggled p)]
+         (m/Row
+          .mainAxisSize m/MainAxisSize.min
+          .spacing t/space-xxxs
+          .children [(m/SizedBox
+                      .width 20.0 .height 20.0
+                      .child (m/Checkbox
+                              .value (boolean (:active p))
+                              .activeColor t/accent
+                              .onChanged (when on (fn [v] (on (boolean v))))))
+                     (txt ctx (:label p "") t/text-body t/on-bg)]))
 
-      :avatar
-      (let [s (dbl (:size p) 32.0)
-            src (:src p)]
-        (m/CircleAvatar
-         .radius (/ s 2.0)
-         .backgroundImage (when (and src (not= "" src)) (m/NetworkImage src))
-         .child (when (or (nil? src) (= "" src))
-                  (m/Text (let [l (str (:label p ""))]
-                            (if (pos? (count l)) (.toUpperCase (subs l 0 1)) "?"))))))
+       ;; text_input: a filled rounded field, no outline. COSMIC entries sit in
+       ;; the component colour rather than behind a border.
+       :entry
+       (let [on-change (:on-change p)
+             on-activate (:on-activate p)
+             rows (:rows p)]
+         (m/TextField
+          .controller (controller-for (:key p) (:text p))
+          .onChanged (when on-change #(on-change %))
+          .onSubmitted (when on-activate (fn [_] (on-activate)))
+          .maxLines (if rows (int rows) 1)
+          .style (m/TextStyle .fontSize t/text-body .color t/on-bg)
+          .cursorColor t/accent
+          .decoration (m/InputDecoration
+                       .isDense true
+                       .filled true
+                       .fillColor t/component
+                       .hintText (:placeholder p)
+                       .hintStyle (m/TextStyle .fontSize t/text-body
+                                               .color t/dim)
+                       .contentPadding (m/EdgeInsets.symmetric
+                                        .horizontal t/space-xs
+                                        .vertical t/space-xxs)
+                       .border (m/OutlineInputBorder
+                                .borderRadius (m/BorderRadius.circular t/radius-s)
+                                .borderSide m/BorderSide.none)
+                       .enabledBorder (m/OutlineInputBorder
+                                       .borderRadius (m/BorderRadius.circular t/radius-s)
+                                       .borderSide m/BorderSide.none)
+                       .focusedBorder (m/OutlineInputBorder
+                                       .borderRadius (m/BorderRadius.circular t/radius-s)
+                                       .borderSide (m/BorderSide .color t/accent
+                                                                 .width 1.0)))))
 
-      :image
-      (let [src (or (:src p) (:path p))
-            w (:max-width p)
-            h (:max-height p)
-            img (cond
-                  (nil? src) (m/SizedBox .width 0.0 .height 0.0)
-                  (or (.startsWith (str src) "http://")
-                      (.startsWith (str src) "https://"))
-                  (m/Image.network (str src) .fit m/BoxFit.contain)
-                  :else (m/Image.file (io/File. (str src)) .fit m/BoxFit.contain))
-            img (if (or w h)
-                  (m/ConstrainedBox
-                   .constraints (m/BoxConstraints
-                                 .maxWidth (dbl w double/infinity)
-                                 .maxHeight (dbl h double/infinity))
-                   .child img)
-                  img)]
-        (if-let [on (:on-click p)]
-          (m/InkWell .onTap #(on) .child img)
-          img))
+       :emoji
+       (m/Text (str (:emoji p "")) .style (m/TextStyle .fontSize (dbl (:size p) 16.0)))
 
-      :scroll
-      (m/Expanded
-       .child (m/SingleChildScrollView
-               .child (m/Column
-                       .crossAxisAlignment m/CrossAxisAlignment.start
-                       .mainAxisSize m/MainAxisSize.min
-                       .spacing (dbl (:spacing p) 0.0)
-                       .children kids)))
+       :avatar
+       (let [s (dbl (:size p) 32.0)
+             src (:src p)]
+         (m/CircleAvatar
+          .radius (/ s 2.0)
+          .backgroundColor t/component
+          .backgroundImage (when (and src (not= "" src)) (m/NetworkImage src))
+          .child (when (or (nil? src) (= "" src))
+                   (txt ctx (let [l (str (:label p ""))]
+                              (if (pos? (count l)) (.toUpperCase (subs l 0 1)) "?"))
+                        t/text-body t/on-bg))))
 
-      ;; Unknown tag. glimmer-cosmic's spike painted these as a column and
-      ;; that is what made most of frq come out as stacked text — so this says
-      ;; so on screen instead of pretending, and the missing tag is one
-      ;; `case` arm away.
-      (m/Column
-       .crossAxisAlignment m/CrossAxisAlignment.start
-       .mainAxisSize m/MainAxisSize.min
-       .children (into [(m/Text (str "?" tag)
-                                .style (m/TextStyle .fontSize 10.0
-                                                    .color m/Colors.orange))]
-                       kids)))))
+       :image
+       (let [src (or (:src p) (:path p))
+             w (:max-width p)
+             h (:max-height p)
+             img (cond
+                   (nil? src) (m/SizedBox .width 0.0 .height 0.0)
+                   (or (.startsWith (str src) "http://")
+                       (.startsWith (str src) "https://"))
+                   (m/Image.network (str src) .fit m/BoxFit.contain)
+                   :else (m/Image.file (io/File. (str src)) .fit m/BoxFit.contain))
+             img (m/ClipRRect .borderRadius (m/BorderRadius.circular t/radius-s)
+                              .child img)
+             img (if (or w h)
+                   (m/ConstrainedBox
+                    .constraints (m/BoxConstraints
+                                  .maxWidth (dbl w double/infinity)
+                                  .maxHeight (dbl h double/infinity))
+                    .child img)
+                   img)]
+         (if-let [on (:on-click p)]
+           (m/InkWell .onTap #(on) .child img)
+           img))
+
+       :scroll
+       (m/Expanded
+        .child (m/SingleChildScrollView
+                .child (col (dbl (:spacing p) 0.0) kids)))
+
+       ;; A tag this backend has not grown yet still shows its children — which
+       ;; is what libvidya did and what jolt-cosmic kept. The marker is here so
+       ;; it is obvious which ones are missing: glimmer-cosmic's spike painted
+       ;; every unknown tag as a silent column, and that is why most of frq
+       ;; came out of it as stacked text.
+       (m/Column
+        .crossAxisAlignment m/CrossAxisAlignment.start
+        .mainAxisSize m/MainAxisSize.min
+        .children (into [(txt ctx (str "?" (name tag)) 10.0 m/Colors.orange)]
+                        kids))))))
 
 (defn render
   "One hiccup node as a Flutter widget.

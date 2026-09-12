@@ -20,6 +20,7 @@
             ["package:path_provider/path_provider.dart" :as pp]
             [cljd.flutter :as f]
             [frq.hiccup :as h]
+            [frq.theme :as t]
             [frq.io.dart :as host]
             [frq.net.dart :as net]
             [frq.atproto.dart :as atproto]
@@ -127,9 +128,7 @@
   (let [dir (.-path (await (pp/getApplicationSupportDirectory)))]
     (host/install! dir)
     (f/run
-      (m/MaterialApp .title "frq"
-                     .theme (m/ThemeData .useMaterial3 true
-                                         .colorSchemeSeed m/Colors.indigo))
+      (m/MaterialApp .title "frq" .theme (t/app-theme))
       .home
       (m/Scaffold .appBar (m/AppBar .title (m/Text "frq")))
       .body

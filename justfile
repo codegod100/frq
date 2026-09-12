@@ -32,6 +32,22 @@ jobs := env("FRQ_MAX_JOBS", "0")
 default:
     @just --list
 
+# Re-read the COSMIC theme into the APK.
+#
+# libcosmic asks cosmic-config for the accent and the surfaces at run time, so
+# `just run` already follows COSMIC Settings as it changes. A phone has no
+# cosmic-config, so the APK carries them instead — read here, on the machine
+# that has them, and compiled in. That is the one real difference between the
+# two, and it is why the generated file is in git rather than gitignored: a
+# checkout on a machine with no COSMIC still builds.
+#
+# Run it after changing the theme in COSMIC Settings, then `just apk`.
+theme:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    python3 tools/cosmic2cljd.py flutter/src/frq/theme/cosmic.cljd
+
 # The APK: ClojureDart compiled to Dart, then Flutter's Gradle build.
 #
 # Impure on purpose, and worth saying why rather than leaving it to be
