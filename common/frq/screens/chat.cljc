@@ -1133,10 +1133,17 @@
 
   The list is the server's — NAMES on the way in, kept up by the joins and
   parts after it — so a channel this client has never been in has nothing to
-  show, and says so rather than showing an empty column."
-  [name]
+  show, and says so rather than showing an empty column.
+
+  On a window too narrow to have shown the chats list and a conversation at
+  once, it is too narrow to show a conversation and a 150-point column beside
+  it either: the names ellipsised to three letters while the panel took half
+  the screen. So there it is not a column beside the backlog — it is what the
+  backlog's place holds, full width, until the switch above turns it off."
+  [name narrow?]
   (let [people (actions/member-list name)]
-    [:vbox {:key :users :width-request users-width :fill-height true
+    [:vbox {:key :users :width-request (when-not narrow? users-width)
+            :fill-height true
             :reserve (below-messages) :spacing 8}
      [:title-2 {:label (str "People " (count people))}]
      [:scroll {:scroll-key (str "users-" name)
@@ -1151,7 +1158,11 @@
 (defn chat-screen []
   (let [name @cells/current
         buffer (get @cells/channels name)
-        show-users? (and @cells/show-users? name (str/starts-with? name "#"))]
+        show-users? (and @cells/show-users? name (str/starts-with? name "#"))
+        ;; Beside the backlog only where there is room for both. On a narrow
+        ;; window the panel is the pane, and the backlog stands down for as
+        ;; long as it is up — see `users-panel`.
+        narrow-people? (and show-users? (not (actions/wide?)))]
     ;; Not a :page — a page scrolls everything, which would carry the compose
     ;; bar off the bottom with the backlog. The message list is the only thing
     ;; that scrolls, bounded so what follows it keeps its room.
@@ -1239,26 +1250,32 @@
      ;; for the reconciler, and take the message list's scroll position with
      ;; it every time the panel was toggled.
      [:hbox {:spacing 8 :wrap false}
-      [:vbox {:key :messages :fill-height true
-              :width-request (if show-users? (messages-width) 0)}
-       [:scroll {:scroll-key (messages-scroll-key)
-                 :orientation :vertical
-                 :reserve (below-messages)
-                 :stick-to-bottom true
-                 :scroll-to-bottom @cells/jump-tick
-                 :on-change #(reset! cells/at-present? (= "end" %))
-                 ;; The terminal's half of the same question, which arrives
-                 ;; as the offset the list moved to rather than as a place.
-                 ;; `scrolled!` is what turns one into the other.
-                 :on-scroll actions/scrolled!}
-        (if (seq (:messages buffer))
-          (message-rows (:messages buffer))
-          [:dim-label {:label "Nothing here yet."}])]]
+      ;; Empty and claiming nothing when the panel has taken the pane: a column
+      ;; with no width and something filling it inside would still be handed
+      ;; half the row, which is the squash with the scroll left in it.
+      [:vbox {:key :messages :fill-height (not narrow-people?)
+              :width-request (if (and show-users? (not narrow-people?))
+                               (messages-width)
+                               0)}
+       (when-not narrow-people?
+         [:scroll {:scroll-key (messages-scroll-key)
+                   :orientation :vertical
+                   :reserve (below-messages)
+                   :stick-to-bottom true
+                   :scroll-to-bottom @cells/jump-tick
+                   :on-change #(reset! cells/at-present? (= "end" %))
+                   ;; The terminal's half of the same question, which arrives
+                   ;; as the offset the list moved to rather than as a place.
+                   ;; `scrolled!` is what turns one into the other.
+                   :on-scroll actions/scrolled!}
+          (if (seq (:messages buffer))
+            (message-rows (:messages buffer))
+            [:dim-label {:label "Nothing here yet."}])])]
       ;; The wrapper takes no height of its own: the panel inside it is the
       ;; column, and a fill-height wrapper around it would claim the strip the
       ;; compose bar sits in whether or not the panel was showing.
       [:vbox {:key :people-pane}
-       (when show-users? [users-panel name])]]
+       (when show-users? [users-panel name narrow-people?])]]
      ;; Only while it is needed, and directly under the backlog: the way back
      ;; to the present belongs next to the thing that puts you there, which is
      ;; the conversation and not the overview.
