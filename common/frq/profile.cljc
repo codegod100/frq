@@ -38,7 +38,12 @@
 ;; A handle is a domain: labels joined by dots, ending in something alphabetic.
 ;; An IRC nick cannot be one by accident — `sleek5209` and `eve` are not.
 (def ^:private handle-pattern
-  #"(?i)^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*\.[a-z]{2,}$")
+  ;; Spelled out rather than `(?i)`: Dart's RegExp has no inline flag syntax
+  ;; and rejects the whole pattern with "FormatException: Invalid group" — at
+  ;; the moment the first message arrives, which is a crash on connect rather
+  ;; than anything you see when the screen is drawn. This file is `common/`, so
+  ;; it has to be a pattern both engines read the same way.
+  #"^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)*\.[A-Za-z]{2,}$")
 
 (defn handle?
   "Whether this nick is an AT Protocol handle, and so worth a lookup."
