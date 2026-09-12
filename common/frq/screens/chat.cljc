@@ -1126,7 +1126,12 @@
    ;; the names line up whatever mode is in front of them.
    [:vbox {:key :mode :width-request 14}
     [:dim-label {:label (if (seq prefix) prefix " ")}]]
-   [:button {:label nick :on-click #(actions/open-dm! nick)}]])
+   ;; `:wrap-label`, because a nick is the whole point of this row: the panel
+   ;; is `users-width` wide and a domain-shaped handle is wider than what is
+   ;; left of it beside the mode slot, so ending it at the edge leaves two
+   ;; people looking like the same person. It runs onto a second line instead.
+   [:button {:label nick :wrap-label true
+             :on-click #(actions/open-dm! nick)}]])
 
 (defn users-panel
   "Who is in the channel, beside the conversation.
