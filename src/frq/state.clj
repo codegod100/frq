@@ -6,6 +6,7 @@
   is the only place a wire message turns into UI state."
   (:require [clojure.string :as str]
             [frq.rooms :as rooms]
+            [frq.members :as members]
             [glimmer.ratom :as r :refer [atom]]
             [frq.actions :as actions]
             [frq.cells :as cells]
@@ -642,120 +643,39 @@
       (or @found? :absent))))
 
 ;; --- who is in the room ------------------------------------------------------
-;; A channel's `:users` is nick -> mode prefix ("@", "+", or ""). The list is
-;; the server's: NAMES on the way in, and every JOIN, PART, QUIT, KICK and NICK
-;; after it. Nothing here asks who is there — being told is what membership is.
+;; All of it is `frq.members` now: a fold over the channels map, which is the
+;; same fold under either compiler. What stays here is the atom it is folded
+;; into and `ensure-channel`, because a room means more to this half than to
+;; the phone — unread counts, read marks, a joining flag — and the shared
+;; functions deliberately only ever touch `:users` and `:names-acc`.
 
-(def ^:private mode-prefixes
-  "The characters a server puts in front of a nick in NAMES, and in the same
-  order the panel sorts them: owner, admin, op, half-op, voice."
-  "~&@%+")
+(defn- names-line [channel names]
+  (swap! channels #(members/with-names (ensure-channel % channel) channel names)))
 
-(defn- split-prefix
-  "One NAMES entry into `[prefix nick]`. A nick never starts with one of these,
-  so what is in front of it is a mode and not part of the name."
-  [entry]
-  (if (and (seq entry) (str/index-of mode-prefixes (subs entry 0 1)))
-    [(subs entry 0 1) (subs entry 1)]
-    ["" entry]))
-
-(defn- names-line
-  "Fold one 353 into the channel's pending list. Pending rather than live: the
-  reply comes in as many lines as it takes and ends with 366, and replacing
-  `:users` on each of them would empty the panel and refill it a name at a
-  time."
-  [channel names]
-  (swap! channels
-         (fn [m]
-           (reduce (fn [m entry]
-                     (let [[prefix nick] (split-prefix entry)]
-                       (assoc-in m [channel :names-acc nick] prefix)))
-                   (ensure-channel m channel)
-                   (remove str/blank? (str/split (or names "") #" "))))))
-
-(defn- names-end!
-  "366: the pending list becomes the list."
-  [channel]
-  (swap! channels
-         (fn [m]
-           (if-let [acc (get-in m [channel :names-acc])]
-             (-> m (assoc-in [channel :users] acc)
-                   (update channel dissoc :names-acc))
-             m))))
+(defn- names-end! [channel]
+  (swap! channels members/names-done channel))
 
 (defn- add-user! [channel nick]
   (when (and channel nick)
-    (swap! channels #(-> (ensure-channel % channel)
-                         (update-in [channel :users] (fnil assoc {}) nick "")))))
+    (swap! channels #(members/add-user (ensure-channel % channel) channel nick))))
 
 (defn- remove-user! [channel nick]
-  (when (and channel nick)
-    (swap! channels #(if (contains? % channel)
-                       (update-in % [channel :users] dissoc nick)
-                       %))))
+  (swap! channels members/remove-user channel nick))
 
-(defn- remove-user-everywhere!
-  "A QUIT names no channel — the person left the server, so they left every
-  room this client is watching them in."
-  [nick]
-  (swap! channels
-         (fn [m]
-           (reduce-kv (fn [m k v] (assoc m k (update v :users dissoc nick)))
-                      {} m))))
+(defn- remove-user-everywhere! [nick]
+  (swap! channels members/remove-everywhere nick))
 
-(defn- rename-user!
-  "A NICK, in every channel the old name was in. Their modes come with them:
-  renaming is not leaving."
-  [old new]
-  (swap! channels
-         (fn [m]
-           (reduce-kv (fn [m k v]
-                        (assoc m k
-                               (if-let [prefix (get (:users v) old)]
-                                 (update v :users #(-> % (dissoc old) (assoc new prefix)))
-                                 v)))
-                      {} m))))
+(defn- rename-user! [old new]
+  (swap! channels members/rename-user old new))
 
-(defn- apply-mode!
-  "A channel MODE, for the letters that change how someone is listed. `params`
-  is the mode string and whoever it was applied to, in order; anything else in
-  it — a key, a limit, a ban — names no member and is skipped."
-  [channel modes args]
-  (let [letters {\q "~" \a "&" \o "@" \h "%" \v "+"}]
-    (loop [chars (seq modes) args args adding? true]
-      (when-let [c (first chars)]
-        (case c
-          \+ (recur (rest chars) args true)
-          \- (recur (rest chars) args false)
-          (if-let [prefix (letters c)]
-            (do (when-let [nick (first args)]
-                  (swap! channels
-                         (fn [m]
-                           (if (get-in m [channel :users nick])
-                             (assoc-in m [channel :users nick] (if adding? prefix ""))
-                             m))))
-                (recur (rest chars) (rest args) adding?))
-            ;; A mode that takes an argument without naming a member still eats
-            ;; one, and reading the next letter's nick out of the wrong place
-            ;; would put a mode on a stranger. Only the setting form takes one.
-            (recur (rest chars) (if adding? (rest args) args) adding?)))))))
+(defn- apply-mode! [channel modes args]
+  (swap! channels members/with-mode channel modes args))
 
-(def ^:private prefix-rank
-  (into {"" (count mode-prefixes)}
-        (map-indexed (fn [i c] [(str c) i]) mode-prefixes)))
-
-(defn member-list
-  "Who is in `channel`, as `{:nick :prefix}`, ops first and then alphabetically
-  — the order every other client lists them in, and the one a reader scanning
-  for a name expects."
-  [channel]
-  (->> (get-in @channels [channel :users])
-       (map (fn [[nick prefix]] {:nick nick :prefix prefix}))
-       (sort-by (juxt #(prefix-rank (:prefix %) 99) #(str/lower-case (:nick %))))
-       vec))
+(defn member-list [channel]
+  (members/member-list @channels channel))
 
 (defn member-count [channel]
-  (count (get-in @channels [channel :users])))
+  (members/member-count @channels channel))
 
 (defn request-names!
   "Ask who is in a channel we are already in. freeq re-joins an authenticated

@@ -36,6 +36,8 @@
             [frq.screens.settings :as settings]
             [frq.screens.app :as screens]
             [frq.rooms :as rooms]
+            [frq.members :as members]
+            [frq.oauth.core :as oauth]
             [frq.irc.parse :as irc]
             [frq.irc.handshake :as handshake]))
 
@@ -46,18 +48,59 @@
 
 (defn- room!
   "The little of `frq.state/apply-msg!` the conversation list needs: the two
-  messages that make a room appear and give it a last line."
+  messages that make a room appear and give it a last line, and everything
+  that says who is in it.
+
+  The membership half is `frq.members`, unchanged from what the desktop folds
+  — the server is the one deciding who is in a room, and it tells both halves
+  in the same words."
   [m]
   (let [cmd (str (:command m))
         params (vec (:params m))
-        who (irc/nick-of (:prefix m))]
+        who (irc/nick-of (:prefix m))
+        me? (= who (str @cells/form-nick))
+        ensure (fn [m name] (update m name #(merge {:name name :messages [] :unread 0} %)))]
     (cond
       (= "JOIN" cmd)
       (let [name (first params)]
-        (swap! cells/channels update name
-               #(merge {:name name :messages [] :unread 0} %
-                       {:joined? true :accessed (clock/now-ms)}))
-        (reset! cells/current name))
+        (swap! cells/channels
+               #(-> (ensure % name)
+                    (members/add-user name who)
+                    (cond-> me? (update name merge {:joined? true
+                                                    :accessed (clock/now-ms)}))))
+        ;; Only our own JOIN opens the room. Someone else arriving in a
+        ;; channel used to move the reader into it.
+        (when me? (reset! cells/current name)))
+
+      ;; 353 is the roll, in as many lines as it takes; 366 ends it.
+      (= "353" cmd)
+      (let [name (nth params 2 nil)]
+        (when name
+          (swap! cells/channels #(members/with-names (ensure % name) name (last params)))))
+
+      (= "366" cmd)
+      (let [name (nth params 1 nil)]
+        (when name (swap! cells/channels members/names-done name)))
+
+      (= "PART" cmd)
+      (swap! cells/channels members/remove-user (first params) who)
+
+      (= "KICK" cmd)
+      (swap! cells/channels members/remove-user (first params) (nth params 1 nil))
+
+      (= "QUIT" cmd)
+      (swap! cells/channels members/remove-everywhere who)
+
+      (= "NICK" cmd)
+      (do (swap! cells/channels members/rename-user who (last params))
+          ;; Our own rename is the server settling what we are called — it
+          ;; hands a guest a name of its choosing, so this is the usual way
+          ;; the nick on screen becomes the real one.
+          (when me? (reset! cells/form-nick (last params))))
+
+      (= "MODE" cmd)
+      (swap! cells/channels members/with-mode
+             (first params) (nth params 1 "") (drop 2 params))
 
       (= "PRIVMSG" cmd)
       (let [target (first params)
@@ -128,6 +171,63 @@
   (reset! cells/screen :connect)
   (reset! cells/error why))
 
+(defn ^:async bluesky-session!
+  "A web-token session from freeq's auth broker.
+
+  Only the half that needs no browser. A saved broker token is durable and the
+  web-token minted from it is single-use, so a return visit is one POST to
+  /session and `frq.oauth.core` already says what to send and what the answer
+  means. Getting the *first* broker token is the other half: the browser hands
+  it back to a loopback listener on the desktop, and a phone has nowhere for
+  that to land — it wants an Android app link, which is a decision about what
+  the broker will redirect to and not a porting problem. So that case says so
+  rather than quietly connecting as somebody else."
+  []
+  (if-let [bt @cells/broker-token]
+    (do
+      (reset! cells/status "Resuming your session…")
+      (let [tokens (oauth/refresh-session-parse
+                    bt
+                    (await (atproto/fetch
+                            (oauth/refresh-session-req oauth/default-broker bt))))]
+        (reset! cells/broker-token (:broker-token tokens))
+        ;; On every sign-in and not only the first: /session can hand back a
+        ;; rotated broker token, and the old one may stop working the moment
+        ;; it does.
+        (store/save-session! tokens)
+        (assoc tokens :kind :web-token)))
+    (throw (ex-info (str "Bluesky sign-in opens a browser, which the phone "
+                         "cannot catch the answer to yet — sign in with an "
+                         "app password instead")
+                    {}))))
+
+(defn ^:async sign-in!
+  "Fill `cells/session` for the mode that was chosen, or say why not.
+
+  True when the connection may go ahead. A guest carries no session, and must
+  not carry the last one either: a leftover would have `frq.irc.handshake` ask
+  for sasl and authenticate as whoever signed in before."
+  []
+  (case @cells/auth-mode
+    :guest (do (reset! cells/session nil) true)
+    (try
+      (reset! cells/connecting? true)
+      (reset! cells/error nil)
+      (reset! cells/session
+              (await (if (= :bluesky @cells/auth-mode)
+                       (bluesky-session!)
+                       (do (reset! cells/status "Signing in…")
+                           (atproto/create-session @cells/form-handle
+                                                   @cells/form-app-password)))))
+      true
+      (catch Object e
+        (reset! cells/session nil)
+        ;; The message, not the exception: `frq.atproto.core` puts the body it
+        ;; could not read in the ex-data, and a PDS that answers a resolve with
+        ;; an HTML error page puts the whole page there.
+        (fail! (str "Sign-in failed: " (or (ex-message e) e)))
+        false))))
+
 (defn ^:async connect!
   "What `frq.actions/connect!` is on the phone.
 
@@ -146,36 +246,13 @@
     (reset! closing? true)
     (net/close! c)
     (reset! conn nil))
-  ;; A guest carries no session, and must not carry the last one either: a
-  ;; leftover session would have `handshake/step` ask for sasl and then
-  ;; authenticate as whoever signed in before.
-  (when (= :guest @cells/auth-mode)
-    (reset! cells/session nil))
-  ;; An app password signs in before the socket opens: the SASL payload is
-  ;; built from a PDS session, and getting one is an HTTPS round trip that has
-  ;; nothing to do with IRC. `frq.atproto.core` says what to ask and what the
-  ;; answer means; `frq.atproto.dart` waits for it. Nothing dials out if it
-  ;; fails — connecting anyway would land us on the server as a guest, which
-  ;; looks like a success and is not the one that was asked for.
-  (when
-   (if (= :app-password @cells/auth-mode)
-     (do (reset! cells/connecting? true)
-         (reset! cells/error nil)
-         (reset! cells/status "Signing in…")
-         (try
-           (reset! cells/session
-                   (await (atproto/create-session @cells/form-handle
-                                                  @cells/form-app-password)))
-           true
-           (catch Object e
-             (reset! cells/session nil)
-             ;; The message, not the exception: `frq.atproto.core` puts the
-             ;; body it could not read in the ex-data, and a PDS that answers
-             ;; a resolve with an HTML error page puts the whole page there.
-             (fail! (str "Sign-in failed: " (or (ex-message e) e)))
-             false)))
-     true)
-    (let [n (swap! attempt inc)]
+  ;; Whatever identity was asked for, settled before the socket opens. Both
+  ;; of the signed-in modes are an HTTPS round trip that has nothing to do
+  ;; with IRC, and a failure in either must stop here: connecting anyway lands
+  ;; us on the server as a guest, which looks like a success and is not the
+  ;; one that was asked for. Bluesky did exactly that until it was asked.
+  (when (await (sign-in!))
+  (let [n (swap! attempt inc)]
       (reset! caps #{})
       (reset! cells/connecting? true)
       (reset! cells/error nil)
@@ -361,8 +438,8 @@
                        (->> (get-in @cells/channels [room :messages])
                             (filter #(= id (:id %)))
                             first))
-      :member-count (fn [_] nil)
-      :member-list (fn [_] [])
+      :member-count (fn [room] (members/member-count @cells/channels room))
+      :member-list (fn [room] (members/member-list @cells/channels room))
       :toggle-users! (fn [] (swap! cells/show-users? not))
       :toggle-overview! (fn [] (swap! cells/overview? not))
       :toggle-chat-list! (fn [] (swap! cells/hide-chat-list? not))
