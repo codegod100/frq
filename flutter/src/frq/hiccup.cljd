@@ -1,0 +1,282 @@
+(ns frq.hiccup
+  "glimmer's hiccup, painted by Flutter.
+
+  This is a backend, not a port. `frq.app` is 1,834 lines of
+  `[:vbox {:spacing 6} ...]` over about twenty tags, and it names no toolkit
+  anywhere — the same trick `frq.cosmic` and `frq.tui` rely on, where the
+  components do not know what is under the reconciler. So the screens do not
+  get rewritten for the phone; this interprets them.
+
+  The tags are glimmer's, and where Flutter has no equivalent the shape is
+  chosen to match what jvui and libcosmic drew rather than what Material would
+  do on its own: `:card` is a surface with a border and not an elevation,
+  `:dim-label` is the body colour at 60%, and `:page` is a max-width column
+  centred in whatever it is given.
+
+  What this does NOT do is glimmer's reconciliation. glimmer patches the tree
+  it painted last; Flutter rebuilds from the top and diffs its own element
+  tree, which is the same job done by the framework instead of by us. The cost
+  is that a cell firing rebuilds the whole screen rather than the subtree that
+  read it — fine at this size, and the thing to revisit if a message list ever
+  feels it."
+  (:require ["dart:io" :as io]
+            ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]))
+
+;; ------------------------------------------------------------------ theme
+
+(def ^:private gap 8.0)
+
+(defn- dbl [x default]
+  (cond (number? x) (double x)
+        :else default))
+
+(defn- muted [ctx]
+  (-> (m/Theme.of ctx) .-colorScheme .-onSurface (.withValues .alpha 0.6)))
+
+;; ------------------------------------------------------------- text entry
+
+(defonce ^:private controllers
+  ;; TextEditingController per `:key`, because a controller made during a build
+  ;; is a new one every rebuild — the cursor jumps to the start and the
+  ;; selection is lost on the keystroke after it.
+  ;;
+  ;; Keyed rather than positional: glimmer's own reconciler matches children by
+  ;; `:key` for the same reason, and an entry that moves in the tree should
+  ;; keep what is typed in it.
+  (atom {}))
+
+(defn- controller-for [k text]
+  (let [k (or k ::anonymous)
+        c (or (get @controllers k)
+              (let [c (m/TextEditingController .text (or text ""))]
+                (swap! controllers assoc k c)
+                c))]
+    ;; Only when it differs, and never while it would move the caret: the cell
+    ;; is the authority for what the entry says, but the person typing is the
+    ;; authority for where they are in it.
+    (when (and text (not= text (.-text c)))
+      (set! (.-text c) text))
+    c))
+
+;; ------------------------------------------------------------------ props
+
+(defn- props [node]
+  (let [p (second node)] (if (map? p) p {})))
+
+(defn- body [node]
+  (let [p (second node)] (if (map? p) (drop 2 node) (drop 1 node))))
+
+;; --------------------------------------------------------------- children
+
+(declare render)
+
+(defn- children
+  "Flatten seqs, drop nils. `(for [...] ...)` in a component yields a seq in
+  the child position and glimmer splices it; so does this."
+  [nodes]
+  (persistent!
+   (reduce (fn [acc n]
+             (cond (nil? n) acc
+                   (seq? n) (reduce conj! acc (children n))
+                   :else (conj! acc (render n))))
+           (transient []) nodes)))
+
+;; ----------------------------------------------------------------- widget
+
+(defn- text-style [ctx kind]
+  (let [t (.-textTheme (m/Theme.of ctx))]
+    (case kind
+      :title (.-headlineSmall t)
+      :title-2 (.-titleMedium t)
+      (.-bodyMedium t))))
+
+(defn- render-tag [tag node]
+  (let [p (props node)
+        kids (children (body node))
+        one (fn [] (if (seq kids) (first kids) (m/SizedBox .width 0.0 .height 0.0)))]
+    (case tag
+      (:vbox :page)
+      (let [col (m/Column
+                 .crossAxisAlignment m/CrossAxisAlignment.start
+                 .mainAxisSize m/MainAxisSize.min
+                 .spacing (dbl (:spacing p) 0.0)
+                 .children kids)]
+        (if-let [w (:max-width p)]
+          (m/Center .child (m/ConstrainedBox
+                            .constraints (m/BoxConstraints .maxWidth (dbl w 520.0))
+                            .child (m/Padding .padding (m/EdgeInsets.all gap) .child col)))
+          col))
+
+      :hbox
+      (m/Row
+       .crossAxisAlignment m/CrossAxisAlignment.center
+       .mainAxisSize m/MainAxisSize.min
+       .spacing (dbl (:spacing p) 0.0)
+       .children kids)
+
+      :label
+      (f/widget
+       :context ctx
+       (m/Text (str (:label p "")) .style (text-style ctx :body)))
+
+      :dim-label
+      (f/widget
+       :context ctx
+       (m/Text (str (:label p ""))
+               .style (.copyWith (text-style ctx :body) .color (muted ctx))))
+
+      :title
+      (f/widget
+       :context ctx
+       (m/Text (str (:label p "")) .style (text-style ctx :title)))
+
+      :title-2
+      (f/widget
+       :context ctx
+       (m/Text (str (:label p "")) .style (text-style ctx :title-2)))
+
+      :button
+      (let [on (:on-click p)
+            press (when on #(on))]
+        (cond
+          (:destructive p)
+          (m/OutlinedButton .onPressed press .child (m/Text (str (:label p ""))))
+          (:primary p)
+          (m/FilledButton .onPressed press .child (m/Text (str (:label p ""))))
+          :else
+          (m/TextButton .onPressed press .child (m/Text (str (:label p ""))))))
+
+      :link
+      (let [on (:on-click p)]
+        (m/InkWell
+         .onTap (when on #(on))
+         .child (f/widget
+                 :context ctx
+                 (m/Text (str (:label p ""))
+                         .style (.copyWith (text-style ctx :body)
+                                           .decoration m/TextDecoration.underline
+                                           .color (-> (m/Theme.of ctx) .-colorScheme .-primary))))))
+
+      :entry
+      (let [on-change (:on-change p)
+            on-activate (:on-activate p)
+            rows (:rows p)]
+        (m/TextField
+         .controller (controller-for (:key p) (:text p))
+         .onChanged (when on-change #(on-change %))
+         .onSubmitted (when on-activate (fn [_] (on-activate)))
+         .maxLines (if rows (int rows) 1)
+         .decoration (m/InputDecoration
+                      .isDense true
+                      .border (m/OutlineInputBorder)
+                      .hintText (:placeholder p))))
+
+      :card
+      (f/widget
+       :context ctx
+       (m/Container
+        .padding (m/EdgeInsets.all (* 1.5 gap))
+        .decoration (m/BoxDecoration
+                     .borderRadius (m/BorderRadius.circular 12.0)
+                     .border (m/Border.all
+                              .color (-> (m/Theme.of ctx) .-colorScheme .-outlineVariant)))
+        .child (m/Column
+                .crossAxisAlignment m/CrossAxisAlignment.start
+                .mainAxisSize m/MainAxisSize.min
+                .spacing (dbl (:spacing p) gap)
+                .children kids)))
+
+      :separator (m/Divider .height 1.0)
+
+      :spinner
+      (m/SizedBox .width 16.0 .height 16.0
+                  .child (m/CircularProgressIndicator .strokeWidth 2.0))
+
+      :spacer
+      (let [s (dbl (or (:size p) (:gap p) (:width-request p)) gap)]
+        (m/SizedBox .width s .height s))
+
+      :checkbutton
+      (let [on (:on-toggled p)]
+        (m/Row
+         .mainAxisSize m/MainAxisSize.min
+         .children [(m/Checkbox .value (boolean (:active p))
+                                .onChanged (when on (fn [v] (on (boolean v)))))
+                    (m/Text (str (:label p "")))]))
+
+      :emoji
+      (m/Text (str (:emoji p "")) .style (m/TextStyle .fontSize (dbl (:size p) 16.0)))
+
+      :avatar
+      (let [s (dbl (:size p) 32.0)
+            src (:src p)]
+        (m/CircleAvatar
+         .radius (/ s 2.0)
+         .backgroundImage (when (and src (not= "" src)) (m/NetworkImage src))
+         .child (when (or (nil? src) (= "" src))
+                  (m/Text (let [l (str (:label p ""))]
+                            (if (pos? (count l)) (.toUpperCase (subs l 0 1)) "?"))))))
+
+      :image
+      (let [src (or (:src p) (:path p))
+            w (:max-width p)
+            h (:max-height p)
+            img (cond
+                  (nil? src) (m/SizedBox .width 0.0 .height 0.0)
+                  (or (.startsWith (str src) "http://")
+                      (.startsWith (str src) "https://"))
+                  (m/Image.network (str src) .fit m/BoxFit.contain)
+                  :else (m/Image.file (io/File. (str src)) .fit m/BoxFit.contain))
+            img (if (or w h)
+                  (m/ConstrainedBox
+                   .constraints (m/BoxConstraints
+                                 .maxWidth (dbl w double/infinity)
+                                 .maxHeight (dbl h double/infinity))
+                   .child img)
+                  img)]
+        (if-let [on (:on-click p)]
+          (m/InkWell .onTap #(on) .child img)
+          img))
+
+      :scroll
+      (m/Expanded
+       .child (m/SingleChildScrollView
+               .child (m/Column
+                       .crossAxisAlignment m/CrossAxisAlignment.start
+                       .mainAxisSize m/MainAxisSize.min
+                       .spacing (dbl (:spacing p) 0.0)
+                       .children kids)))
+
+      ;; Unknown tag. glimmer-cosmic's spike painted these as a column and
+      ;; that is what made most of frq come out as stacked text — so this says
+      ;; so on screen instead of pretending, and the missing tag is one
+      ;; `case` arm away.
+      (m/Column
+       .crossAxisAlignment m/CrossAxisAlignment.start
+       .mainAxisSize m/MainAxisSize.min
+       .children (into [(m/Text (str "?" tag)
+                                .style (m/TextStyle .fontSize 10.0
+                                                    .color m/Colors.orange))]
+                       kids)))))
+
+(defn render
+  "One hiccup node as a Flutter widget.
+
+  A vector whose head is a function is a component: glimmer calls it with the
+  rest of the vector as arguments and renders what comes back, and so does
+  this. Everything else is a tag."
+  [node]
+  (cond
+    (nil? node) (m/SizedBox .width 0.0 .height 0.0)
+    (string? node) (m/Text node)
+    (vector? node)
+    (let [head (first node)]
+      (if (keyword? head)
+        (render-tag head node)
+        (render (apply head (rest node)))))
+    (seq? node)
+    (m/Column .crossAxisAlignment m/CrossAxisAlignment.start
+              .mainAxisSize m/MainAxisSize.min
+              .children (children node))
+    :else (m/Text (str node))))

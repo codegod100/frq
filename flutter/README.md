@@ -105,9 +105,48 @@ its own nix derivation and never written anywhere, which is why the first
 install over it needed an uninstall: Android will not update a package across a
 signature change.
 
-## What it paints
+## The screens are not rewritten
 
-`frq.main` is a socket, not the client: the clock and the saved session, read
-through exactly the `common/` namespaces the desktop reads them through. That
-is the whole point of it — proof the shared half compiles and runs under a
-second compiler. The screens are still to be written.
+`frq.hiccup` is a glimmer backend, the same way glimmer-cosmic and glimmer-tui
+are. It walks the hiccup `frq.app` already produces and emits Flutter widgets,
+so the screens are shared rather than forked.
+
+This is worth being precise about, because the first read of the port said
+otherwise. Measured against the source:
+
+* `frq.state` is 1,930 lines and makes **zero** glimmer calls. Its whole
+  dependency on glimmer is `:refer [atom]` — it shadows core's `atom` with a
+  ratom, and everything after that is `swap!`, `reset!` and `deref`.
+* `frq.app` is 1,834 lines and makes **one**: `r/reaction`. The rest is data —
+  `[:vbox {:spacing 6} ...]` over about twenty tags, naming no toolkit.
+
+So what a Flutter port needs is an interpreter for that data, not a rewrite of
+it. What genuinely has to be ported is the other end: `frq.irc`, `frq.atproto`,
+`frq.oauth`, `frq.avatars`, `frq.media`, `frq.profile`, `frq.platform` — the
+namespaces that touch the host. Which is what `frq.io` is for, and where
+`dart:io` pays for the whole exercise.
+
+What `frq.hiccup` does not do is glimmer's reconciliation: Flutter rebuilds
+from the top and diffs its own element tree, so a cell firing rebuilds the
+screen rather than the subtree that read it. Fine at this size.
+
+`frq.main` still paints a hand-written tree rather than `frq.app`'s own. Not
+because the screens need changing — because requiring them pulls `frq.state`,
+which pulls `frq.irc`, which reaches for jolt.host. The tree it paints uses
+only tags `frq.app` uses, so it is a test of the backend and nothing more.
+
+## The order to do the rest in
+
+1. **`frq.irc`** (433) — the parser is pure; the reader is a blocking thread in
+   a `future` and becomes a `Stream` over `SecureSocket`. This is also what
+   makes sign-in work on a phone at all.
+2. **`frq.atproto`** (209), **`frq.oauth`** (182) — hand-rolled HTTPS over
+   OpenSSL bindings today, `dart:io` and `package:http` here.
+3. **`frq.msgsig`** (268), **`frq.wire`** (81) — need a crypto seam beside the
+   io one.
+4. **`frq.avatars`**, **`frq.media`**, **`frq.profile`**, **`frq.platform`** —
+   small, and mostly fetch-and-cache.
+5. **`frq.state`** moves to `common/` as `.cljc`, with `atom` resolved per
+   platform by reader conditional.
+6. **`frq.app`** follows it, and the tags it uses that `frq.hiccup` does not
+   cover yet paint as an orange `?tag` until they do.

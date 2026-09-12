@@ -19,22 +19,59 @@
   (:require ["package:flutter/material.dart" :as m]
             ["package:path_provider/path_provider.dart" :as pp]
             [cljd.flutter :as f]
+            [frq.hiccup :as h]
             [frq.io.dart :as host]
             [frq.clock :as clock]
             [frq.store :as store]))
+
+(defonce ^:private tick (atom 0))
+
+(defn- demo
+  "A hiccup tree in glimmer's tags, rendered by `frq.hiccup`.
+
+  Hand-written, and that is the point of it for now: `frq.app`'s own screens
+  cannot be required here yet — `frq.state` reaches for jolt.host through
+  frq.irc and everything under it — so this exercises the tags they are built
+  from until that chain is portable. Every tag here is one `frq.app` uses, and
+  none of it is Flutter."
+  []
+  [:page {:max-width 520}
+   [:title {:label "frq"}]
+   [:dim-label {:label "freeq client — guest, or your Bluesky identity."}]
+   [:card {}
+    [:title-2 {:label "Sign in with Bluesky"}]
+    [:dim-label {:label "Opens your browser for AT Protocol OAuth. freeq's broker hands back a token; no password passes through frq."}]
+    [:label {:label "Handle"}]
+    [:entry {:key :handle
+             :placeholder "alice.bsky.social"
+             :on-change (fn [_] nil)}]
+    [:hbox {:spacing 8}
+     [:button {:label "Connect" :primary true :on-click #(swap! tick inc)}]
+     [:button {:label "Forget saved session" :destructive true :on-click #(swap! tick inc)}]]
+    [:separator {}]
+    [:checkbutton {:label "TLS" :active true :on-toggled (fn [_] nil)}]
+    [:hbox {:spacing 6}
+     [:spinner {}]
+     [:dim-label {:label "Resuming your session…"}]]]
+   [:card {}
+    [:title-2 {:label "Shared with the desktop"}]
+    [:label {:label (str "clock  " (clock/clock-time (clock/now-ms)))}]
+    [:label {:label (str "store  " (if-let [s (store/load-session)]
+                                     (str "signed in as " (:handle s))
+                                     "no saved session"))}]
+    [:dim-label {:label "Both read through frq.io, same source as jolt."}]]])
 
 (defn ^:async main []
   (m/WidgetsFlutterBinding.ensureInitialized)
   (let [dir (.-path (await (pp/getApplicationSupportDirectory)))]
     (host/install! dir)
     (f/run
-      (m/MaterialApp .title "frq")
+      (m/MaterialApp .title "frq"
+                     .theme (m/ThemeData .useMaterial3 true
+                                         .colorSchemeSeed m/Colors.indigo))
       .home
       (m/Scaffold .appBar (m/AppBar .title (m/Text "frq")))
       .body
-      m/Center
-      (m/Text (str "frq\n"
-                   (clock/clock-time (clock/now-ms)) "\n"
-                   (if-let [s (store/load-session)]
-                     (str "signed in as " (:handle s))
-                     "no saved session"))))))
+      (f/widget :watch [_ tick])
+      (m/SingleChildScrollView)
+      (h/render (demo)))))
