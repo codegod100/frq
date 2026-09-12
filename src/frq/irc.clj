@@ -234,11 +234,11 @@
 (defn privmsg!
   "Say something. With `reply-to`, say it as an answer to that message: the
   `+draft/reply` tag is what every other freeq client reads to thread it, and
-  what this one draws its chips from."
+  what this one draws its chips from. The line is `frq.irc.mutate`'s, so both
+  halves tag a reply the same way; this writes it."
   ([conn target text] (privmsg! conn target text nil))
   ([conn target text reply-to]
-   (send-line! conn (str (when (seq reply-to) (str "@+draft/reply=" reply-to " "))
-                         "PRIVMSG " target " :" text))))
+   (send-line! conn (mutate/say-line target text reply-to))))
 
 (defn edit!
   "Rewrite something already said. The line is `frq.irc.mutate`'s; this writes

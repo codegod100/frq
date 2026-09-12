@@ -65,3 +65,16 @@
    (tag-line (assoc (msgsig/edit-tags target msgid text nil peer-did)
                     "+draft/edit" msgid)
              (str "PRIVMSG " target " :" text))))
+
+(defn say-line
+  "Say something. With `reply-to`, say it as an answer to that message.
+
+  The `+draft/reply` tag is what every other freeq client reads to thread it,
+  and what both of ours draw their chips from. Unsigned, unlike the mutations
+  above: a new message is not a change to one already said, and the server
+  asks for no proof of authorship beyond the account it came in on."
+  ([target text] (say-line target text nil))
+  ([target text reply-to]
+   (if (seq reply-to)
+     (tag-line {"+draft/reply" reply-to} (str "PRIVMSG " target " :" text))
+     (str "PRIVMSG " target " :" text))))

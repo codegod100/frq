@@ -921,7 +921,8 @@
 (defn- send-draft! []
   (let [text (str @cells/draft)
         room (str @cells/current)
-        edit @cells/editing]
+        edit @cells/editing
+        reply-to @cells/replying-to]
     (cond
       (empty? room) nil
 
@@ -980,18 +981,26 @@
             ;; show. A line that is only a picture is only the link.
             text (.trim (str text (when url (str " " url))))]
         (do
-      (net/send-line! @conn (str "PRIVMSG " room " :" text))
+      ;; The `+draft/reply` tag is what makes this an answer rather than a
+      ;; line that happens to follow: without it the banner over the box is
+      ;; the only place the reply ever existed, and it goes out untagged.
+      (net/send-line! @conn (mutate/say-line room text (:id reply-to)))
       ;; Echoed locally only when the server will not echo it back. With
       ;; `echo-message` negotiated it does — that is what the cap is for, and
       ;; it is how a client learns the msgid of its own line — so adding one
       ;; here as well put every sent message in the room twice.
       (when-not (handshake/acked? @caps "echo-message")
         (swap! cells/channels update room
-               #(update % :messages conj {:from @cells/form-nick :text text})))
+               #(update % :messages conj {:from @cells/form-nick :text text
+                                          :reply-to (:id reply-to)})))
       ;; The attachment has done its job the moment the link is on the wire.
       (when-let [a @cells/attachment]
         (reset! cells/attachment nil)
         (discard! (:path a)))
+      ;; The banner comes down with the send: it is the question this line
+      ;; just answered, and leaving it up would aim the next line at the same
+      ;; message.
+      (reset! cells/replying-to nil)
       (reset! cells/draft ""))))))
 
 (defn- message-by-id [room id]
