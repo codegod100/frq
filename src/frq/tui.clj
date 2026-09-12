@@ -35,6 +35,7 @@
             [frq.state :as s]
             [jolt.host :as host]
             [glimmer.core :as ui]
+            [frq.platform :as platform]
             [glimmer-tui.ffi :as tui-ffi]
             ;; last, so its install! is the one that stands
             [glimmer-tui.core :as tui]))
@@ -170,6 +171,14 @@
   ;; And how a scroll here answers "am I at the newest line?", which the
   ;; window's scroll area answers for itself.
   (reset! s/at-end-probe at-end?)
+  ;; What the terminal can do of the platform's job. It used to inherit jvui's
+  ;; answers here — a window's timers, running in a loop that was never
+  ;; started — and the ones it has no answer for now do nothing instead of
+  ;; doing nothing slowly.
+  (platform/override! {:after! tui/after!
+                       :every! tui/every!
+                       :quit! tui/quit!
+                       :screen-size tui/screen-size})
   (app/start! {:after! tui/after!
                :every! tui/every!
                :title! nil

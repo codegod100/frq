@@ -1,16 +1,27 @@
 (ns frq.app
-  "frq — a freeq client written as glimmer components, painted by Vidya/egui.
+  "frq — a freeq client, as glimmer components.
 
   The screens follow sleek's: connect, chats, chat, discover, settings, under a
   tab bar. Where sleek draws them in Rust against egui directly, here each is a
-  hiccup component over the same widgets."
+  hiccup component over glimmer's widget tags.
+
+  No backend and no `-main`. This namespace is the screens and nothing else —
+  which backend paints them is the entry point's business, and there is one
+  entry point per backend: `frq.cosmic` for the window, `frq.tui` for the
+  terminal. Each hands `start!` the timers and the window measurements its own
+  loop can give."
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
             [glimmer.core :as ui]
-            [glimmer-jvui.core :as gui]
             [frq.av :as av]
             [frq.avatars :as avatars]
             [frq.clock :as clock]
+            ;; For the side effect: this installs the desktop's answers to
+            ;; `frq.io`, which everything under common/ asks its questions of.
+            ;; Required here rather than in each -main because frq.tui and
+            ;; frq.cosmic both come through frq.app, and the Flutter entry
+            ;; point requires frq.io.dart instead and never loads this file.
+            [frq.io.jolt]
             [frq.glyphs :as glyphs]
             [frq.media :as media]
             [frq.platform :as platform]
@@ -1816,19 +1827,3 @@
                        (reset! shown title)
                        (title! title))))))
   nil)
-
-(defn -main [& _]
-  (start! {:after! gui/after!
-           :every! gui/every!
-           :title! gui/set-title!
-           ;; The height comes off the same tick, from `screen-size` rather
-           ;; than a second call: it is the window's content size, and the
-           ;; pictures in the conversation are sized against it.
-           :measure! (fn []
-                       (let [w (gui/window-width)
-                             h (long (second (gui/screen-size)))]
-                         (when (not= w @s/window-width)
-                           (reset! s/window-width w))
-                         (when (not= h @s/window-height)
-                           (reset! s/window-height h))))})
-  (ui/run app :title "frq" :width 520 :height 860))

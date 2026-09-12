@@ -1,0 +1,17 @@
+{;; The ClojureDart half. `../common` is the same directory `../deps.edn` puts
+ ;; on jolt's classpath — one copy of frq.clock, frq.store and frq.io, compiled
+ ;; twice. ClojureDart reads .cljd and .cljc and never .clj, which is why
+ ;; everything shared is .cljc and everything jolt-only stays .clj: the
+ ;; extension is the boundary, enforced by the compiler rather than by
+ ;; convention.
+ :paths ["src" "../common"]
+
+ :deps {tensegritics/clojuredart
+        {:git/url "https://github.com/Tensegritics/ClojureDart.git"
+         ;; UNPINNED. Nothing builds this yet — see flutter/README.md.
+         :git/sha "PIN-ME"}}
+
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+
+ :cljd/opts {:kind :flutter
+             :main frq.main}}

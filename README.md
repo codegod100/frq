@@ -3,7 +3,9 @@
 A **[freeq](https://github.com/codegod100/freeq)** client written in
 **[jolt](https://github.com/jolt-lang/jolt)**, as
 [glimmer](https://github.com/jolt-lang/glimmer) components painted by
-**[Vidya](https://tangled.org/nandi.uk/vidya)**/egui.
+**libcosmic** on the desktop — and, on the phone, by Flutter through
+[ClojureDart](https://github.com/tensegritics/ClojureDart) over the same
+shared namespaces. See [flutter/README.md](flutter/README.md).
 
 It is a proof of concept port of [sleek](../sleek), which is the same client in
 Rust against egui directly. The screens are sleek's — connect, chats, chat,
@@ -11,20 +13,35 @@ discover, settings, under a tab bar — but each is hiccup over glimmer's widget
 tags rather than immediate-mode drawing code, and state lives in ratoms instead
 of an `AppState` struct.
 
+Source lives in three trees, and the file extension is the boundary:
+
 ```
-src/frq/atproto.clj handle → DID → PDS → session, and the SASL payloads
-src/frq/oauth.clj   the broker flow: login URL, loopback capture, /session
-src/frq/store.clj   the saved sign-in, mode 600 in the config directory
-src/frq/avatars.clj profile pictures, by DID or handle
-src/frq/profile.clj who someone is: the Bluesky profile behind a nick
-src/frq/media.clj   image links: spot them, fetch them once, cache on disk
-src/frq/upload.clj  a pasted picture to freeq's media endpoint, as multipart
-src/frq/av.clj      calls: the signaling, and a handle on the media plane
-src/frq/clock.clj   the reader's own zone, twelve-hour times, day headings
-src/frq/emoji.clj   the picker's catalog: every drawable emoji and its name
-src/frq/irc.clj     IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
-src/frq/state.clj   the ratoms every screen reads, and `apply-msg!`
-src/frq/app.clj     the screens
+common/  .cljc  compiled by both jolt and ClojureDart — no jolt, no glimmer
+src/     .clj   the jolt half: glimmer, jolt.ffi, cosmic + tui backends
+flutter/ .cljd  the ClojureDart half: Flutter, dart:io — see flutter/README.md
+```
+
+ClojureDart reads `.cljd` and `.cljc` and never `.clj`, so a namespace that
+reaches for `jolt.host` cannot end up in a Flutter build by accident. What the
+two halves share, they ask of `common/frq/io.cljc` — the host's job named once,
+answered by `frq.io.jolt` on one side and `frq.io.dart` on the other.
+
+```
+common/frq/io.cljc      the seam: filesystem, environment, config dir, clock
+common/frq/clock.cljc   IRCv3 time tags → the reader's own zone
+common/frq/store.cljc   the saved sign-in, mode 600 in the config directory
+common/frq/emoji.cljc   the picker's catalog: every drawable emoji and its name
+src/frq/io/jolt.clj     the desktop's answers to the seam
+src/frq/atproto.clj     handle → DID → PDS → session, and the SASL payloads
+src/frq/oauth.clj       the broker flow: login URL, loopback capture, /session
+src/frq/avatars.clj     profile pictures, by DID or handle
+src/frq/profile.clj     who someone is: the Bluesky profile behind a nick
+src/frq/media.clj       image links: spot them, fetch them once, cache on disk
+src/frq/upload.clj      a pasted picture to freeq's media endpoint, as multipart
+src/frq/av.clj          calls: the signaling, and a handle on the media plane
+src/frq/irc.clj         IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
+src/frq/state.clj       the ratoms every screen reads, and `apply-msg!`
+src/frq/app.clj         the screens
 ```
 
 ## Tracing
@@ -45,20 +62,18 @@ Every recipe lives in the `justfile` itself. Each one that runs frq re-enters
 `nix develop --command just run` are one code path rather than two. Nothing has
 to be installed for that but Nix.
 
-`just run` is `jolt -M:frq` inside `nix develop`, with `LD_LIBRARY_PATH`
-pointed at the shell's `JOLT_NATIVE_LIB` — the flake's build of
-[jolt-native](https://gitlab.com/nandithebull/jolt-native), which is both
-shared objects this client loads: `libvidya`, the retained-tree ABI glimmer
-paints through, and `libjoltmoq`, the AV media plane. The source frq runs is
-the working tree; everything under it is built rather than fetched, at the revs
-`flake.lock` names. Nothing has to be installed but Nix, and no jolt-native
-checkout beside this one.
+`just run` is `jolt -m frq.cosmic` inside `nix develop`, with
+`LD_LIBRARY_PATH` pointed at the shell's `JOLT_NATIVE_LIB` — the flake's build
+of [jolt-native](https://gitlab.com/nandithebull/jolt-native), which carries
+the shared objects this client loads: `libjoltcosmic`, the retained-tree ABI
+glimmer paints the window through, and `libjolttui`, the same ABI over a grid
+of cells. The source frq runs is the working tree; everything under it is built
+rather than fetched, at the revs `flake.lock` names. Nothing has to be
+installed but Nix, and no jolt-native checkout beside this one.
 
-The APK is the other half of that: it takes the two libraries out of
-jolt-native's *release* instead, by the digests in `nix/android.nix`, because a
-derivation's inputs have to be fetchurl. `just bump` moves those pins — and
-deps.edn's glimmer-vidya sha — to the latest release at once, and
-`just bump v0.1.2` to a named one.
+There is no jvui and no Vidya any more. Both were experiments: the window is
+libcosmic and the terminal is libjolttui, and those are the two backends there
+are.
 
 `jolt` on its own does not work in this tree: `deps.edn` names both libraries
 under `:jolt/native`, so every invocation loads them before it reads a line and
@@ -77,7 +92,7 @@ cargo run --release --bin freeq-server        # in the freeq checkout
 
 The screens are hiccup over glimmer's reconciler, and the reconciler does not
 know what is under it — so the same tree paints into a terminal through
-jolt-native's `libjolttui`, which exports libvidya's retained-tree ABI over a
+jolt-native's `libjolttui`, which exports the same retained-tree ABI over a
 grid of cells instead of a GPU window.
 
 It is the client, not a preview of it. `frq.app/start!` is what a launch does —
@@ -120,7 +135,7 @@ that is said, and `frq.tui` sets it.
 
 `just tui` is `just run`'s two halves with the other backend under them: this
 tree's source on the flake's everything-else, in the dev shell. jolt-native
-carries both native libraries and both Jolt sides — glimmer-vidya for the
+carries both native libraries and both Jolt sides — glimmer-cosmic for the
 window, glimmer-tui for the terminal — so one input answers for either, and
 nothing here needs a checkout beside the tree.
 
@@ -158,29 +173,26 @@ A refused sign-in is reported and the connection carries on as a guest.
 
 ## Android
 
-An APK whose native halves come from jolt-native's release and whose Jolt half
-is frq's: `libvidya.so` (the Rust/egui C ABI, which owns the event loop as the
-NativeActivity's own library), `libjoltmoq.so` (the media plane) and
-`libjoltapp.so` (frq compiled to a Chez boot image, linked against both).
+The APK is **ClojureDart and Flutter**, not jolt — see
+[flutter/README.md](flutter/README.md). Nothing here builds it yet.
 
-```bash
-just apk run                    # build, install, launch on a connected device
-just apk log                    # logcat, filtered
-```
+There was a jolt APK: `libvidya.so` painting through a NativeActivity, with frq
+compiled to an arm64 Chez boot image beside it. It is gone, and so are
+`nix/android.nix`, the `.#apk` outputs and the `just apk` recipe. The reason is
+not the build, which worked — it is that every backend it could paint with is
+retired. Vidya and jvui were experiments, and libcosmic is Wayland, X11 and
+wgpu, so it does not cross to a phone at all.
 
-Needs nothing on the machine but Nix and an `adb`: the build is
-[`nix/android.nix`](nix/android.nix), and the SDK, the NDK, the arm64 Chez
-cross target and the OpenSSL the app carries are all built or fetched there.
-`nix build .#apk` is the same thing without adb; on a machine with a remote
-builder, hand it the store rather than a `builders` entry —
-`FRQ_NIX_STORE=ssh-ng://eu.nixbuild.net just apk`, and see the header of
-`nix/android.nix` for why.
+What the phone gains by the move is most of what it never had. TLS was the
+worst of it: jolt reaches OpenSSL through the dynamic loader and Android has no
+public `libssl`, so sign-in was desktop-only and the connect screen fell back to
+the plain `:6667` listener on its own. `dart:io` carries TLS in the runtime.
+The same goes for the media plane — V4L2 and ALSA are not there either, and
+Flutter has camera and audio plugins that are.
 
-TLS does not work there: jolt reaches OpenSSL through the dynamic loader, and
-Android has no public `libssl` to load. The connect screen falls back to the
-plain `:6667` listener on its own, which is why the plain transport is the raw
-`socket`/`connect`/`send`/`recv` calls rather than jolt's `java.net.Socket`
-surface — that surface does not work on Android either, while the syscalls do.
+What carries over untouched is `common/` — see the three trees at the top.
+`frq.clock`, `frq.store` and the rest are compiled by both jolt and
+ClojureDart, and what they need from the host they ask `frq.io` for.
 
 ## What the PoC covers
 
@@ -194,7 +206,7 @@ surface — that surface does not work on Android either, while the syscalls do.
 * A chip above a reply quoting what it answers, and a click that goes there;
   ↩ beside a sender to answer them, with `+draft/reply` on the way out
 * Emoji reactions: colour pills under a message, ☺ beside the sender to open a
-  picker over every emoji Vidya can draw (popular first, then Unicode's own
+  picker over every emoji the backend can draw (popular first, then Unicode's own
   groups, searchable by name), and a second click on a pill to take yours off
   — sent as `TAGMSG`, and restored from the server's own tally when the
   backlog comes back
@@ -236,8 +248,8 @@ shape this side:
 
 * **Nothing calls back.** Status and video are polled, drained by a timer that
   glimmer runs on the loop thread — the only thread allowed to touch a node.
-* **A frame is borrowed.** The decoder's own buffer is handed to Vidya as a
-  pointer and painted by an `:image` with a `:feed`. The pixels never become a
+* **A frame is borrowed.** The decoder's own buffer is handed to the backend as
+  a pointer and painted by an `:image` with a `:feed`. The pixels never become a
   jolt value and are never copied on this side, which is the only way thirty
   frames a second is affordable here.
 
@@ -257,17 +269,18 @@ in a loop that looks exactly like a hang.
   format, and a fetch needs TLS, so the phone shows links. The link is left in
   place either way.
 * **Nothing evicts the media cache.**
-* **Calls are desktop-only.** `libjoltmoq` is not built for Android here, and
-  the camera and microphone paths that are would still need the runtime
-  permissions the APK does not ask for.
+* **Calls are desktop-only.** The media plane is V4L2 and ALSA, which Android
+  does not have — and libcosmic, which paints the frames, does not run there
+  either. Flutter's camera and audio plugins are the way in on the phone, and
+  that is its own project.
 * **One call at a time**, which is the media plane's rule and the microphone's.
 * **No call is offered in a DM** — freeq's AV signaling is a channel's.
 * **Pasting a picture needs a sign-in and a desktop.** The upload is filed
   under the DID of a live session, so a guest cannot make one; and it is read
-  off the clipboard through the ABI's `vidya_clipboard_image_png`, which
-  arboard backs on desktop and nothing backs on Android. It also shares
+  off the clipboard through the backend's `clipboard-image-png!`, which
+  libcosmic backs on the desktop and nothing backs in a terminal. It also shares
   nothing to your PDS and posts nothing to Bluesky — those fields are opt-in
   and this client does not send them.
 * **No scrollback trimming or threads.**
 * A sent line waits up to 200ms for the reader thread to flush it.
-* Message lists are keyed vboxes; glimmer-vidya has no `:listbox` yet.
+* Message lists are keyed vboxes; glimmer-cosmic has no `:listbox` yet.

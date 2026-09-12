@@ -1,24 +1,5 @@
 {
   "nodes": {
-    "chez-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1778520543,
-        "narHash": "sha256-/AQbCbjfIpZjgQJB2E1QXSOfcTGF24xfBDOyZDUWtO0=",
-        "ref": "refs/tags/v10.4.1",
-        "rev": "e95a7efbafa2cf3bd5343ea542e6bc909a7ab2c4",
-        "revCount": 2525,
-        "submodules": true,
-        "type": "git",
-        "url": "https://github.com/cisco/ChezScheme"
-      },
-      "original": {
-        "ref": "refs/tags/v10.4.1",
-        "submodules": true,
-        "type": "git",
-        "url": "https://github.com/cisco/ChezScheme"
-      }
-    },
     "crane": {
       "locked": {
         "lastModified": 1788465171,
@@ -121,30 +102,6 @@
         "url": "https://gitlab.com/nandithebull/glimmer"
       }
     },
-    "jolt-android-src": {
-      "inputs": {
-        "makes": "makes",
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1788137223,
-        "narHash": "sha256-VeHi864PEtZoHRNA7ms9uaJb6+7nHvDyRXqLLPQ1tao=",
-        "ref": "refs/heads/main",
-        "rev": "2b80d68d1f7a31ba92b208b3957e5fb555617ada",
-        "revCount": 2742,
-        "submodules": true,
-        "type": "git",
-        "url": "https://gitlab.com/nandithebull/jolt"
-      },
-      "original": {
-        "rev": "2b80d68d1f7a31ba92b208b3957e5fb555617ada",
-        "submodules": true,
-        "type": "git",
-        "url": "https://gitlab.com/nandithebull/jolt"
-      }
-    },
     "jolt-native": {
       "inputs": {
         "crane": "crane",
@@ -155,36 +112,23 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1789094762,
-        "narHash": "sha256-frw18DbDI287CaqJRx+ns419AkKGNfarVR4LtUVJhXY=",
+        "lastModified": 1789172631,
+        "narHash": "sha256-V4mOTZIHqUW0NKd83Iq9N8YlY5JkSakOyYJQcr1BEMc=",
         "ref": "refs/heads/main",
-        "rev": "b48e404b7a731fdd2d303624a0681b7cfcbb93fa",
-        "revCount": 101,
+        "rev": "4706c920e45ce80b11ee106d05c16d9eacc99fc7",
+        "revCount": 107,
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
       },
       "original": {
-        "rev": "b48e404b7a731fdd2d303624a0681b7cfcbb93fa",
+        "rev": "4706c920e45ce80b11ee106d05c16d9eacc99fc7",
         "type": "git",
         "url": "https://gitlab.com/nandithebull/jolt-native"
-      }
-    },
-    "jolt-native-android": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1789098143,
-        "narHash": "sha256-HgVSQR2XiS3De/gP9Z1JZ2Tqj4yPzzN6mx2Xyp6DuRg=",
-        "type": "tarball",
-        "url": "https://gitlab.com/api/v4/projects/nandithebull%2Fjolt-native/packages/generic/jolt-native/latest/android-arm64-v8a.tar.gz"
-      },
-      "original": {
-        "type": "tarball",
-        "url": "https://gitlab.com/api/v4/projects/nandithebull%2Fjolt-native/packages/generic/jolt-native/latest/android-arm64-v8a.tar.gz"
       }
     },
     "jolt-src": {
       "inputs": {
-        "makes": "makes_2",
+        "makes": "makes",
         "nixpkgs": [
           "nixpkgs"
         ],
@@ -212,23 +156,6 @@
       }
     },
     "makes": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1785480273,
-        "narHash": "sha256-/g8O4PW0v3NNChKyrWw/EqpEAUCKiI9/KFE2EiXoUlA=",
-        "owner": "makeplus",
-        "repo": "makes",
-        "rev": "d14cb578c2f04e6f9d00e01c7c4e416a9baf94e9",
-        "type": "github"
-      },
-      "original": {
-        "owner": "makeplus",
-        "repo": "makes",
-        "rev": "d14cb578c2f04e6f9d00e01c7c4e416a9baf94e9",
-        "type": "github"
-      }
-    },
-    "makes_2": {
       "flake": false,
       "locked": {
         "lastModified": 1785480273,
@@ -306,11 +233,8 @@
     },
     "root": {
       "inputs": {
-        "chez-src": "chez-src",
         "glimmer": "glimmer",
-        "jolt-android-src": "jolt-android-src",
         "jolt-native": "jolt-native",
-        "jolt-native-android": "jolt-native-android",
         "jolt-src": "jolt-src",
         "nix-appimage": "nix-appimage",
         "nixgl": "nixgl",

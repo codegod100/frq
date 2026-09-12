@@ -1,5 +1,5 @@
 (ns frq.cosmic
-  "frq's own screens, painted by libcosmic.
+  "frq's own screens, painted by libcosmic. The desktop entry point.
 
   The same trick as `frq.tui`: the components in `frq.app` do not know what is
   under the reconciler, so requiring `glimmer-cosmic.core` after `frq.app`
@@ -34,11 +34,14 @@
   (cosmic/every! 3000 #(spit path (cosmic/dump-str))))
 
 (defn -main [& _]
-  ;; What frq asks of glimmer-jvui directly, answered by this backend instead:
-  ;; jvui's timers only run inside jvui's loop, its quit closes jvui's window,
-  ;; its picture chooser and its clipboard of pictures belong to jvui's window.
+  ;; Everything this backend can do. What is missing is missing on purpose:
+  ;; libcosmic has no `open-url!`, so the connect screen falls back to showing
+  ;; the URL, and no texture to push call frames into, which is the same thing
+  ;; `:av? false` below says from the other end.
   (platform/override! {:after! cosmic/after!
+                       :every! cosmic/every!
                        :quit! cosmic/quit!
+                       :screen-size cosmic/window-size
                        :pick-image! cosmic/pick-image!
                        :picked-image! cosmic/picked-image!
                        :clipboard-image-png! cosmic/clipboard-image-png!})

@@ -27,7 +27,7 @@
   borrowed pointers because a frame at thirty a second cannot afford a copy."
   (:require [clojure.string :as str]
             [glimmer.ratom :as r :refer [atom]]
-            [glimmer-jvui.core :as gui]
+            [frq.platform :as platform]
             [frq.irc :as irc]
             [frq.av.dial :as dial]
             [frq.av.plane :as plane]
@@ -258,7 +258,7 @@
 (defn- drop-feeds!
   "Stop painting every feed we have been pushing."
   []
-  (doseq [k @painted-feeds] (gui/frame-drop! k))
+  (doseq [k @painted-feeds] (platform/frame-drop! k))
   (reset! painted-feeds #{})
   (reset! feeds []))
 
@@ -412,7 +412,7 @@
   ;; The tile goes when the camera does: the plane stops publishing, so no
   ;; frame arrives to replace the last one.
   (when-not on?
-    (gui/frame-drop! local-feed)
+    (platform/frame-drop! local-feed)
     (swap! painted-feeds disj local-feed)))
 
 ;; Switching a device mid-call reopens it, which the plane can only do by
@@ -478,7 +478,7 @@
   []
   (doseq [{:keys [key w h rgba]} (plane/poll-frames!)]
     (when (and (seq key) (pos? w) (pos? h) rgba)
-      (gui/frame-rgba! key w h rgba)
+      (platform/frame-rgba! key w h rgba)
       (swap! painted-feeds conj key))))
 
 (defn- order-feeds
@@ -502,7 +502,7 @@
   []
   (let [live (plane/feed-keys)]
     (doseq [k (remove live @painted-feeds)]
-      (gui/frame-drop! k)
+      (platform/frame-drop! k)
       (swap! painted-feeds disj k))
     (let [ordered (order-feeds live)]
       (when-not (= ordered @feeds)
@@ -519,7 +519,7 @@
   one would re-render the wall for a third of a point of difference nobody can
   see."
   []
-  (let [[w h] (gui/screen-size)
+  (let [[w h] (platform/screen-size)
         w (long w)
         h (long h)]
     (when-not (= w @window-width) (reset! window-width w))
@@ -528,7 +528,7 @@
 (defn pump!
   "One frame's worth of the media plane. Cheap when no call is up.
 
-  Runs on the loop thread — `gui/frame-rgba!` may not be called from anywhere
+  Runs on the loop thread — `platform/frame-rgba!` may not be called from anywhere
   else, and neither may anything that touches a node."
   []
   (pump-window!)
@@ -559,7 +559,7 @@
   arrives: polling slower than the window paints would show every other frame."
   []
   (when (available?)
-    (gui/every! 16 pump!)))
+    (platform/every! 16 pump!)))
 
 (defn tiles
   "Everyone with a picture in the current call, the self-view last.

@@ -1,0 +1,36 @@
+(ns frq.main
+  "The Flutter entry point: what `frq.app` is to the jolt half.
+
+  Two jobs, and the first one is why `frq.io.dart` cannot install itself the
+  way `frq.io.jolt` does: the app's storage directory arrives from
+  path_provider as a Future, so it is awaited here and handed over before
+  anything under ../common runs.
+
+  The screens themselves are not written. `frq.app` is 1,834 lines of hiccup
+  over glimmer's widget tags, and glimmer is not here — Flutter brings its own
+  reconciler, so those screens are a rewrite against cljd.flutter rather than a
+  port. This file is the socket they plug into."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:path_provider/path_provider.dart" :as pp]
+            [cljd.flutter :as f]
+            [frq.io.dart :as host]
+            [frq.clock :as clock]
+            [frq.store :as store]))
+
+(defn main []
+  (f/run
+   (f/widget
+    :watch [dir (.then (pp/getApplicationSupportDirectory)
+                       (fn [d] (.-path d)))]
+    (m/MaterialApp)
+    (m/Scaffold)
+    (m/Center)
+    ;; Proof the shared half is alive under a second compiler, and nothing
+    ;; more: install the host, then read the clock and the saved session
+    ;; through exactly the namespaces the desktop reads them through.
+    (do (host/install! dir)
+        (m/Text (str "frq\n"
+                     (clock/clock-time (clock/now-ms)) "\n"
+                     (if-let [s (store/load-session)]
+                       (str "signed in as " (:handle s))
+                       "no saved session")))))))

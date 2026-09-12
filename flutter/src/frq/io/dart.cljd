@@ -1,0 +1,70 @@
+(ns frq.io.dart
+  "The phone's answers to `frq.io`, over dart:io.
+
+  The mirror of `frq.io.jolt`, and the reason the seam exists at all: every
+  line here is something the desktop gets from libc through jolt.ffi and the
+  APK could not get at all. `dart:io` has TLS, sockets and a filesystem in the
+  runtime, so the Android half of frq stops being the half where login does not
+  work.
+
+  Unlike its jolt counterpart this one cannot install itself at load time: the
+  app's storage directory arrives from path_provider as a Future, so the
+  Flutter entry point awaits it and calls `install!` with the answer before it
+  runs anything else.
+
+  UNVERIFIED. Nothing in this tree compiles ClojureDart yet — there is no cljd
+  toolchain in the flake and no Flutter SDK — so treat the interop here as the
+  shape it should take rather than as code known to compile."
+  (:require ["dart:io" :as io]
+            [frq.io :as fio]))
+
+(defonce ^:private uptime
+  ;; Dart has no monotonic clock as such; a Stopwatch started at load is one.
+  (doto (Stopwatch.) (.start)))
+
+(defn- slurp* [path]
+  (try
+    (let [f (io/File. path)]
+      (when (.existsSync f) (.readAsStringSync f)))
+    (catch Exception _ nil)))
+
+(defn- spit* [path s]
+  (try
+    (.writeAsStringSync (io/File. path) s)
+    true
+    (catch Exception _ false)))
+
+(defn- write-private-file!
+  "On Android the app's own storage is already private to the app — there is no
+  other uid that can read it — so mode 600 has nobody to exclude and this is an
+  ordinary write. That is the whole reason `frq.io` names the intent: the
+  desktop shells out to `install -m 600` for the same guarantee the platform
+  makes here for free."
+  [path s]
+  (spit* path s))
+
+(defn- local-offset-seconds
+  "Dart carries the zone in the runtime; no TZ, no /etc/localtime, no getprop.
+  The offset is per-instant, which is what the caller wants."
+  [secs]
+  (-> (DateTime/fromMillisecondsSinceEpoch (* 1000 secs))
+      (.-timeZoneOffset)
+      (.-inSeconds)))
+
+(defn install!
+  "`dir` is the app's storage directory, already awaited from path_provider."
+  [dir]
+  (fio/install!
+   {:getenv               (fn [n] (get (.-environment io/Platform) n))
+    :config-dir           (fn [] dir)
+    :file-exists?         (fn [p] (.existsSync (io/File. p)))
+    :directory?           (fn [p] (.existsSync (io/Directory. p)))
+    :list-dir             (fn [p] (mapv #(.-path %) (.listSync (io/Directory. p))))
+    :mkdirs!              (fn [p] (.createSync (io/Directory. p) .recursive true))
+    :delete-file!         (fn [p] (.deleteSync (io/File. p)))
+    :slurp                slurp*
+    :spit                 spit*
+    :write-private-file!  write-private-file!
+    :wall-nanos           (fn [] (* 1000 (.-microsecondsSinceEpoch (DateTime/now))))
+    :mono-nanos           (fn [] (* 1000 (.-inMicroseconds (.-elapsed uptime))))
+    :local-offset-seconds local-offset-seconds}))

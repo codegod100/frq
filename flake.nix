@@ -28,27 +28,22 @@
     # its own inputs are locked with ours rather than left to float, and
     # `vendor/` comes along as the submodule the build needs.
     #
-    # The fork rather than jolt-lang/jolt: it is what jolt-android-src already
-    # pins for the boot image, and a desktop runtime built from a different
-    # tree than the APK's is the same drift the jolt-native comment warns
-    # about. Unpinned here — the desktop follows the fork's main, while the
-    # APK stays on the rev below.
+    # The fork rather than jolt-lang/jolt, and unpinned: the desktop follows
+    # the fork's main. It used to be paired with a second, pinned input for
+    # the APK's boot image; there is no jolt APK now, so there is one runtime
+    # and one rev.
     jolt-src = {
       url = "git+https://gitlab.com/nandithebull/jolt?submodules=1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
     # The source half of jolt-native: the Jolt code under glimmer-backends/ that
-    # binds the native objects, and the flake that builds the desktop ones. The
-    # Android objects no longer come from here — jolt-native-android below
-    # fetches those prebuilt — so this input is what `just run` builds against
-    # and what an APK's Clojure side is read from, both at this rev.
+    # binds the native objects, and the flake that builds them. This input is
+    # what `just run` builds against.
     #
-    # It carries jvui and glimmer-jvui — the toolkit the window is painted
-    # with now — and, from no-moq-deps, the dependency split and the
-    # JOLT_WITHOUT_MOQ guard on the Android glue. Both were on the
-    # `jvui-for-frq` branch while they were being written and are merged into
-    # main now, which is why this names a rev on main again.
+    # It carries both backends that are left — glimmer-cosmic over
+    # libjoltcosmic for the window, glimmer-tui over libjolttui for the
+    # terminal — and no longer jvui or vidya, which were experiments.
     #
     # Pinned all the same, and pinned to a rev, because an
     # unpinned `main` is a build whose native half is free to sit at a
@@ -61,45 +56,8 @@
     # drift this comment warns about wearing a different hat: one input, and
     # the window and the terminal are the same library either way.
     jolt-native = {
-      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=b48e404b7a731fdd2d303624a0681b7cfcbb93fa";
+      url = "git+https://gitlab.com/nandithebull/jolt-native?rev=4706c920e45ce80b11ee106d05c16d9eacc99fc7";
       inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    # The Android objects, prebuilt by jolt-native's CI rather than compiled
-    # here: an APK needs libvidya and libjoltmoq for arm64, and building them
-    # locally means an NDK, a Rust cross toolchain and the whole crane graph
-    # for two files that upstream already built and published.
-    #
-    # "latest" is the version its CI overwrites on every default-branch build,
-    # so this input finds a new one on `nix flake update` -- but flake.lock
-    # still records exactly which bytes an APK was built from, which is the
-    # pin that matters. `just bump` decides when to move; this only decides
-    # where to look. The archive is rooted at include/ and lib/arm64-v8a/, so
-    # nothing here has to unpack it.
-    jolt-native-android = {
-      url = "https://gitlab.com/api/v4/projects/nandithebull%2Fjolt-native/packages/generic/jolt-native/latest/android-arm64-v8a.tar.gz";
-      flake = false;
-    };
-
-    # Chez itself, because the APK needs a cross target nixpkgs does not
-    # build: frq's Scheme is compiled to an arm64 boot image, and that wants
-    # Chez's own `tarm64le` workarea — boot files, xpatch and libkernel.a.
-    # The version is the one the hand-built tree under ~/.cache used, and the
-    # submodules are not optional (zuo builds it, lz4 and zlib link into it).
-    # The same fork jolt-src takes, built here rather than fetched as a
-    # release binary: upstream reads the socket address out of `struct
-    # addrinfo` at glibc's offset, which on Bionic is `ai_canonname`, so an APK
-    # built with upstream cannot open a TLS connection at all. Pinned to a rev
-    # where jolt-src is not: the APK is a release artefact, so its runtime
-    # moves when `just bump` says so rather than when the fork does.
-    jolt-android-src = {
-      url = "git+https://gitlab.com/nandithebull/jolt?rev=2b80d68d1f7a31ba92b208b3957e5fb555617ada&submodules=1";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    chez-src = {
-      url = "git+https://github.com/cisco/ChezScheme?ref=refs/tags/v10.4.1&submodules=1";
-      flake = false;
     };
 
     # The sha deps.edn pins, on the fork with the reconciler fixes.
@@ -122,7 +80,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, jolt-src, jolt-native, jolt-native-android, glimmer, chez-src, jolt-android-src, nixgl, nix-appimage }:
+  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, nixgl, nix-appimage }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = f:
@@ -203,7 +161,11 @@
             let np = jolt-native.packages.${pkgs.stdenv.hostPlatform.system};
             in pkgs.symlinkJoin {
               name = "jolt-native-ui";
-              paths = [ np.libjolttui ];
+              # Both backends there are. libjoltcosmic is the window —
+              # libcosmic behind the same retained-tree ABI — and libjolttui
+              # is the terminal. Neither is libvidya and neither is jvui:
+              # those were experiments and are gone from this tree entirely.
+              paths = [ np.libjolttui np.libjoltcosmic ];
             };
 
           # libmoq_ffi — MoQ over QUIC behind UniFFI's C ABI, FETCHED rather
@@ -301,14 +263,10 @@
           # openh264 is here for frqH264's DT_NEEDED; alsa-lib for capture
           # and playback. V4L2 needs nothing: it is ioctls against libc and
           # the kernel, so there is no library to name.
-          # SDL is what the UI is now: jvui declares SDL3, SDL3_ttf and
-          # SDL3_image in its own :jolt/native and dlopens them by soname,
-          # so they have to be somewhere the loader looks. sdl3-image keeps
-          # its library in a separate `lib` output — the default one holds
-          # only share/, which is an afternoon nobody needs to repeat.
-          sdl = [ pkgs.sdl3 pkgs.sdl3-ttf (pkgs.sdl3-image.lib or pkgs.sdl3-image) ];
-
-          codecs = [ pkgs.libopus pkgs.openh264 frqH264 pkgs.alsa-lib ] ++ sdl;
+          # No SDL any more: it was jvui's, declared in jvui's own
+          # :jolt/native and dlopened by soname. libcosmic paints through wgpu
+          # and takes what it needs from `runtimeLibs` instead.
+          codecs = [ pkgs.libopus pkgs.openh264 frqH264 pkgs.alsa-lib ];
 
           # ALSA's PipeWire plugin, which is how `default` resolves to
           # anything on a machine running PipeWire — and every machine frq
@@ -320,35 +278,17 @@
           # alsa-lib looks plugins up by directory, not by soname.
           alsaPluginDir = "${pkgs.pipewire}/lib/alsa-lib";
 
-          # The faces jvui draws with, from here rather than from whatever
-          # the host happens to have installed. jvui hunts a list of the
-          # usual system paths and, failing that, draws the missing-glyph
-          # box — which is what "the glyphs are broke" has been every time
-          # it has come up. An Arch container has NotoColorEmoji and no
-          # monochrome Noto Emoji, and NotoColorEmoji is a bitmap face with
-          # one 128-pixel strike that jvui rejects on purpose, so the chips
-          # in a message row had nothing left to be drawn from.
-          #
-          # NotoEmoji is the outline companion to NotoColorEmoji: scalable,
-          # monochrome, and full coverage of the emoji the chrome uses.
-          # Symbols2 behind it for the arrows and technical marks that are
-          # not emoji at all.
-          uiFont = "${pkgs.noto-fonts}/share/fonts/noto/NotoSans.ttf";
-          fallbackFonts = lib.concatStringsSep ":" [
-            "${pkgs.noto-fonts-monochrome-emoji}/share/fonts/noto/NotoEmoji.ttf"
-            "${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols2-Regular.otf"
-            "${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols.ttf"
-          ];
-
           nativeAll = pkgs.symlinkJoin {
             name = "frq-native";
             paths = [ native moqFfi ] ++ codecs;
           };
 
           # Jolt itself: Clojure on Chez, built the way its own flake builds it.
-          # A function, because there are two of them — upstream for the
-          # desktop, and the Bionic-addrinfo fork for the boot image the APK
-          # carries. Nothing else about the build differs.
+          #
+          # Still a function taking its source, though there is only one of
+          # them now: the second was the Bionic-addrinfo fork the APK's boot
+          # image carried, and there is no jolt APK any more — the phone is
+          # ClojureDart and Flutter, and jolt does not run there at all.
           joltFrom = src: pkgs.stdenv.mkDerivation {
             pname = "jolt";
             version = "dev";
@@ -395,17 +335,11 @@
           };
 
           joltRuntime = joltFrom jolt-src;
-          joltAndroid = joltFrom jolt-android-src;
 
-          # glimmer-vidya lives inside the jolt-native checkout, and its own
-          # deps.edn asks for glimmer by git — the top-level override below
-          # answers for both.
-          # glimmer-jvui and the toolkit it is a backend for. TWO paths and
-          # not one: glimmer-jvui's own deps.edn names jvui by :local/root,
-          # a relative path that means nothing once nix has copied the
-          # subtree, so the -Sdeps below has to name both.
-          glimmerJvui = "${jolt-native}/glimmer-backends/glimmer-jvui";
-          jvui = "${jolt-native}/jvui";
+          # The backends' Clojure halves, which live inside the jolt-native
+          # checkout beside the objects they bind. Their own deps.edn asks for
+          # glimmer by git — the top-level override below answers for both.
+          glimmerCosmic = "${jolt-native}/glimmer-backends/glimmer-cosmic";
           glimmerTui = "${jolt-native}/glimmer-backends/glimmer-tui";
 
           runtimeLibs = runtimeLibsFor pkgs;
@@ -413,7 +347,7 @@
           # The project as jolt sees it: source, deps.edn, nothing else.
           frqSource = pkgs.runCommand "frq-source" { } ''
             mkdir -p "$out"
-            cp -r ${self}/src ${self}/deps.edn "$out/"
+            cp -r ${self}/common ${self}/src ${self}/deps.edn "$out/"
           '';
 
           # Jolt resolves deps.edn from the working directory, so the launcher
@@ -423,8 +357,6 @@
           frqScript = pkgs.writeShellScript "frq" ''
             export LD_LIBRARY_PATH="${nativeAll}/lib:${lib.makeLibraryPath runtimeLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             export ALSA_PLUGIN_DIR="${alsaPluginDir}"
-            export JVUI_FONT="${uiFont}"
-            export JVUI_FALLBACK_FONTS="${fallbackFonts}"
             cd ${frqSource}
 
             # On NixOS the store's Mesa is the system's and the window opens.
@@ -434,8 +366,8 @@
             [ -e /run/current-system ] || runner="${nixGL}/bin/nixGLIntel"
 
             exec ''${runner} ${joltRuntime}/bin/jolt \
-              -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-jvui {:local/root "${glimmerJvui}"} jvui/jvui {:local/root "${jvui}"}}}' \
-              -M:frq "$@"
+              -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-cosmic {:local/root "${glimmerCosmic}"}}}' \
+              -m frq.cosmic "$@"
           '';
 
           # The same source, the other backend. No GL, no nixGL and no X11 —
@@ -447,7 +379,7 @@
             cd ${frqSource}
 
             exec ${joltRuntime}/bin/jolt \
-              -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-jvui {:local/root "${glimmerJvui}"} jvui/jvui {:local/root "${jvui}"} nandi/glimmer-tui {:local/root "${glimmerTui}"}}}' \
+              -Sdeps '{:deps {jolt-lang/glimmer {:local/root "${glimmer}"} nandi/glimmer-tui {:local/root "${glimmerTui}"}}}' \
               -m frq.tui "$@"
           '';
 
@@ -476,34 +408,6 @@
               mkdir -p "$out/bin"
               ln -s ${frqScript} "$out/bin/frq"
             '';
-          # --- Android ------------------------------------------------------
-          # The SDK and the NDK are Google's, which means unfree and a licence
-          # to accept — so this is its own import of nixpkgs rather than the
-          # `legacyPackages` everything above uses. Confined to the Android
-          # outputs: `nix build` of frq itself never evaluates it.
-          #
-          # The NDK here is r29, which is the one the pinned libvidya was
-          # built with.
-          androidPkgs = import nixpkgs {
-            inherit (pkgs.stdenv.hostPlatform) system;
-            config = {
-              allowUnfree = true;
-              android_sdk.accept_license = true;
-            };
-          };
-
-          androidComposition = androidPkgs.androidenv.composeAndroidPackages {
-            buildToolsVersions = [ "36.0.0" ];
-            platformVersions = [ "36" ];
-            includeNDK = true;
-          };
-
-          android = import ./nix/android.nix {
-            inherit pkgs self chez-src jolt-native jolt-native-android glimmer joltAndroid;
-            inherit (pkgs) lib;
-            androidSdk = androidComposition.androidsdk;
-            ndk = androidComposition.ndk-bundle;
-          };
         in
         {
           inherit native moqFfi frqH264 nativeAll frq;
@@ -518,13 +422,6 @@
           # nixGL needs a store Mesa to put the host's driver in front of.
           appimage =
             nix-appimage.bundlers.${pkgs.stdenv.hostPlatform.system}.default frq;
-        }
-        # An APK is built by a linux-x86_64 NDK and a linux-x86_64 jolt, and
-        # Google ships no other; on aarch64 the Android outputs are simply
-        # absent rather than present and broken.
-        // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
-          inherit (android) apk chezAndroid joltBoot libjoltapp;
-          apk-unsigned = android.apk-unsigned;
         });
 
       # Where `just run` runs, and — because entering it realises what it
@@ -575,19 +472,8 @@
             # is a different `let`. See `alsaPluginDir` there for why.
             ALSA_PLUGIN_DIR = "${pkgs.pipewire}/lib/alsa-lib";
             GLIMMER_SRC = glimmer;
-            GLIMMER_JVUI_SRC = "${jolt-native}/glimmer-backends/glimmer-jvui";
-            JVUI_SRC = "${jolt-native}/jvui";
+            GLIMMER_COSMIC_SRC = "${jolt-native}/glimmer-backends/glimmer-cosmic";
             GLIMMER_TUI_SRC = "${jolt-native}/glimmer-backends/glimmer-tui";
-            # See `uiFont` in the packages block for why these are named
-            # here rather than left to whatever the host has installed.
-            # Spelled out again for the same reason ALSA_PLUGIN_DIR is: a
-            # different `let`.
-            JVUI_FONT = "${pkgs.noto-fonts}/share/fonts/noto/NotoSans.ttf";
-            JVUI_FALLBACK_FONTS = lib.concatStringsSep ":" [
-              "${pkgs.noto-fonts-monochrome-emoji}/share/fonts/noto/NotoEmoji.ttf"
-              "${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols2-Regular.otf"
-              "${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols.ttf"
-            ];
             FRQ_LIB_PATH = lib.makeLibraryPath (runtimeLibsFor pkgs);
             NIXGL = "${nixGLFor pkgs}/bin/nixGLIntel";
 
@@ -637,8 +523,7 @@
                   FRQ_JOLT_NATIVE="$(cd "$FRQ_JOLT_NATIVE" && pwd)"
                   export FRQ_JOLT_NATIVE
                   export GLIMMER_TUI_SRC="$FRQ_JOLT_NATIVE/glimmer-backends/glimmer-tui"
-                  export GLIMMER_JVUI_SRC="$FRQ_JOLT_NATIVE/glimmer-backends/glimmer-jvui"
-                  export JVUI_SRC="$FRQ_JOLT_NATIVE/jvui"
+                  export GLIMMER_COSMIC_SRC="$FRQ_JOLT_NATIVE/glimmer-backends/glimmer-cosmic"
                   # First, so a cargo build wins over the pin's copy of the
                   # same object. The rest of the pin's lib directory is still
                   # behind it.

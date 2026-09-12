@@ -32,84 +32,21 @@ jobs := env("FRQ_MAX_JOBS", "0")
 default:
     @just --list
 
-# The build itself is nix/android.nix, reached as `.#apk`; this only asks nix
-# for the file and then does what was asked with it. Nothing here names an
-# Android SDK, an NDK, a Chez cross target or an OpenSSL: the derivation builds
-# or fetches every one of them.
-#
-# The APK is signed with a debug key generated inside the derivation, so the
-# output is installable and not reproducible; anything meant for a store gets
-# signed from `.#apk-unsigned` instead. See nix/android.nix.
-#
-# FRQ_NIX_STORE builds the whole graph somewhere else rather than here —
-#
-#     FRQ_NIX_STORE=ssh-ng://eu.nixbuild.net just apk
-#
-# which is the shape android.nix asks for: with a `builders` entry instead, nix
-# copies every remotely-built output back, and androidenv's NDK is both
-# preferLocalBuild and absent from cache.nixos.org, so 3.1 GB of toolchain is
-# built here and uploaded. With the remote as the *store* only .drv files go
-# up. An install then needs the file here, so it is fetched back at the end —
-# one APK rather than the closure that made it.
-#
-# The APK, out of the flake. `just apk install` puts it on the device.
-apk action="build":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{justfile_directory()}}"
-    adb="${ADB:-$HOME/.local/share/android-sdk/platform-tools/adb}"
-    package="uk.nandi.frq"
-
-    # --eval-store auto goes with a remote store and only with one: evaluation
-    # wants this tree, which is here.
-    store=()
-    [ -n "${FRQ_NIX_STORE:-}" ] && store=(--store "$FRQ_NIX_STORE" --eval-store auto)
-
-    build() {
-        # The Android objects come from jolt-native's CI under a "latest" alias,
-        # and a flake input is locked once and then stays put — so without this
-        # an APK is built against whatever flake.lock recorded the first time,
-        # however old. Only this input: a bare `nix flake update` would move
-        # jolt, nixpkgs and glimmer too, and the point of their pins is that
-        # they move when someone decides they should.
-        {{nix}} flake update jolt-native-android --flake . >&2
-
-        # Built without a `result` symlink: the path is what the caller wants,
-        # and a symlink into a store that may not be this one is not a useful
-        # thing to leave in the tree.
-        local out
-        out=$({{nix}} build .#apk --no-link --print-out-paths "${store[@]}" \
-              | grep '^/nix/store/' | tail -1)
-        [ -n "$out" ] || { echo "nix build printed no store path" >&2; exit 1; }
-
-        # Off a remote store the path names a file on the builder, so adb has
-        # nothing to open. `nix copy --from` brings just that one path here.
-        if [ -n "${FRQ_NIX_STORE:-}" ]; then
-            {{nix}} copy --no-check-sigs --from "$FRQ_NIX_STORE" "$out" >&2
-        fi
-        echo "$out"
-    }
-
-    case "{{action}}" in
-        build)   build ;;
-        install) "$adb" install -r "$(build)" ;;
-        run)     file=$(build)
-                 "$adb" install -r "$file"
-                 "$adb" shell am force-stop "$package"
-                 "$adb" shell am start -n "$package/.FrqActivity" ;;
-        log)     "$adb" logcat -s VidyaJolt Vidya ;;
-        *)       echo "usage: just apk [build|install|run|log]" >&2; exit 1 ;;
-    esac
-
 # Two halves, and the split is the point. The frq source is the files on disk,
-# uncommitted edits and all. Everything under it — jolt, glimmer, glimmer-vidya,
-# both native objects — is the flake's, built rather than fetched.
+# uncommitted edits and all. Everything under it — jolt, glimmer, glimmer-cosmic
+# and the native objects — is the flake's, built rather than fetched.
 #
 # Deliberately not `nix run .#frq`. That builds the flake's own copy of the
 # source, which is the tree as git has it — so an edit that has not been
 # committed, or committed on a branch the command was not pointed at, runs as
 # whatever was there before, silently. A run meant to answer "does my change
 # work" has to be the files on disk.
+#
+# libcosmic paints through wgpu, so this needs nixGL off NixOS for the same
+# reason the window always did: the real driver is the host's.
+#
+# There is no jvui and no vidya here any more — both were experiments. The
+# window is libcosmic and the terminal is libjolttui, and those are the two.
 #
 # The app: this tree's source on the flake's everything-else, in the dev shell.
 run *args:
@@ -120,27 +57,19 @@ run *args:
         exec {{nix}} develop . --max-jobs {{jobs}} --command just run "$@"
     fi
 
-    # The Jolt halves that have to match those objects. glimmer-vidya lives
-    # inside jolt-native and binds libvidya's ABI, so it comes out of the same
-    # input that was built rather than deps.edn's git sha — the pin drifting
-    # from the library is exactly what the flake input's comment describes.
     deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-jvui {:local/root \"$GLIMMER_JVUI_SRC\"}"
-    deps="$deps jvui/jvui {:local/root \"$JVUI_SRC\"}}}"
+    deps="$deps nandi/glimmer-cosmic {:local/root \"$GLIMMER_COSMIC_SRC\"}}}"
 
     export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-    # On NixOS the store's Mesa is the system's and the window opens. Anywhere
-    # else — a bare host, or the distrobox above — the real driver is the
-    # host's, so defer to nixGL, which prepends it.
     runner=()
     [ -e /run/current-system ] || runner=("$NIXGL")
 
-    exec "${runner[@]}" jolt -Sdeps "$deps" -M:frq "$@"
+    exec "${runner[@]}" jolt -Sdeps "$deps" -m frq.cosmic "$@"
 
-# `run` with the other backend under it. It still loads libvidya as well as
-# libjolttui: `frq.app` requires glimmer-vidya, and `frq.tui` requires
-# glimmer-tui after it so the backend installed last is the terminal.
+# `run` with the other backend under it. Only libjolttui: `frq.app` names no
+# backend at all any more, and `frq.tui` requires glimmer-tui so the one
+# installed is the terminal.
 #
 # No nixGL here, unlike `run`: a terminal wants nothing from the host's GL
 # driver, which is the reason this output exists on machines that have none.
@@ -155,53 +84,11 @@ tui *args:
     fi
 
     deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-jvui {:local/root \"$GLIMMER_JVUI_SRC\"}"
-    deps="$deps jvui/jvui {:local/root \"$JVUI_SRC\"}"
     deps="$deps nandi/glimmer-tui {:local/root \"$GLIMMER_TUI_SRC\"}}}"
 
     export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
     exec jolt -Sdeps "$deps" -m frq.tui "$@"
-
-# `run` with glimmer-cosmic under it, libcosmic doing the painting. There is
-# no pin to fall back on: the flake's jolt-native builds no libjoltcosmic, so
-# this needs a jolt-native checkout with one built, named by FRQ_JOLT_NATIVE
-# or found beside this tree the way the shell always looks.
-#
-#     nix develop --command cargo build --release -p jolt-cosmic    in that checkout
-#
-# Inside jolt-native's shell and not with the host's cargo: jolt runs on the
-# store's glibc, and an object linked against a newer host one (Arch's, here)
-# asks for symbol versions that glibc does not have — dlopen refuses it, and
-# jolt reports that as the library not being found at all.
-#
-# nixGL for the same reason as `run`: libcosmic paints through wgpu.
-#
-# The same screens, painted by libcosmic. A spike: most tags paint as columns.
-cosmic *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{justfile_directory()}}"
-    if [ -z "${JOLT_NATIVE_LIB:-}" ]; then
-        exec {{nix}} develop . --max-jobs {{jobs}} --command just cosmic "$@"
-    fi
-
-    if [ -z "${FRQ_JOLT_NATIVE:-}" ] || [ ! -e "$FRQ_JOLT_NATIVE/target/release/libjoltcosmic.so" ]; then
-        echo "frq: no libjoltcosmic.so in ${FRQ_JOLT_NATIVE:-the pin} — nix develop --command cargo build --release -p jolt-cosmic in a jolt-native checkout, then FRQ_JOLT_NATIVE=<it> just cosmic" >&2
-        exit 1
-    fi
-
-    deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-jvui {:local/root \"$GLIMMER_JVUI_SRC\"}"
-    deps="$deps jvui/jvui {:local/root \"$JVUI_SRC\"}"
-    deps="$deps nandi/glimmer-cosmic {:local/root \"$FRQ_JOLT_NATIVE/glimmer-backends/glimmer-cosmic\"}}}"
-
-    export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-    runner=()
-    [ -e /run/current-system ] || runner=("$NIXGL")
-
-    exec "${runner[@]}" jolt -Sdeps "$deps" -m frq.cosmic "$@"
 
 # The same classpath as `tui`, with an nREPL on it instead of a `-main`: a
 # session that can require `frq.tui` and then redefine a component while it is
@@ -223,8 +110,6 @@ nrepl *args:
     fi
 
     deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-jvui {:local/root \"$GLIMMER_JVUI_SRC\"}"
-    deps="$deps jvui/jvui {:local/root \"$JVUI_SRC\"}"
     deps="$deps nandi/glimmer-tui {:local/root \"$GLIMMER_TUI_SRC\"}}}"
 
     export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -247,8 +132,7 @@ repl *args:
     fi
 
     deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-jvui {:local/root \"$GLIMMER_JVUI_SRC\"}"
-    deps="$deps jvui/jvui {:local/root \"$JVUI_SRC\"}}}"
+    deps="$deps nandi/glimmer-cosmic {:local/root \"$GLIMMER_COSMIC_SRC\"}}}"
 
     export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 

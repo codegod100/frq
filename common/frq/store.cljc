@@ -6,13 +6,13 @@
   an ssh key, and never anywhere else. The web-token beside it is single-use
   and deliberately not saved."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
-            [jolt.host :as host]))
+            [frq.io :as io]))
 
-(defn config-dir []
-  (let [xdg (host/getenv "XDG_CONFIG_HOME")
-        home (host/getenv "HOME")]
-    (str (if (seq xdg) xdg (str home "/.config")) "/frq")))
+(defn config-dir
+  "Where this client's files go. The platform's answer, not a rule about XDG:
+  see `frq.io/config-dir` — Android has no HOME to be relative to."
+  []
+  (io/config-dir))
 
 (defn session-file [] (str (config-dir) "/session.edn"))
 
@@ -21,9 +21,9 @@
   a stale credential is not worth an error at startup."
   []
   (let [path (session-file)]
-    (when (host/file-exists? path)
+    (when (io/file-exists? path)
       (try
-        (let [m (edn/read-string (slurp path))]
+        (let [m (edn/read-string (io/slurp path))]
           (when (and (map? m) (seq (:broker-token m))) m))
         (catch Exception _ nil)))))
 
@@ -33,13 +33,13 @@
   (let [dir (config-dir)
         path (session-file)]
     (try
-      (host/mkdirs! dir)
-      ;; Created before it is written, so the token is never on disk
-      ;; world-readable even for an instant.
-      (host/sh (str "install -m 600 /dev/null '" path "'"))
-      (spit path (pr-str (select-keys session [:broker-token :handle :did :nick])))
-      (host/sh (str "chmod 600 '" path "'"))
-      true
+      (io/mkdirs! dir)
+      ;; Through the seam rather than a chmod: what matters is that nobody else
+      ;; can read it, and each platform makes that guarantee its own way — the
+      ;; desktop creates the file at mode 600 before writing a byte into it,
+      ;; Android gets app-private storage from the system.
+      (io/write-private-file!
+       path (pr-str (select-keys session [:broker-token :handle :did :nick])))
       (catch Exception _ false))))
 
 (defn channels-file [] (str (config-dir) "/channels.edn"))
@@ -50,9 +50,9 @@
   nothing writes this file any more."
   []
   (let [path (channels-file)]
-    (when (host/file-exists? path)
+    (when (io/file-exists? path)
       (try
-        (let [v (edn/read-string (slurp path))]
+        (let [v (edn/read-string (io/slurp path))]
           (when (vector? v) (filterv string? v)))
         (catch Exception _ nil)))))
 
@@ -72,9 +72,9 @@
   with no marker, which is exactly what it knew."
   []
   (let [path (rooms-file)]
-    (or (when (host/file-exists? path)
+    (or (when (io/file-exists? path)
           (try
-            (let [v (edn/read-string (slurp path))]
+            (let [v (edn/read-string (io/slurp path))]
               (when (vector? v)
                 (filterv #(and (map? %) (string? (:name %)) (seq (:name %))) v)))
             (catch Exception _ nil)))
@@ -85,15 +85,14 @@
   "Write the room records, most recently used first."
   [rooms]
   (try
-    (host/mkdirs! (config-dir))
-    (spit (rooms-file) (pr-str (vec rooms)))
-    true
+    (io/mkdirs! (config-dir))
+    (io/spit (rooms-file) (pr-str (vec rooms)))
     (catch Exception _ false)))
 
 (defn clear-session! []
   (try
-    (when (host/file-exists? (session-file))
-      (host/delete-file! (session-file)))
+    (when (io/file-exists? (session-file))
+      (io/delete-file! (session-file)))
     true
     (catch Exception _ false)))
 
@@ -106,9 +105,9 @@
   stopping the launch for."
   []
   (let [path (prefs-file)]
-    (or (when (host/file-exists? path)
+    (or (when (io/file-exists? path)
           (try
-            (let [m (edn/read-string (slurp path))]
+            (let [m (edn/read-string (io/slurp path))]
               (when (map? m) m))
             (catch Exception _ nil)))
         {})))
@@ -118,7 +117,6 @@
   the caller's job, and a partial write would silently drop the rest."
   [prefs]
   (try
-    (host/mkdirs! (config-dir))
-    (spit (prefs-file) (pr-str prefs))
-    true
+    (io/mkdirs! (config-dir))
+    (io/spit (prefs-file) (pr-str prefs))
     (catch Exception _ false)))
