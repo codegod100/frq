@@ -1161,9 +1161,17 @@
       ;; to have been showing both: the list folds away and the conversation
       ;; takes the whole row. Its own wrapper, since it is only offered where
       ;; there are two panes to choose between.
+      ;;
+      ;; One label, lit while the list is up. It used to drop to a bare "☰"
+      ;; with the list showing, which made the switch two different-looking
+      ;; controls in the same slot and left the reader guessing which state the
+      ;; one in front of them meant. The People and Overview switches beside it
+      ;; say it the other way — the label holds still and `:primary` says it is
+      ;; on — so this one says it that way too.
       [:vbox {:key :fold}
        (when (actions/wide?)
-         [:button {:label (if @cells/hide-chat-list? "☰ Chats" "☰")
+         [:button {:label "☰ Chats"
+                   :kind (when-not @cells/hide-chat-list? :primary)
                    :on-click actions/toggle-chat-list!}])]
       [:title {:label (or name "Chat")}]
       ;; Same wrapper trick: only in a channel, and only when there is no call
