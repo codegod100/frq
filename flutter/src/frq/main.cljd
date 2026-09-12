@@ -21,45 +21,76 @@
             [cljd.flutter :as f]
             [frq.hiccup :as h]
             [frq.io.dart :as host]
+            [frq.net.dart :as net]
             [frq.clock :as clock]
             [frq.store :as store]))
 
-(defonce ^:private tick (atom 0))
+(defonce ^:private lines (atom []))
+(defonce ^:private status (atom "not connected"))
+(defonce ^:private conn (atom nil))
 
-(defn- demo
-  "A hiccup tree in glimmer's tags, rendered by `frq.hiccup`.
+(def ^:private host-name "irc.freeq.at")
+(def ^:private host-port 6697)
 
-  Hand-written, and that is the point of it for now: `frq.app`'s own screens
-  cannot be required here yet — `frq.state` reaches for jolt.host through
-  frq.irc and everything under it — so this exercises the tags they are built
-  from until that chain is portable. Every tag here is one `frq.app` uses, and
-  none of it is Flutter."
+(defn- note! [m]
+  ;; Bounded, because a backlog is hundreds of lines and this is a proof
+  ;; rather than a message list — `frq.state/apply-msg!` is what turns these
+  ;; into rooms, and it is not portable yet.
+  (swap! lines (fn [v] (vec (take-last 14 (conj v m))))))
+
+(defn ^:async connect! []
+  (reset! status (str "connecting to " host-name ":" host-port " over TLS…"))
+  (reset! lines [])
+  (try
+    (let [sock (await (net/connect!
+                       {:host host-name
+                        :port host-port
+                        :tls? true
+                        :on-msg (fn [m]
+                                  (note! m)
+                                  (when (= "001" (:command m))
+                                    (reset! status "registered")))
+                        :on-close (fn [why]
+                                    (reset! status (str "closed" (when why (str ": " why)))))}))]
+      (reset! conn sock)
+      (reset! status "TLS up — registering")
+      ;; A guest registration and nothing else. No SASL: that is frq.msgsig
+      ;; and frq.atproto, neither of which is portable yet.
+      (net/send-line! sock "NICK frq-phone")
+      (net/send-line! sock "USER frq-phone 0 * :frq"))
+    (catch Exception e
+      (reset! status (str "failed: " e)))))
+
+(defn- screen
+  "glimmer's tags, painted by `frq.hiccup`. Nothing here is Flutter."
   []
-  [:page {:max-width 520}
+  [:page {:max-width 560}
    [:title {:label "frq"}]
-   [:dim-label {:label "freeq client — guest, or your Bluesky identity."}]
+   [:dim-label {:label "TLS from dart:io, parsed by the desktop's own frq.irc.parse."}]
    [:card {}
-    [:title-2 {:label "Sign in with Bluesky"}]
-    [:dim-label {:label "Opens your browser for AT Protocol OAuth. freeq's broker hands back a token; no password passes through frq."}]
-    [:label {:label "Handle"}]
-    [:entry {:key :handle
-             :placeholder "alice.bsky.social"
-             :on-change (fn [_] nil)}]
+    [:title-2 {:label "Connection"}]
+    [:label {:label @status}]
     [:hbox {:spacing 8}
-     [:button {:label "Connect" :primary true :on-click #(swap! tick inc)}]
-     [:button {:label "Forget saved session" :destructive true :on-click #(swap! tick inc)}]]
-    [:separator {}]
-    [:checkbutton {:label "TLS" :active true :on-toggled (fn [_] nil)}]
-    [:hbox {:spacing 6}
-     [:spinner {}]
-     [:dim-label {:label "Resuming your session…"}]]]
+     [:button {:label "Connect" :primary true :on-click #(connect!)}]
+     [:button {:label "Disconnect"
+               :destructive true
+               :on-click #(do (when-let [c @conn] (net/close! c))
+                              (reset! status "closed"))}]]]
+   [:card {}
+    [:title-2 {:label "What the server said"}]
+    (if (empty? @lines)
+      [:dim-label {:label "nothing yet"}]
+      (for [[i m] (map-indexed vector @lines)]
+        [:vbox {:key i :spacing 0}
+         [:label {:label (str (:command m)
+                              (when-let [p (seq (:params m))]
+                                (str "  " (last p))))}]]))]
    [:card {}
     [:title-2 {:label "Shared with the desktop"}]
     [:label {:label (str "clock  " (clock/clock-time (clock/now-ms)))}]
     [:label {:label (str "store  " (if-let [s (store/load-session)]
                                      (str "signed in as " (:handle s))
-                                     "no saved session"))}]
-    [:dim-label {:label "Both read through frq.io, same source as jolt."}]]])
+                                     "no saved session"))}]]])
 
 (defn ^:async main []
   (m/WidgetsFlutterBinding.ensureInitialized)
@@ -72,6 +103,11 @@
       .home
       (m/Scaffold .appBar (m/AppBar .title (m/Text "frq")))
       .body
-      (f/widget :watch [_ tick])
-      (m/SingleChildScrollView)
-      (h/render (demo)))))
+      ;; One f/widget with the render as its body, rather than `:watch` as a
+      ;; link in the chain. A bare directive in the chain builds nothing to
+      ;; rebuild, so the cells changed and the screen did not — which looks
+      ;; exactly like a button that does not fire.
+      (f/widget
+       :watch [st status ls lines]
+       (m/SingleChildScrollView
+        .child (h/render (screen)))))))

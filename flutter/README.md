@@ -137,9 +137,14 @@ only tags `frq.app` uses, so it is a test of the backend and nothing more.
 
 ## The order to do the rest in
 
-1. **`frq.irc`** (433) — the parser is pure; the reader is a blocking thread in
-   a `future` and becomes a `Stream` over `SecureSocket`. This is also what
-   makes sign-in work on a phone at all.
+1. ~~**`frq.irc`**~~ — started. The parser is `common/frq/irc/parse.cljc` now,
+   shared, with `frq.irc` re-exporting it so the twenty-three `irc/tag-value`
+   and `irc/nick-of` call sites in `frq.state` and `frq.av` did not move. The
+   transport is `frq.net.dart`: `SecureSocket`, a `Stream`, no thread and no
+   outbox. **TLS reaches irc.freeq.at:6697 from the phone** — registration and
+   MOTD, which is the thing the jolt APK could never do. What is left of this
+   one is the protocol half: CAP, SASL and the idle-ping logic still live in
+   `src/frq/irc.clj` and want `frq.msgsig` and `frq.atproto` under them first.
 2. **`frq.atproto`** (209), **`frq.oauth`** (182) — hand-rolled HTTPS over
    OpenSSL bindings today, `dart:io` and `package:http` here.
 3. **`frq.msgsig`** (268), **`frq.wire`** (81) — need a crypto seam beside the

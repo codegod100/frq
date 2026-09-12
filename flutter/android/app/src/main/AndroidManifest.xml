@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The Flutter template declares this only in the debug manifest, where
+         it is there for the hot-reload VM service. frq is an IRC client: it
+         needs the network in a release build too. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="frq"
         android:name="${applicationName}"
