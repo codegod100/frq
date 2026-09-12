@@ -1147,6 +1147,14 @@
         (render tree)
         (let [modal (boolean (:modal (props dialog)))]
           (m/Stack
+           ;; Expand, and not the default loose fit: a Stack hands its
+           ;; unpositioned children the parent's constraints *loosened*, so
+           ;; the screens went from filling the window to shrinking onto their
+           ;; own contents the moment a hover put a card up — the conversation
+           ;; narrowed and every message moved under the pointer that was only
+           ;; resting on a face. The window is bounded here (Scaffold body,
+           ;; see `frq.main`), so asking for all of it is a size there is.
+           .fit m/StackFit.expand
            .children
            [(render tree)
             (m/Positioned.fill
