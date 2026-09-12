@@ -129,6 +129,198 @@
     (reset! cells/channels (:channels out))
     (:result out)))
 
+;; ------------------------------------------------------------------- rooms
+;;
+;; `rooms.edn` is the authority for what rooms there are, and until now only
+;; the desktop kept one: this half started every launch with an empty list,
+;; adopted whatever the server announced, and asked for `#test` on top. Which
+;; looked like the room list forgetting itself between runs, because it was.
+;;
+;; The file and its format are `frq.store`, which is already shared — the port
+;; is the half that was missing here: read it at startup, write it when the
+;; list changes, and ask to be in what it says at 001.
+
+(def ^:private auto-join
+  "The room a client with nothing saved lands in, as on the desktop."
+  "#test")
+
+;; Whether `rooms.edn` is the authority yet.
+;;
+;; It is not, the first time this version runs: freeq re-joins an
+;; authenticated user's channels at registration, so on connect the server
+;; announces every room it has you in — and a client that parted everything
+;; not already in its file would walk out of all of them before the file had
+;; ever been told they existed. So the first connect adopts what the server
+;; says and writes it down, and every connect after that is the strict one.
+(defonce ^:private room-list-owned? (atom false))
+
+;; And whether this session is the adopting one, decided at 001.
+(defonce ^:private adopting-rooms? (atom false))
+
+;; What the record on disk says that this client has no cell for: the read
+;; markers, mostly. Flutter has no unread machinery yet, so writing only the
+;; fields it knows would quietly drop the marker a desktop run had put there
+;; and hand the reader their whole history as new. Read once, merged back
+;; under whatever we do know.
+(defonce ^:private room-extras (atom {}))
+
+(defonce ^:private rooms-saved-at (atom 0))
+
+(defn- save-prefs!
+  "Keep the one flag that has to outlive the run: whether this client has
+  taken the room list over from the server. Merged into whatever else
+  `prefs.edn` holds — the display toggles are the desktop's to write, and a
+  whole-map write from here would drop them."
+  []
+  (store/save-prefs! (assoc (store/load-prefs)
+                            :room-list-owned? @room-list-owned?))
+  nil)
+
+(defn- restore-prefs! []
+  (reset! room-list-owned? (boolean (:room-list-owned? (store/load-prefs))))
+  nil)
+
+(defn- room-records
+  "The rooms as they go on disk: most recently used first, each carrying
+  whatever the file already said about it that this client does not hold."
+  []
+  (->> (vals @cells/channels)
+       (sort-by #(- (:accessed % 0)))
+       (mapv (fn [b]
+               (let [name (:name b)]
+                 (merge (get @room-extras name)
+                        {:name name
+                         :kind (or (:kind b)
+                                   (if (rooms/dm? name) :dm :channel))}))))))
+
+(defn- remember-rooms!
+  "Write the room list out. Throttled, because a room's `:accessed` moves
+  every time one is opened and the write is synchronous here — `force?` is for
+  the moments worth paying for, which is the list itself changing.
+
+  A late write costs at most the rooms touched since the last one, which come
+  back in a slightly stale order. Losing one entirely is the thing to avoid,
+  which is what `force?` is for."
+  ([] (remember-rooms! false))
+  ([force?]
+   (let [now (clock/now-ms)]
+     (when (or force? (> (- now @rooms-saved-at) 5000))
+       (reset! rooms-saved-at now)
+       (store/save-rooms! (room-records)))
+     nil)))
+
+(defn- restore-rooms!
+  "Bring back the rooms of earlier runs, in the order they were last used.
+
+  Empty buffers, not memberships: opening one is what joins it, and the list
+  is the part worth keeping — the messages in them come from the server, which
+  replays them on the CHATHISTORY this client asks for at 366.
+
+  `:accessed` is an ascending count over the file read backwards, so the saved
+  order survives and a room opened *this* run — stamped with the wall clock —
+  still sorts above every one of them."
+  []
+  (when-let [saved (seq (store/load-rooms))]
+    (reset! room-extras
+            (into {} (map (fn [r] [(:name r) (dissoc r :name :kind)]) saved)))
+    (swap! cells/channels
+           (fn [m]
+             (reduce (fn [acc [i room]]
+                       (let [name (:name room)]
+                         (if (contains? acc name)
+                           acc
+                           (assoc acc name
+                                  {:name name
+                                   :messages []
+                                   :unread 0
+                                   :joined? false
+                                   :users {}
+                                   :kind (or (:kind room)
+                                             (if (rooms/dm? name) :dm :channel))
+                                   :accessed (inc i)}))))
+                     m
+                     ;; Oldest first, so the count ascends with the order.
+                     (map-indexed vector (reverse saved)))))
+    (count saved)))
+
+(defn- ask-to-join!
+  "Send the JOIN, once. `:joining?` as well as `:joined?`, because the echo
+  takes a round trip: a second JOIN sent in the meantime is what makes the
+  server replay nothing, and with the saved list asked for at 001 and the last
+  room opened straight after, that window is every launch."
+  [name]
+  (when-let [c @conn]
+    (when (and (.startsWith (str name) "#")
+               (let [b (get @cells/channels name)]
+                 (and (not (:joined? b)) (not (:joining? b)))))
+      (swap! cells/channels assoc-in [name :joining?] true)
+      (net/send-line! c (str "JOIN " name))))
+  nil)
+
+(defn- open-room!
+  "Show a buffer, joining it on the way. A row can outlive the membership
+  behind it — a disconnect drops every channel and the buffer stays — so
+  opening one is a request to be in it.
+
+  Ensuring the buffer *before* the JOIN is what keeps the strict rule in the
+  JOIN handler from throwing the room straight back out: a channel we asked
+  for is one the list already holds by the time the echo lands."
+  [name]
+  (reset! cells/current name)
+  ;; An edit belongs to a line in the buffer being left: carried across, the
+  ;; next Send would rewrite a message nobody in this room can see. The box
+  ;; empties with it, because what is in it is a copy of that line —
+  ;; `frq.state/open-channel!` does this too.
+  (when (and @cells/editing (not= name (:channel @cells/editing)))
+    (reset! cells/editing nil)
+    (reset! cells/draft ""))
+  (swap! cells/channels update name
+         #(merge {:name name :messages [] :unread 0
+                  :kind (if (rooms/dm? name) :dm :channel)}
+                 %))
+  ;; The wall clock, so a room opened this run sorts above every one
+  ;; `restore-rooms!` counted in.
+  (swap! cells/channels assoc-in [name :accessed] (clock/now-ms))
+  (reset! cells/screen :chat)
+  ;; Worth a write of its own: the order the list is read in is the order
+  ;; rooms were last opened, and this is the moment it changes.
+  (remember-rooms! true)
+  (ask-to-join! name)
+  nil)
+
+(defn- join-saved-rooms!
+  "Ask to be in every channel the file says we are in.
+
+  The server re-joins an authenticated user's channels itself and gets it
+  wrong in both directions — it forgets rooms and announces ones that are not
+  ours. This is the half that answers the forgetting. A JOIN for a channel the
+  server has already put us in is answered with the membership we already
+  have, so asking twice costs nothing.
+
+  DMs are not asked for: there is nothing to join in a conversation with a
+  person, the buffer is the whole of it."
+  []
+  (when @conn
+    (doseq [[name _] @cells/channels] (ask-to-join! name))
+    nil))
+
+(defn- forget-memberships!
+  "The buffers survive a lost connection, the memberships do not.
+
+  Leaving `:joined?` set across a drop is what made a reconnect ask for
+  nothing: `ask-to-join!` reads it, every room still claimed to be joined, and
+  the list came back full of rooms we were no longer in. The users go with it —
+  the roll is the server's and it will send a fresh one with the NAMES that
+  follow the re-JOIN."
+  []
+  (swap! cells/channels
+         (fn [m]
+           (reduce-kv (fn [acc k v]
+                        (assoc acc k (assoc v :joined? false :joining? false
+                                            :users {})))
+                      {} m)))
+  nil)
+
 (def ^:private history-limit
   "How many lines of backlog to ask a room for, as `frq.state` asks for them."
   100)
@@ -150,14 +342,32 @@
     (cond
       (= "JOIN" cmd)
       (let [name (first params)]
-        (swap! cells/channels
-               #(-> (ensure % name)
-                    (members/add-user name who)
-                    (cond-> me? (update name merge {:joined? true
-                                                    :accessed (clock/now-ms)}))))
-        ;; Only our own JOIN opens the room. Someone else arriving in a
-        ;; channel used to move the reader into it.
-        (when me? (reset! cells/current name)))
+        (if me?
+          ;; Ours if the file says so — restored at startup, or asked for
+          ;; since. Anything else is the server putting us somewhere we did
+          ;; not ask to be, which it does: it announces memberships that are
+          ;; not real, and adding them is how a list nobody chose fills up.
+          ;;
+          ;; So we leave again, unless this is the session that is still
+          ;; adopting — on the first connect the file has not been told
+          ;; anything yet, and parting then would be leaving every room we are
+          ;; actually in.
+          (if (and (not (contains? @cells/channels name))
+                   (not @adopting-rooms?))
+            (when-let [c @conn] (net/send-line! c (str "PART " name)))
+            (do (swap! cells/channels
+                       #(-> (ensure % name)
+                            (members/add-user name who)
+                            (update name merge {:joined? true
+                                                :joining? false})))
+                ;; Adopted or asked for, it is ours now and the file should
+                ;; say so before the next connect judges it.
+                (remember-rooms! true)))
+          ;; Somebody else arriving in a room we do not hold is not a reason
+          ;; to start holding it: `add-user` builds the buffer it is given,
+          ;; which would put a refused room straight back in the list.
+          (when (contains? @cells/channels name)
+            (swap! cells/channels members/add-user name who))))
 
       ;; 353 is the roll, in as many lines as it takes; 366 ends it.
       (= "353" cmd)
@@ -280,7 +490,12 @@
           add (swap! cells/channels reactions/update-reaction
                      buffer msgid add who true)
           gone (swap! cells/channels reactions/update-reaction
-                      buffer msgid gone who false))))))
+                      buffer msgid gone who false))))
+    ;; Whatever that message did to the list, write it down. Throttled, so a
+    ;; busy channel does not cost a file write per line — but a DM arriving
+    ;; from someone new is a room that exists only here until this runs, and
+    ;; the old client lost exactly those between runs.
+    (remember-rooms!)))
 
 (defn- note! [m]
   (reset! last-line (str (:command m) " " (last (:params m))))
@@ -492,8 +707,37 @@
                                               ;; and looks exactly like a
                                               ;; failure.
                                               (reset! cells/screen :chats)
-                                              (when-let [c @conn]
-                                                (net/send-line! c "JOIN #test")))
+                                              ;; This session decides once
+                                              ;; whether it is the one that
+                                              ;; takes the room list over
+                                              ;; from the server. Before the
+                                              ;; flag is set the file has
+                                              ;; never been told what we are
+                                              ;; in, so the server's answer
+                                              ;; is adopted rather than
+                                              ;; argued with.
+                                              (reset! adopting-rooms?
+                                                      (not @room-list-owned?))
+                                              (when-not @room-list-owned?
+                                                (reset! room-list-owned? true)
+                                                (save-prefs!))
+                                              ;; What the file says we are in,
+                                              ;; we ask to be in. A room the
+                                              ;; server has forgotten is one
+                                              ;; that would otherwise quietly
+                                              ;; stop existing.
+                                              (join-saved-rooms!)
+                                              ;; And back where the reader
+                                              ;; left off, rather than into
+                                              ;; #test on top of a list they
+                                              ;; already had. The chats
+                                              ;; screen stays underneath, so
+                                              ;; Back goes to the list rather
+                                              ;; than out of the app.
+                                              (if-let [last-room
+                                                       (:name (first (rooms/channel-list)))]
+                                                (actions/open-channel! last-room)
+                                                (actions/join! auto-join)))
 
                                           (contains? registration-failed cmd)
                                           (fail! (if (= "433" cmd)
@@ -507,6 +751,7 @@
                                           (reset! cells/status (str "… " cmd)))))
                             :on-close (fn [why]
                                         (reset! conn nil)
+                                        (forget-memberships!)
                                         ;; Say what the last thing seen was. A
                                         ;; connection that registers and then
                                         ;; drops is a different bug from one
@@ -521,7 +766,16 @@
           ;; CAP first, then registration — the order the server expects, and the
           ;; order `frq.irc` uses.
           (net/send-line! sock "CAP LS 302")
-          (let [nick (if-let [h (:handle @cells/session)] h @cells/form-nick)]
+          ;; `form-nick` and nothing else. The handle went on the wire here,
+          ;; and the sign-in had already put the *nick* in the cell — so the
+          ;; channel called us alice.bsky.social while the client thought it
+          ;; was alice, and every test of "is this me?" against a prefix came
+          ;; back false. Our own JOIN echo stopped setting `:joined?`, so
+          ;; every room wore a "not joined" badge and Open re-sent a JOIN for
+          ;; a room we were already in. The DID is the identity; the nick is
+          ;; only what the channel calls us, and both halves have to agree on
+          ;; it. Same nick the desktop dials with.
+          (let [nick (str @cells/form-nick)]
             (net/send-line! sock (str "NICK " nick))
             (net/send-line! sock (str "USER " nick " 0 * :frq"))))
         ;; Object, not Exception. Dart keeps Error and Exception in separate
@@ -534,6 +788,7 @@
   (reset! closing? true)
   (when-let [c @conn] (net/close! c))
   (reset! conn nil)
+  (forget-memberships!)
   (reset! cells/connecting? false)
   (reset! cells/status "Not connected")
   (reset! cells/screen :connect))
@@ -771,6 +1026,11 @@
     ;; Before any widget is built: a cell that changes before its watch is on
     ;; is a change the screen never hears about.
     (watch-cells!)
+    ;; The room list of earlier runs, and the flag that says whether it is the
+    ;; authority yet. Before the saved session, because that connects on its
+    ;; own the moment it is restored and 001 reads both of these.
+    (restore-prefs!)
+    (restore-rooms!)
     ;; A sign-in that already happened. Only the durable broker token comes
     ;; back — the connection mints a fresh web-token from it — so this is not
     ;; a session, it is the means to ask for one.
@@ -800,13 +1060,38 @@
      {:connect! connect!
       :disconnect! disconnect!
       :connected? (fn [] (some? @conn))
+      ;; The Join box, and the same one box for both things the desktop's
+      ;; `join!` does: `@nick` opens a DM, anything else is a channel and
+      ;; gets its `#` if it came without one. Through `open-room!` rather
+      ;; than straight onto the wire, because a bare JOIN left the buffer
+      ;; unbuilt — and the rule in the JOIN handler would then read our own
+      ;; echo as a room the server had invented and part it again.
       :join! (fn [name]
-               (when-let [c @conn]
-                 (when (seq (str name))
-                   (net/send-line! c (str "JOIN " name)))))
+               (let [name (.trim (str name))]
+                 (cond
+                   (.startsWith name "@")
+                   (let [who (.substring name 1)]
+                     (when (seq who) (open-room! who)))
+
+                   (seq name)
+                   (open-room! (if (.startsWith name "#") name (str "#" name)))
+
+                   :else nil)))
       :leave-channel! (fn [name]
-                        (when-let [c @conn] (net/send-line! c (str "PART " name)))
-                        (swap! cells/channels dissoc name))
+                        ;; Channels only, as on the desktop. There is nothing
+                        ;; to part in a conversation with a person — the
+                        ;; buffer is the whole of it — and `PART alice` is a
+                        ;; line the server answers with an error.
+                        (when (and @conn (.startsWith (str name) "#"))
+                          (net/send-line! @conn (str "PART " name)))
+                        (swap! cells/channels dissoc name)
+                        (when (= name @cells/current)
+                          (reset! cells/current nil)
+                          (reset! cells/screen :chats))
+                        ;; The only way a room leaves the file. Everything
+                        ;; else adds one, so without this the list is a thing
+                        ;; that only grows.
+                        (remember-rooms! true))
       :send-draft! send-draft!
 
       ;; Pictures. The chooser is the platform's, so the browsing screen the
@@ -953,31 +1238,7 @@
                          (reset! cells/broker-token nil)
                          (reset! cells/session nil))
       :jump-to-present! (fn [] (reset! cells/at-present? true))
-      :open-channel! (fn [name]
-                       (reset! cells/current name)
-                       ;; An edit belongs to a line in the buffer being left:
-                       ;; carried across, the next Send would rewrite a
-                       ;; message nobody in this room can see. The box empties
-                       ;; with it, because what is in it is a copy of that
-                       ;; line — `frq.state/open-channel!` does this too.
-                       (when (and @cells/editing
-                                  (not= name (:channel @cells/editing)))
-                         (reset! cells/editing nil)
-                         (reset! cells/draft ""))
-                       ;; `frq.state/open-channel!` does this and more: it
-                       ;; marks the buffer read, remembers the room list and
-                       ;; asks for NAMES. What it also does, and what made
-                       ;; Open look like a no-op here, is go to the
-                       ;; conversation — and join it on the way, because a row
-                       ;; can outlive the membership behind it.
-                       (swap! cells/channels update name
-                              #(merge {:name name :messages [] :unread 0} %))
-                       (reset! cells/screen :chat)
-                       (let [buffer (get @cells/channels name)]
-                         (when (and @conn
-                                    (.startsWith (str name) "#")
-                                    (not (:joined? buffer)))
-                           (net/send-line! @conn (str "JOIN " name)))))})
+      :open-channel! open-room!})
     (f/run
       (m/MaterialApp .title "frq" .theme (t/app-theme))
       .home
