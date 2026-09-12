@@ -132,7 +132,7 @@
   (let [pinned? (some? (actions/viewing))
         {:keys [nick actor]} (or (actions/viewing) (actions/hovering))
         _ (actions/profile-tick)
-        _ @actions/media-tick
+        _ (actions/media-tick)
         pr (actions/profile-entry actor)
         ready? (= :ready (:status pr))
         display (or (:display-name pr) nick)
@@ -207,7 +207,7 @@
         ;; Reading both ticks subscribes this screen to the two fetches it is
         ;; waiting on: the profile itself, and the picture on it.
         _ (actions/profile-tick)
-        _ @actions/media-tick
+        _ (actions/media-tick)
         pr (actions/profile-entry actor)
         ready? (= :ready (:status pr))
         display (or (:display-name pr) nick)
