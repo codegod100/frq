@@ -353,6 +353,25 @@
              (and (contains? #{:vbox :card :hbox} tag)
                   (boolean (some #(fills-column? (expand %)) (body node))))))))
 
+(defn- asks-width?
+  "Whether a node has already said how wide it is.
+
+  Asked of a row's children, and recursive through plain boxes for the reason
+  `fills-column?` is: the people panel is the width request and the wrapper
+  that comes and goes around it is what the row actually holds.
+
+  It exists to keep `Expanded` off such a child. Expanded hands out a *tight*
+  width — the child's share of the row — and a tight width beats the SizedBox
+  underneath it, so the panel that asked for 150 got whatever was going and
+  every nick in it ellipsised to fit."
+  [node]
+  (and (vector? node)
+       (let [tag (first node)
+             p (second node)]
+         (or (and (map? p) (some? (width-of p)))
+             (and (contains? #{:vbox :card} tag)
+                  (boolean (some #(asks-width? (expand %)) (body node))))))))
+
 (defn- children
   "Flatten seqs, drop nils. `(for [...] ...)` in a component yields a seq in
   the child position and glimmer splices it; so does this."
@@ -382,7 +401,12 @@
                    ;; and left to its natural width it is as wide as its
                    ;; longest line — which is one URL and a screen and a half
                    ;; of overflow.
-                   (and (identical? fills? fills-row?) (fills-column? n))
+                   ;; Unless it has said how wide it is. The row already
+                   ;; stretches its children to the full height when one of
+                   ;; them fills the column, so a pane with a width of its own
+                   ;; needs nothing from Expanded and loses everything to it.
+                   (and (identical? fills? fills-row?) (fills-column? n)
+                        (not (asks-width? n)))
                    (conj! acc (m/Expanded .child (render n)))
                    (and (identical? fills? fills-row?) (flexes-in-row? n))
                    (conj! acc (m/Flexible .child (render n)))
