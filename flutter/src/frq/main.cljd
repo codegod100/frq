@@ -50,6 +50,10 @@
 
 (defonce ^:private last-line (atom nil))
 
+(def ^:private history-limit
+  "How many lines of backlog to ask a room for, as `frq.state` asks for them."
+  100)
+
 (defn- room!
   "The little of `frq.state/apply-msg!` the conversation list needs: the two
   messages that make a room appear and give it a last line, and everything
@@ -84,7 +88,19 @@
 
       (= "366" cmd)
       (let [name (nth params 1 nil)]
-        (when name (swap! cells/channels members/names-done name)))
+        (when name
+          (swap! cells/channels members/names-done name)
+          ;; End of NAMES, and the only moment this client knows a room is
+          ;; fully arrived. freeq re-joins an authenticated user's channels at
+          ;; registration and leaves the backlog for the client to ask for, so
+          ;; a room that reaches here with an empty buffer has no history
+          ;; coming unless we ask — which is why nothing but new lines ever
+          ;; appeared here. Same request `frq.state` makes on 366, and the
+          ;; replayed lines come back as ordinary PRIVMSGs the branch below
+          ;; already folds.
+          (when (and @conn (empty? (get-in @cells/channels [name :messages])))
+            (net/send-line! @conn
+                            (str "CHATHISTORY LATEST " name " * " history-limit)))))
 
       (= "PART" cmd)
       (swap! cells/channels members/remove-user (first params) who)
