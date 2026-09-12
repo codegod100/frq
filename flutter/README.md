@@ -74,17 +74,40 @@ desktop-only), and the media plane — `moq/`, `codec/`, `capture/`, `av/`, abou
 `dart:ffi` does not conjure V4L2; that half wants Flutter's camera and audio
 plugins and is its own project.
 
-## To make this real
+## Building it
 
-1. Pin `tensegritics/clojuredart` in `deps.edn` — it says `PIN-ME`.
-2. Get a Flutter SDK and the cljd toolchain into the flake. Neither is there.
-3. `clj -M:cljd init`, then `clj -M:cljd flutter`. (There is no `release`
-   subcommand — a release build is `clj -M:cljd compile` followed by
-   `flutter build`.)
-4. `frq.io.dart` is written from the docs and has never been compiled. Expect
-   its interop to be wrong in detail.
+```bash
+just apk            # the debug APK
+just apk install    # and onto a connected device
+just apk run        # and launched
+just apk log        # logcat
+```
 
-There is no other APK to fall back on. The jolt one — `nix/android.nix`, the
-`android/` manifest and Java glue, the `.#apk` outputs and `just apk` — is
-gone, along with the jvui and Vidya backends it painted through. Until step 2
-exists, frq has no Android build at all, and that is the honest state.
+Impure on purpose. Gradle resolves its own dependencies over the network and
+installs build-tools and a platform into `ANDROID_HOME` as it goes, so it can
+neither run in a sandbox nor write to the store. What nix gives is the
+toolchain — clojure, a JDK, Flutter, and an SDK composed by androidenv — and
+the recipe copies that SDK to `flutter/.home` for Gradle to finish off. That
+copy and everything Gradle leaves behind are gitignored.
+
+Two things the Flutter template wanted that are deliberately not here. There is
+no `ndkVersion` in `android/app/build.gradle.kts`: setting it makes Gradle
+fetch that exact NDK, and there is no native code to need one — the app is
+Dart, and path_provider is platform channels rather than JNI. And `ios/`,
+`macos/`, `windows/`, `web/` are deleted; `android/` and `linux/` are the
+targets.
+
+It is signed with `~/.android/debug.keystore`, through the template's
+`signingConfig = signingConfigs.getByName("debug")` — which release builds also
+use, so `flutter build apk --release` is not shippable until a real
+`signingConfigs.release` is wired up. The jolt APK's key was generated inside
+its own nix derivation and never written anywhere, which is why the first
+install over it needed an uninstall: Android will not update a package across a
+signature change.
+
+## What it paints
+
+`frq.main` is a socket, not the client: the clock and the saved session, read
+through exactly the `common/` namespaces the desktop reads them through. That
+is the whole point of it — proof the shared half compiles and runs under a
+second compiler. The screens are still to be written.

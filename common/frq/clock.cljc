@@ -35,6 +35,20 @@
           days (+ (* era 146097) doe -719468)]
       (* 1000 (+ (* days 86400) (* h 3600) (* mi 60) s)))))
 
+(defn- floor-div
+  "`quot` rounds toward zero and this rounds down, which for a day number
+  before 1970 is a different day.
+
+  Written out rather than taken from the host: `Math/floorDiv` is Java, and
+  this namespace is compiled by ClojureDart too, where there is no Math class
+  to call into. The same reason `frq.io` exists, one scale down."
+  [a b]
+  (let [q (quot a b)
+        r (rem a b)]
+    (if (or (zero? r) (= (neg? r) (neg? b))) q (dec q))))
+
+(defn- floor-mod [a b] (- a (* b (floor-div a b))))
+
 (defn- civil-from-days
   "`[y m d]` for a day number since the epoch — Hinnant's algorithm the other
   way round, which is the direction `parse-time-tag` does not go.
@@ -45,7 +59,7 @@
   eleven lines and the same on both platforms."
   [days]
   (let [z (+ days 719468)
-        era (Math/floorDiv (long z) 146097)
+        era (floor-div z 146097)
         doe (- z (* era 146097))
         yoe (quot (+ (- doe (quot doe 1460)) (quot doe 36524) (- (quot doe 146096))) 365)
         y (+ yoe (* era 400))
@@ -62,8 +76,8 @@
   [ms]
   (let [secs (quot ms 1000)
         secs (+ secs (io/local-offset-seconds secs))
-        days (Math/floorDiv (long secs) 86400)
-        sod (Math/floorMod (long secs) 86400)
+        days (floor-div secs 86400)
+        sod (floor-mod secs 86400)
         [y m d] (civil-from-days days)]
     [(str y "-" (pad2 m) "-" (pad2 d))
      (quot sod 3600)

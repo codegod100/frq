@@ -8,8 +8,9 @@
 
  :deps {tensegritics/clojuredart
         {:git/url "https://github.com/Tensegritics/ClojureDart.git"
-         ;; UNPINNED. Nothing builds this yet — see flutter/README.md.
-         :git/sha "PIN-ME"}}
+         ;; ClojureDart HEAD as of 2026-09-12. It has no releases; a sha is
+         ;; the only pin there is.
+         :git/sha "dfa7a0c83e0902aae23df992ded3fb7f8b577bc6"}}
 
  :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
 

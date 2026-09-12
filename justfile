@@ -32,6 +32,66 @@ jobs := env("FRQ_MAX_JOBS", "0")
 default:
     @just --list
 
+# The APK: ClojureDart compiled to Dart, then Flutter's Gradle build.
+#
+# Impure on purpose, and worth saying why rather than leaving it to be
+# discovered. Gradle resolves its own dependencies over the network and
+# installs build-tools and a platform into ANDROID_HOME as it goes, so it
+# cannot run in a sandbox and cannot write to the store. What nix gives here
+# is the toolchain — clojure, a JDK, Flutter, and an SDK composed by
+# androidenv — and the recipe copies that SDK somewhere writable
+# (flutter/.home) for Gradle to finish off. That copy and everything Gradle
+# leaves behind are gitignored.
+#
+# No ndkVersion in android/app/build.gradle.kts, for the same reason: the
+# Flutter template sets it, setting it makes Gradle fetch that exact NDK, and
+# there is no native code here to need one.
+#
+#   just apk                build the debug APK
+#   just apk install        build it and put it on a connected device
+#   just apk run            install and launch
+#   just apk log            logcat, filtered to this app
+apk action="build":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}/flutter"
+
+    sdk="$(nix build --impure --no-link --print-out-paths \
+        --expr 'let pkgs = import (builtins.getFlake "github:NixOS/nixpkgs/nixos-unstable") { system = "x86_64-linux"; config = { allowUnfree = true; android_sdk.accept_license = true; }; }; in (pkgs.androidenv.composeAndroidPackages { cmdLineToolsVersion = "13.0"; buildToolsVersions = [ "34.0.0" ]; platformVersions = [ "35" "34" ]; includeNDK = false; }).androidsdk')/libexec/android-sdk"
+
+    export HOME="$PWD/.home"
+    export ANDROID_HOME="$HOME/android-sdk"
+    export ANDROID_SDK_ROOT="$ANDROID_HOME"
+    mkdir -p "$HOME"
+
+    # Gradle writes into ANDROID_HOME, so it is a copy rather than the store
+    # path. Made once and kept: re-copying would throw away the build-tools
+    # and platform Gradle installed into it on the last run.
+    if [ ! -d "$ANDROID_HOME" ]; then
+        cp -r "$sdk" "$ANDROID_HOME"
+        chmod -R u+w "$ANDROID_HOME"
+    fi
+
+    flutter="nix shell nixpkgs#clojure nixpkgs#jdk17 nixpkgs#flutter --command"
+
+    $flutter clojure -M:cljd compile
+
+    # Rewritten every run: it carries absolute store paths, and the flutter
+    # one moves whenever nixpkgs does.
+    $flutter flutter config --android-sdk "$ANDROID_HOME" >/dev/null
+
+    apk=build/app/outputs/flutter-apk/app-debug.apk
+    adb="${ADB:-$ANDROID_HOME/platform-tools/adb}"
+
+    case "{{action}}" in
+        build)   $flutter flutter build apk --debug ;;
+        install) $flutter flutter build apk --debug && "$adb" install -r "$apk" ;;
+        run)     $flutter flutter build apk --debug && "$adb" install -r "$apk" \
+                     && "$adb" shell monkey -p uk.nandi.frq -c android.intent.category.LAUNCHER 1 ;;
+        log)     "$adb" logcat -s flutter ;;
+        *)       echo "usage: just apk [build|install|run|log]" >&2; exit 1 ;;
+    esac
+
 # Two halves, and the split is the point. The frq source is the files on disk,
 # uncommitted edits and all. Everything under it — jolt, glimmer, glimmer-cosmic
 # and the native objects — is the flake's, built rather than fetched.

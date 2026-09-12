@@ -1,0 +1,25 @@
+# Generated Dart. `clojure -M:cljd compile` writes it from src/ and ../common,
+# and it is derived from files that are in git — so it is not.
+lib/cljd-out/
+
+# Flutter's own working directories.
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Where `just apk` keeps the writable Android SDK and Flutter's config. The
+# SDK is a copy of the one nix builds, 151 MB of it, because Gradle installs
+# build-tools and a platform into ANDROID_HOME and cannot write to the store.
+.home/
+
+# Written by the build with absolute paths to the store — `just apk` rewrites
+# it on every run, so a committed one would only ever be someone else's.
+android/local.properties
+
+# ClojureDart's and tools.deps' own caches.
+.clojuredart/
+.cpcache/
+
+# Editor scaffolding `cljd init` leaves behind.
+.idea/
