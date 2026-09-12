@@ -42,6 +42,36 @@
   (let [w (:width-request p)]
     (when (and (number? w) (pos? w)) (double w))))
 
+(defn pointer?
+  "Whether there is a mouse here rather than a finger.
+
+  Both Flutter targets compile this file — `just apk` and
+  `just flutter-desktop` — so the phone is no longer a safe assumption to bury
+  in an arm below. What hangs on it is everything a pointer can do that a
+  finger cannot: resting on a thing to ask about it, and the card that answers
+  floating over the screen instead of taking a place in it.
+
+  `frq.screens.*` asks the host the same question as `actions/desktop?`, and
+  gets its answer from the same place; this is the renderer's side of it, for
+  the parts of a hover that never reach the shared screens at all."
+  []
+  (not (.-isAndroid io/Platform)))
+
+(defn- hovered
+  "`w`, told when the pointer arrives and when it leaves.
+
+  Plain `w` where there is nothing to tell — `MouseRegion` is cheap but not
+  free, and on a phone the callbacks could never fire anyway."
+  [p w]
+  (let [in (:on-hover p)
+        out (:on-unhover p)]
+    (if (and (pointer?) (or in out))
+      (m/MouseRegion
+       .onEnter (when in (fn [_] (in)))
+       .onExit (when out (fn [_] (out)))
+       .child w)
+      w)))
+
 (defn- dbl [x default]
   (cond (number? x) (double x)
         :else default))
@@ -642,51 +672,131 @@
              n (:count p)
              mine (boolean (:mine p))
              pad (max 2.0 (* 0.25 size))]
-         (m/InkWell
-          .onTap (when-let [on (:on-click p)] #(on))
-          .borderRadius (m/BorderRadius.circular t/radius-s)
-          .child
-          (m/Container
-           .padding (m/EdgeInsets.symmetric .horizontal pad .vertical (* 0.5 pad))
-           .decoration (m/BoxDecoration
-                        .color (if mine t/accent t/card-component)
-                        .borderRadius (m/BorderRadius.circular t/radius-s))
+         ;; And, where there is a pointer, resting on a pill says who put the
+         ;; reaction there — the card `reactor-dialog` raises out of
+         ;; `reaction-hover`. The pill's only job is to say where the pointer
+         ;; is; see the `:avatar` arm, which answers the same way about a face.
+         (hovered
+          p
+          (m/InkWell
+           .onTap (when-let [on (:on-click p)] #(on))
+           .borderRadius (m/BorderRadius.circular t/radius-s)
            .child
-           (m/Row
-            .mainAxisSize m/MainAxisSize.min
-            .children
-            (into [(m/Text (str (:emoji p ""))
-                           .style (m/TextStyle .fontSize size))]
-                  (when (and (number? n) (pos? n))
-                    [(m/SizedBox .width pad)
-                     (m/Text (str n)
-                             .style (m/TextStyle
-                                     .fontSize (* 0.85 size)
-                                     .color (if mine t/on-accent t/on-card)))]))))))
+           (m/Container
+            .padding (m/EdgeInsets.symmetric .horizontal pad .vertical (* 0.5 pad))
+            .decoration (m/BoxDecoration
+                         .color (if mine t/accent t/card-component)
+                         .borderRadius (m/BorderRadius.circular t/radius-s))
+            .child
+            (m/Row
+             .mainAxisSize m/MainAxisSize.min
+             .children
+             (into [(m/Text (str (:emoji p ""))
+                            .style (m/TextStyle .fontSize size))]
+                   (when (and (number? n) (pos? n))
+                     [(m/SizedBox .width pad)
+                      (m/Text (str n)
+                              .style (m/TextStyle
+                                      .fontSize (* 0.85 size)
+                                      .color (if mine t/on-accent t/on-card)))])))))))
 
        ;; libcosmic's dialog is centred over the window with what you were
-       ;; reading dimmed behind it. There is no behind on a phone worth
-       ;; keeping: the screen is the width of the dialog already, so this is a
-       ;; sheet — the title, a rule, and the body — drawn where the tree puts
-       ;; it, above the conversation it was opened from.
+       ;; reading dimmed behind it, and there are two answers to that here
+       ;; because there are two Flutter targets.
        ;;
-       ;; `:modal` and the hover pair are read and ignored. They are what a
-       ;; pointer needs to tell a card it opened by resting from one it opened
-       ;; by pressing, and a finger only ever presses.
+       ;; On a phone there is no behind worth keeping — the screen is the width
+       ;; of the dialog already — so this is a sheet: the title, a rule, and
+       ;; the body, drawn where the tree puts it, above the conversation it was
+       ;; opened from. `:modal` and the hover pair are read and ignored, since
+       ;; they are what a pointer needs to tell a card it opened by resting
+       ;; from one it opened by pressing, and a finger only ever presses.
+       ;;
+       ;; In a window it is what libcosmic's is: capped at `:max-width`,
+       ;; centred over the screen, the buttons gathered into a foot, and the
+       ;; hover pair heard — so a card a pointer raised can be moved into and
+       ;; read rather than only glanced at. Nothing about the floating is here,
+       ;; though; a widget cannot lift itself out of the column it is in. That
+       ;; is `render-root`, which takes the dialog out of the tree and stacks
+       ;; it over what is left. This arm only has to draw the card.
        :dialog
-       (m/Container
-        .width double/infinity
-        .margin (m/EdgeInsets.only .bottom t/space-xs)
-        .padding (m/EdgeInsets.all t/space-xs)
-        .decoration (m/BoxDecoration
-                     .color t/card
-                     .border (m/Border.all .color t/divider .width 1.0)
-                     .borderRadius (m/BorderRadius.circular t/radius-m))
-        .child
-        (col t/space-xxs
-             (into [[:title-2 {:label (:label p "")}]
-                    [:separator {}]]
-                   (body node))))
+       (if-not (pointer?)
+         (m/Container
+          .width double/infinity
+          .margin (m/EdgeInsets.only .bottom t/space-xs)
+          .padding (m/EdgeInsets.all t/space-xs)
+          .decoration (m/BoxDecoration
+                       .color t/card
+                       .border (m/Border.all .color t/divider .width 1.0)
+                       .borderRadius (m/BorderRadius.circular t/radius-m))
+          .child
+          (col t/space-xxs
+               (into [[:title-2 {:label (:label p "")}]
+                      [:separator {}]]
+                     (body node))))
+         ;; `:slot` is libcosmic's word for "this belongs in the foot rather
+         ;; than in the body". Read here for the same reason: stacked into the
+         ;; body instead, Close and Bluesky are two full-width bars under the
+         ;; bio rather than a row of buttons under a rule.
+         (let [kids (remove nil? (map expand (body node)))
+               slotted (fn [n] (let [q (props n)] (not-empty (str (:slot q "")))))
+               foot (filter slotted kids)
+               ;; Secondary first, so the button that closes the card is the
+               ;; one nearest the corner the pointer leaves by.
+               foot (concat (remove #(= "primary" (:slot (props %))) foot)
+                            (filter #(= "primary" (:slot (props %))) foot))]
+           (hovered
+            p
+            (m/ConstrainedBox
+             ;; Capped both ways. The width is what libcosmic is asked for; the
+             ;; height is so that a long bio is a card with a scroll in it
+             ;; rather than a card taller than the window. The body is the part
+             ;; that gives — the title and the buttons are why it is a dialog.
+             .constraints (m/BoxConstraints
+                           .maxWidth (dbl (:max-width p) 520.0)
+                           .maxHeight (* 0.8 (.-height (.-size (m/MediaQuery.of ctx)))))
+             .child
+             (m/Container
+              ;; Infinity under a maxWidth of 520 is 520, and under a narrower
+              ;; window it is the window: the card is as wide as it is allowed
+              ;; to be, never as wide as its longest line. Without it the
+              ;; Column is sized to its children and the rules inside it ask
+              ;; for an unbounded width, which is a layout error rather than a
+              ;; narrow dialog.
+              .width double/infinity
+              .padding (m/EdgeInsets.all t/space-s)
+              .decoration (m/BoxDecoration
+                           .color t/card
+                           .border (m/Border.all .color t/divider .width 1.0)
+                           .borderRadius (m/BorderRadius.circular t/radius-m))
+              .child
+              ;; Built out rather than handed to `col`, because the foot is a
+              ;; Row aligned to the end and `:hbox` has no word for that. One
+              ;; place that wants it and no prop invented for it.
+              (m/Column
+               .crossAxisAlignment m/CrossAxisAlignment.start
+               .mainAxisSize m/MainAxisSize.min
+               .spacing t/space-xxs
+               .children
+               (concat [(render [:title-2 {:label (:label p "")}])
+                        (render [:separator {}])]
+                       ;; Flexible and loose: the body takes what it needs up
+                       ;; to what the cap leaves, and scrolls inside that. A
+                       ;; short profile is still a short card.
+                       [(m/Flexible
+                         .child
+                         (m/SingleChildScrollView
+                          .child (m/Column
+                                  .crossAxisAlignment m/CrossAxisAlignment.start
+                                  .mainAxisSize m/MainAxisSize.min
+                                  .spacing t/space-xxs
+                                  .children (children (remove slotted kids)))))]
+                       (when (seq foot)
+                         [(render [:separator {}])
+                          (m/Row
+                           .mainAxisSize m/MainAxisSize.max
+                           .mainAxisAlignment m/MainAxisAlignment.end
+                           .spacing t/space-xxs
+                           .children (children foot))]))))))))
 
        :separator (m/Divider .height 1.0 .thickness 1.0 .color t/divider)
 
@@ -789,8 +899,12 @@
        ;; A face is a way in to who someone is, so it takes the press that
        ;; opens their profile. It was drawn without one and the chat screen's
        ;; `:on-click` went nowhere — the one gesture a phone has for this.
-       ;; `:on-hover` and `:on-unhover` come with it on the desktop and are
-       ;; nothing here.
+       ;;
+       ;; And, in a window, the gesture that comes before the press: resting on
+       ;; a face raises the card without pinning it. `hovered` is what hears
+       ;; that; the card it raises is the `:dialog` arm above, floated by
+       ;; `render-root`. On the phone the screens do not even hang a hover on a
+       ;; face — they ask `desktop?` first — and `hovered` is a no-op besides.
        :avatar
        (let [s (dbl (:size p) 32.0)
              src (:src p)
@@ -820,11 +934,13 @@
                                          (.toUpperCase (subs l 0 1))
                                          "?"))
                                  t/text-body t/on-bg)))]
-         (if-let [on (:on-click p)]
-           (m/InkWell .onTap #(on)
-                      .customBorder (m/CircleBorder)
-                      .child face)
-           face))
+         (hovered
+          p
+          (if-let [on (:on-click p)]
+            (m/InkWell .onTap #(on)
+                       .customBorder (m/CircleBorder)
+                       .child face)
+            face)))
 
        :image
        (let [src (or (:src p) (:path p))
@@ -929,3 +1045,90 @@
               .mainAxisSize m/MainAxisSize.min
               .children (children node))
     :else (m/Text (str node))))
+
+;; ------------------------------------------------------------------- root
+
+(defn- dialog-node?
+  [node]
+  (and (vector? node) (= :dialog (first node))))
+
+(defn- lift-dialog
+  "`[tree-without-its-dialog dialog-or-nil]`.
+
+  `frq.screens.app` puts the dialog beside the screens rather than instead of
+  one, in a wrapper that is always there so that a child coming and going
+  cannot renumber the root — see the comment on `app`. libcosmic takes that
+  node and floats it itself. Flutter has no such hand-off: the node is a widget
+  in a Column, and a widget cannot lift itself out of the column it is in. So
+  this does the lifting, and `render-root` does the floating.
+
+  Only `:vbox` is descended into, which is every wrapper between the root and
+  the dialog and nothing else — there is no reason to walk a conversation
+  looking for one. And the node is replaced by its expansion on the way past,
+  so the component behind it runs once rather than once here and once again
+  when the tree it came out of is rendered."
+  [node]
+  (let [n (expand node)]
+    (cond
+      (dialog-node? n) [nil n]
+      (and (vector? n) (= :vbox (first n)))
+      (let [p (props n)
+            head (if (map? (second n)) [(first n) p] [(first n)])]
+        (reduce (fn [[acc found] kid]
+                  (if found
+                    [(conj acc kid) found]
+                    (let [[kid' d] (lift-dialog kid)]
+                      [(conj acc kid') (or d found)])))
+                [head nil]
+                (body n)))
+      :else [n nil])))
+
+(defn render-root
+  "The whole app as one widget: the screens, and the dialog floated over them.
+
+  On a phone this is `render` and nothing more. The dialog there is a sheet
+  drawn where the tree puts it, which is what a screen the width of a dialog
+  wants.
+
+  In a window it is libcosmic's arrangement, built out of a Stack: the screens
+  at their full size, a scrim, and the card centred over both. The screen keeps
+  its place in the tree either way — and so its scroll position — because the
+  dialog was never in its subtree to begin with.
+
+  Two things about the scrim, and they are the same two things `profile-dialog`
+  says about modality. A card that was *pressed* open dims what is behind it
+  and swallows the presses meant for it: it is the thing on the screen until it
+  is dismissed. A card the pointer is merely *holding* open does neither — it
+  paints no dim, and `IgnorePointer` lets every event through to the face
+  underneath, because the face has to keep hearing the pointer or nothing would
+  ever tell the card to go."
+  [node]
+  (if-not (pointer?)
+    (render node)
+    (let [[tree dialog] (lift-dialog node)]
+      (if (nil? dialog)
+        (render tree)
+        (let [modal (boolean (:modal (props dialog)))]
+          (m/Stack
+           .children
+           [(render tree)
+            (m/Positioned.fill
+             .child
+             (let [scrim (m/ColoredBox
+                          .color (if modal
+                                   (m/Color.fromRGBO 0 0 0 0.45)
+                                   (m/Color.fromRGBO 0 0 0 0.0)))]
+               (if modal
+                 ;; Absorbing and not merely painting: a press on the dimmed
+                 ;; half of the window is a press meant for the card.
+                 (m/GestureDetector .onTap (fn [] nil) .child scrim)
+                 (m/IgnorePointer .child scrim))))
+            ;; `Center` and not a scroll view over the screen: a Center hands
+            ;; the hit test to its child's bounds and nothing more, while a
+            ;; viewport absorbs every event inside its own — which here is the
+            ;; whole window, faces included. The card does its own scrolling.
+            (m/Positioned.fill
+             .child
+             (m/Padding
+              .padding (m/EdgeInsets.all t/space-s)
+              .child (m/Center .child (render dialog))))]))))))

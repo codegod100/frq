@@ -102,12 +102,15 @@
      [:image {:src path :fit true :on-click #(reset! cells/lightbox nil)}]]))
 
 (defn- profile-dialog
-  "Who someone is, as libcosmic's own dialog: centred over the window, with
-  what you were reading dimmed behind it rather than replaced.
+  "Who someone is, as a dialog: centred over the window, with what you were
+  reading dimmed behind it rather than replaced.
 
-  The window can do this and the terminal cannot, which is the whole reason
-  there are two of these. `profile-screen` below is the terminal's, and says
-  why it is a screen.
+  A window can do this and the terminal cannot, which is the whole reason there
+  are two of these. `profile-screen` below is the terminal's, and says why it is
+  a screen. Both windows draw this one — libcosmic is handed the `:dialog` node
+  and floats it itself, and `frq.hiccup/render-root` lifts it out of the tree
+  and stacks it — and on a phone the same node is a sheet where it stands,
+  which is what a screen the width of a dialog wants.
 
   Both buttons are always here, the Bluesky one insensitive until there is a
   profile to open: a dialog whose second button appears a moment after it
@@ -123,11 +126,12 @@
 
   And a dialog the pointer is holding open is not modal. A modal one makes
   the window underneath it deaf — libcosmic wraps the app in a popover that
-  hands its content an `Unavailable` cursor while a popup is up — so the face
-  that opened it never hears the pointer leave, and what a hover opened could
-  never close itself. Non-modal, the face keeps hearing, and moving away shuts
-  it. A pinned one is modal, which is what being pinned means: it is the thing
-  on the screen until it is dismissed."
+  hands its content an `Unavailable` cursor while a popup is up, and Flutter's
+  side of this puts a scrim over the screens that absorbs what lands on it — so
+  the face that opened it never hears the pointer leave, and what a hover opened
+  could never close itself. Non-modal, the face keeps hearing, and moving away
+  shuts it. A pinned one is modal, which is what being pinned means: it is the
+  thing on the screen until it is dismissed."
   []
   (let [pinned? (some? (actions/viewing))
         {:keys [nick actor]} (or (actions/viewing) (actions/hovering))
@@ -339,13 +343,14 @@
   ;; from the conversation you were in a moment ago. A key that changes with
   ;; the screen makes the swap a swap: the old tree comes out whole and the new
   ;; one goes in whole.
-  ;; And the dialog beside them all rather than instead of one of them. A
-  ;; `dialog` node is not painted where it stands — the window backend hands
-  ;; it to libcosmic, which puts it over the middle of the window with what is
-  ;; behind it dimmed — so the screen under it keeps its place in the tree,
-  ;; and its scroll position with it. The wrapper is always here and only its
-  ;; child comes and goes, for the reason every other wrapper in this file
-  ;; gives: a child that appeared and vanished would renumber the root.
+  ;; And the dialog beside them all rather than instead of one of them. In a
+  ;; window a `dialog` node is not painted where it stands — it is put over the
+  ;; middle of the window with what is behind it dimmed, by libcosmic on one
+  ;; side and by `frq.hiccup/render-root` on the other — so the screen under it
+  ;; keeps its place in the tree, and its scroll position with it. The wrapper
+  ;; is always here and only its child comes and goes, for the reason every
+  ;; other wrapper in this file gives: a child that appeared and vanished would
+  ;; renumber the root.
   ;;
   ;; The terminal has no such thing, and a `dialog` tag it has not grown would
   ;; paint its contents inline at the bottom of the screen. So there it stays

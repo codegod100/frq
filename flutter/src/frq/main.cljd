@@ -1102,10 +1102,15 @@
                               (when-let [m (message-by-id channel id)]
                                 (toggle-reaction! channel m emoji))
                               (close-picker!)))
-      ;; Hover is a pointer idea. A finger is either on a pill or not on it,
-      ;; so there is nothing here to raise a card about.
-      :hover-reaction! (fn [_ _] nil)
-      :unhover-reaction! (fn [_ _] nil)
+      ;; Which pill the pointer is resting on, which `reactor-dialog` at the
+      ;; root of the tree turns into a card saying who is on that reaction.
+      ;; Guarded by which pill is being left, so crossing straight from one to
+      ;; the next — both edges in a frame — cannot take down the card that has
+      ;; just been raised.
+      :hover-reaction! (fn [id emoji] (reset! cells/reaction-hover {:id id :emoji emoji}))
+      :unhover-reaction! (fn [id emoji]
+                           (swap! cells/reaction-hover
+                                  #(when-not (= {:id id :emoji emoji} %) %)))
 
       ;; Who someone is, behind the nick on a line. `frq.profile` holds the
       ;; cache and the fields; this is the tapping.
@@ -1116,21 +1121,28 @@
                        (avatars/fetch! actor bump!)
                        (profile/open! nick actor))
       :profile-close! profile/close!
-      :profile-dismiss! profile/close!
+      ;; `dismiss!` and not `close!`: the card is shown for `viewing` or for
+      ;; `hovering`, and a Close that cleared only the first leaves the one a
+      ;; pointer opened on screen with its own button doing nothing.
+      :profile-dismiss! profile/dismiss!
       :profile-entry profile/entry
       :profile-tick (fn [] @profile/tick)
       :profile-stats-line profile/stats-line
       :profile-truncate profile/truncate
       :profile-web-url profile/web-url
       :viewing (fn [] @profile/viewing)
-      ;; The pointer half of a profile, which a phone does not have: there is
-      ;; no hovering a face, no crossing from the face to the card, and so no
-      ;; card to hold open while it happens.
-      :hovering (fn [] nil)
-      :profile-hover! (fn [_ _] nil)
-      :profile-unhover! (fn [_] nil)
-      :profile-enter-dialog! (fn [] nil)
-      :profile-leave-dialog! (fn [] nil)
+      ;; The pointer half of a profile. These were no-ops while this file was
+      ;; only ever an APK — a finger is either on a face or not on it — and
+      ;; `just flutter-desktop` has a mouse, so the machine under them is the
+      ;; shared one now. Nothing reaches them on the phone anyway: the screens
+      ;; ask `desktop?` before they hang a hover on a face at all.
+      :hovering (fn [] @profile/hovering)
+      :profile-hover! (fn [nick actor]
+                        (avatars/fetch! actor bump!)
+                        (profile/hover! nick actor))
+      :profile-unhover! profile/unhover!
+      :profile-enter-dialog! profile/enter-dialog!
+      :profile-leave-dialog! profile/leave-dialog!
       ;; Their profile on the web, handed to the browser the same way the
       ;; sign-in link is.
       :open-url! (fn [url] (fio/open-url! url))
@@ -1146,7 +1158,10 @@
       ;; put a link to.
       :image-path (fn [url] (media/path-when-ready url))
       :wide? (fn [] false)
-      :desktop? (fn [] false)
+      ;; True where there is a pointer to hover with. Both Flutter targets
+      ;; compile this file, so it is asked rather than assumed: a window on the
+      ;; desktop has a mouse, Android has a finger.
+      :desktop? (fn [] (not (.-isAndroid dio/Platform)))
       :mine? (fn [m] (rooms/mine? m (str @cells/form-nick)))
 
       ;; Rewriting. The old text is the starting point rather than an empty
@@ -1198,7 +1213,10 @@
                 nil)
       :toggle-chat-list! (fn [] (swap! cells/hide-chat-list? not))
       :toggle-hide-join-part! (fn [] (swap! cells/hide-join-part? not))
-      :quit! (fn [] nil)
+      ;; Closing the app is a window's idea, and the Quit button it is behind
+      ;; is only drawn where `desktop?` is true — Android has its own way of
+      ;; leaving one.
+      :quit! (fn [] (dio/exit 0))
       :forget-session! (fn []
                          (reset! cells/broker-token nil)
                          (reset! cells/session nil))
@@ -1229,4 +1247,7 @@
        (let [_ (note-window-size! (.-size (m/MediaQuery.of ctx)))]
          ;; `frq.screens.app` decides which screen shows, the same way it does
          ;; on the desktop. The phone was switching by hand until this moved.
-         (h/render [screens/app]))))))
+         ;; `render-root` and not `render`: the dialog `frq.screens.app` puts
+         ;; beside the screens is floated over them where there is a pointer,
+         ;; and drawn where it stands where there is not.
+         (h/render-root [screens/app]))))))

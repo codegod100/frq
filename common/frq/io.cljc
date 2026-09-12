@@ -124,3 +124,15 @@
   backlog read in November carries messages from August."
   [epoch-secs]
   (call :local-offset-seconds [epoch-secs]))
+
+(defn after!
+  "Run `f` in about `ms` milliseconds, wherever this host runs UI work.
+
+  Named for when rather than for how, like the rest of this seam. The window
+  lends the toolkit's own timer — a callback off the UI thread repaints from
+  the wrong one — and the phone has an event loop already and needs no
+  lending. What hangs on it is the grace period for crossing from a face to
+  the card it raised: see `frq.profile/unhover!`."
+  [ms f]
+  (call :after! [ms f])
+  nil)

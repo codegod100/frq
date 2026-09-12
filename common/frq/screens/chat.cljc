@@ -1350,7 +1350,12 @@
       ;; which is the tree under `just run` and `just cosmic` and the store
       ;; copy under the flake's launcher. A terminal has no pixels to put
       ;; it in, and an APK carries no src/ to read it from — both keep the glyph.
-      (if (and (actions/desktop?) (not @terminal?))
+      ;; `:jolt` and not `desktop?`: the tile is a file read out of the working
+      ;; directory, which is the source tree jolt runs from. Flutter's desktop
+      ;; target is a window with a pointer like libcosmic's — `desktop?` is
+      ;; true there now — but it is launched from `flutter/` and bundles no
+      ;; src/, so it keeps the glyph the APK keeps.
+      (if #?(:jolt (and (actions/desktop?) (not @terminal?)) :cljd false)
         [:image {:src "src/frq/icons/insert-image.png"
                  :size [36 36]
                  ;; On the middle of the field rather than the top of it: the
