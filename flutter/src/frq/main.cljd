@@ -157,15 +157,6 @@
 ;; And whether this session is the adopting one, decided at 001.
 (defonce ^:private adopting-rooms? (atom false))
 
-;; What the record on disk says that this client has no cell for: the read
-;; markers, mostly. Flutter has no unread machinery yet, so writing only the
-;; fields it knows would quietly drop the marker a desktop run had put there
-;; and hand the reader their whole history as new. Read once, merged back
-;; under whatever we do know.
-(defonce ^:private room-extras (atom {}))
-
-(defonce ^:private rooms-saved-at (atom 0))
-
 (defn- save-prefs!
   "Keep the one flag that has to outlive the run: whether this client has
   taken the room list over from the server. Merged into whatever else
@@ -180,68 +171,17 @@
   (reset! room-list-owned? (boolean (:room-list-owned? (store/load-prefs))))
   nil)
 
-(defn- room-records
-  "The rooms as they go on disk: most recently used first, each carrying
-  whatever the file already said about it that this client does not hold."
-  []
-  (->> (vals @cells/channels)
-       (sort-by #(- (:accessed % 0)))
-       (mapv (fn [b]
-               (let [name (:name b)]
-                 (merge (get @room-extras name)
-                        {:name name
-                         :kind (or (:kind b)
-                                   (if (rooms/dm? name) :dm :channel))}))))))
+(def ^:private remember-rooms!
+  "Write the room list out, most recently used first. `frq.rooms` — the same
+  records the desktop writes, throttled the same way, so a marker one half
+  moved is one the other reads back."
+  rooms/remember-rooms!)
 
-(defn- remember-rooms!
-  "Write the room list out. Throttled, because a room's `:accessed` moves
-  every time one is opened and the write is synchronous here — `force?` is for
-  the moments worth paying for, which is the list itself changing.
-
-  A late write costs at most the rooms touched since the last one, which come
-  back in a slightly stale order. Losing one entirely is the thing to avoid,
-  which is what `force?` is for."
-  ([] (remember-rooms! false))
-  ([force?]
-   (let [now (clock/now-ms)]
-     (when (or force? (> (- now @rooms-saved-at) 5000))
-       (reset! rooms-saved-at now)
-       (store/save-rooms! (room-records)))
-     nil)))
-
-(defn- restore-rooms!
-  "Bring back the rooms of earlier runs, in the order they were last used.
-
-  Empty buffers, not memberships: opening one is what joins it, and the list
-  is the part worth keeping — the messages in them come from the server, which
-  replays them on the CHATHISTORY this client asks for at 366.
-
-  `:accessed` is an ascending count over the file read backwards, so the saved
-  order survives and a room opened *this* run — stamped with the wall clock —
-  still sorts above every one of them."
-  []
-  (when-let [saved (seq (store/load-rooms))]
-    (reset! room-extras
-            (into {} (map (fn [r] [(:name r) (dissoc r :name :kind)]) saved)))
-    (swap! cells/channels
-           (fn [m]
-             (reduce (fn [acc [i room]]
-                       (let [name (:name room)]
-                         (if (contains? acc name)
-                           acc
-                           (assoc acc name
-                                  {:name name
-                                   :messages []
-                                   :unread 0
-                                   :joined? false
-                                   :users {}
-                                   :kind (or (:kind room)
-                                             (if (rooms/dm? name) :dm :channel))
-                                   :accessed (inc i)}))))
-                     m
-                     ;; Oldest first, so the count ascends with the order.
-                     (map-indexed vector (reverse saved)))))
-    (count saved)))
+(def ^:private restore-rooms!
+  "Bring back the rooms of earlier runs, in the order they were last used,
+  each with the marker saying how much of it had been read. `frq.rooms` again:
+  the buffers this makes are the ones `recount` counts against."
+  rooms/restore-channels!)
 
 (defn- ask-to-join!
   "Send the JOIN, once. `:joining?` as well as `:joined?`, because the echo
@@ -274,13 +214,14 @@
   (when (and @cells/editing (not= name (:channel @cells/editing)))
     (reset! cells/editing nil)
     (reset! cells/draft ""))
-  (swap! cells/channels update name
-         #(merge {:name name :messages [] :unread 0
-                  :kind (if (rooms/dm? name) :dm :channel)}
-                 %))
-  ;; The wall clock, so a room opened this run sorts above every one
-  ;; `restore-rooms!` counted in.
-  (swap! cells/channels assoc-in [name :accessed] (clock/now-ms))
+  ;; Opening a room is reading it: the marker goes to the newest line this
+  ;; buffer holds, which is what stops the backlog that follows from arriving
+  ;; unread all over again. The tick is `frq.rooms`', so a room opened this
+  ;; run sorts above every one `restore-rooms!` counted in.
+  (swap! cells/channels
+         #(-> (rooms/ensure-channel % name)
+              (update name rooms/mark-read)
+              (assoc-in [name :accessed] (swap! rooms/access-tick inc))))
   (reset! cells/screen :chat)
   ;; Worth a write of its own: the order the list is read in is the order
   ;; rooms were last opened, and this is the moment it changes.
@@ -338,7 +279,10 @@
         params (vec (:params m))
         who (irc/nick-of (:prefix m))
         me? (= who (str @cells/form-nick))
-        ensure (fn [m name] (update m name #(merge {:name name :messages [] :unread 0} %)))]
+        ;; The shared one, so a buffer born here carries the same read marker
+        ;; the desktop's does — `frq.rooms/recount` has nothing to count
+        ;; against without it.
+        ensure rooms/ensure-channel]
     (cond
       (= "JOIN" cmd)
       (let [name (first params)]
@@ -417,7 +361,20 @@
             text (last params)
             name (if (rooms/dm? target) who target)
             edit-of (or (irc/tag-value tags "+draft/edit")
-                        (irc/tag-value tags "+edit"))]
+                        (irc/tag-value tags "+edit"))
+            ;; When the server says the line was written, or now when it says
+            ;; nothing. The marker is a time as well as an id — a replayed
+            ;; backlog is older than what has been read and has to be able to
+            ;; say so — and the day separators in `frq.screens.chat` have been
+            ;; waiting on this too.
+            at (or (clock/parse-time-tag tags) (clock/now-ms))
+            ;; Reading a room is marking it read: a line arriving in the room
+            ;; on screen moves the marker past itself, and one arriving
+            ;; anywhere else is counted against the marker there.
+            viewing? (and (= :chat @cells/screen) (= name @cells/current))
+            settle (fn [m] (update m name (if viewing?
+                                            rooms/mark-read
+                                            rooms/recount)))]
         ;; The face, asked for as the line arrives rather than when the row is
         ;; built: a row is built during a Flutter frame, and a fetch started
         ;; there would be state changed mid-build. `frq.avatars.dart` asks the
@@ -430,49 +387,55 @@
           ;; nothing else refers to. One older than the backlog we hold has
           ;; nothing here to replace, and is shown as itself rather than lost.
           (when (= :absent (edit-message! name edit-of who text))
-            (swap! cells/channels update name
-                   #(-> (merge {:name name :messages [] :unread 0} %)
-                        (update :messages conj {:from who
-                                                :text text
-                                                :images (images-in text)
-                                                :did (:account m)
-                                                :id edit-of
-                                                :edited? true}))))
-          (swap! cells/channels update name
-               #(-> (merge {:name name :messages [] :unread 0} %)
-                    (update :messages conj
-                            ;; The msgid is what everything after a message
-                            ;; names it by — a reply points at one, a reaction
-                            ;; lands on one. Without it a line is on screen and
-                            ;; nothing can be said about it.
-                            {:from who
-                             :text text
-                             ;; Any .png link on the line, and the fetch that
-                             ;; makes one a picture rather than a link.
-                             :images (images-in text)
-                             :did (:account m)
-                             ;; Who to look a profile up by: the DID the
-                             ;; server put on the line, or the nick when that
-                             ;; is handle-shaped. A guest has neither and gets
-                             ;; no lookup, which is the honest answer.
-                             :actor (profile/actor (:account m) who)
-                             :id (irc/tag-value tags "msgid")
-                             ;; The server canonicalises +draft/reply to
-                             ;; +reply; a client that sent the draft name may
-                             ;; still reach us before it does.
-                             :reply-to (or (irc/tag-value tags "+reply")
-                                           (irc/tag-value tags "+draft/reply"))
-                             ;; What is already on it, so a reconnect does not
-                             ;; start every message empty.
-                             ;; What the server says about a line it has
-                             ;; already collapsed: replay sends the current
-                             ;; text and no `+draft/edit` to hint that it is
-                             ;; not the original. This tag is the only trace.
-                             :edited? (= "1" (irc/tag-value tags
-                                                            "+freeq.at/edited"))
-                             :reactions (reactions/parse-tally
-                                         (irc/tag-value tags
-                                                        "+freeq.at/reactions"))})))))
+            (swap! cells/channels
+                   #(-> (rooms/ensure-channel % name)
+                          (update-in [name :messages] conj
+                                     {:from who
+                                      :text text
+                                      :images (images-in text)
+                                      :did (:account m)
+                                      :id edit-of
+                                      :at at
+                                      :edited? true})
+                          settle))))
+          (swap! cells/channels
+               #(-> (rooms/ensure-channel % name)
+                    (update-in [name :messages] conj
+                               ;; The msgid is what everything after a message
+                               ;; names it by — a reply points at one, a reaction
+                               ;; lands on one. Without it a line is on screen and
+                               ;; nothing can be said about it.
+                               {:from who
+                                :text text
+                                ;; Any .png link on the line, and the fetch that
+                                ;; makes one a picture rather than a link.
+                                :images (images-in text)
+                                :did (:account m)
+                                :at at
+                                ;; Who to look a profile up by: the DID the
+                                ;; server put on the line, or the nick when that
+                                ;; is handle-shaped. A guest has neither and gets
+                                ;; no lookup, which is the honest answer.
+                                :actor (profile/actor (:account m) who)
+                                :id (irc/tag-value tags "msgid")
+                                ;; The server canonicalises +draft/reply to
+                                ;; +reply; a client that sent the draft name may
+                                ;; still reach us before it does.
+                                :reply-to (or (irc/tag-value tags "+reply")
+                                              (irc/tag-value tags "+draft/reply"))
+                                ;; What is already on it, so a reconnect does not
+                                ;; start every message empty.
+                                ;; What the server says about a line it has
+                                ;; already collapsed: replay sends the current
+                                ;; text and no `+draft/edit` to hint that it is
+                                ;; not the original. This tag is the only trace.
+                                :edited? (= "1" (irc/tag-value tags
+                                                               "+freeq.at/edited"))
+                                :reactions (reactions/parse-tally
+                                            (irc/tag-value tags
+                                                           "+freeq.at/reactions"))})
+                    (assoc-in [name :last-activity] at)
+                    settle)))
 
       ;; A message that is only tags. A reaction is the one this reads:
       ;; `+react` puts an emoji on the message `+reply` names, and the
@@ -494,7 +457,9 @@
     ;; Whatever that message did to the list, write it down. Throttled, so a
     ;; busy channel does not cost a file write per line — but a DM arriving
     ;; from someone new is a room that exists only here until this runs, and
-    ;; the old client lost exactly those between runs.
+    ;; the old client lost exactly those between runs. The read marker moves
+    ;; on the same path, for the same reason: a line arriving in the room on
+    ;; screen is a line read.
     (remember-rooms!)))
 
 (defn- note! [m]
