@@ -464,6 +464,297 @@
           # nixGL needs a store Mesa to put the host's driver in front of.
           appimage =
             nix-appimage.bundlers.${pkgs.stdenv.hostPlatform.system}.default frq;
+
+          # Everything `clojure -M:cljd compile` would otherwise reach the
+          # network for, fetched once and hashed.
+          #
+          # The compile needs three caches, and the reason this is one
+          # derivation rather than three is that only one of them is obvious.
+          # Maven and gitlibs are the ordinary tools.deps pair. The third is
+          # ClojureDart's own: `ensure-cljd-analyzer!` writes a *second*, whole
+          # pub project to `.clojuredart/cache/<cljd sha>/cljd_helper`, runs
+          # `pub add analyzer` in it, and then runs `bin/analyzer.dart` out of
+          # it for the duration of the compile — so a sandbox needs that
+          # project already resolved, not just the app's dependencies.
+          #
+          # Fixed-output, so it is allowed the network the rest of the build is
+          # not. What that costs is a hash to maintain, and the thing worth
+          # being exact about is *when*: this derivation never sees frq's
+          # source. It compiles a three-line throwaway project against the same
+          # `flutter/deps.edn` and the same `flutter/pubspec.yaml`, so the hash
+          # moves when a dependency moves and not when a screen changes. A
+          # stub, rather than `-P` and a hand-built analyzer dir, because
+          # running the real compiler once is the only way to be sure the
+          # caches are the ones it actually wants.
+          #
+          # PUB_CACHE lands in $out on purpose. The package_config.json inside
+          # cljd_helper carries absolute paths to whatever resolved it, so
+          # resolving into a build directory would bake in paths that stop
+          # existing the moment this derivation finishes. Pointed at $out they
+          # are store paths, and still true.
+          cljd-deps =
+            let
+              flutterPkg = pkgs.flutter;
+            in
+            pkgs.stdenvNoCC.mkDerivation {
+              name = "frq-cljd-deps";
+              dontUnpack = true;
+
+              nativeBuildInputs = [
+                pkgs.clojure
+                pkgs.jdk17
+                flutterPkg
+                pkgs.git
+                pkgs.cacert
+              ];
+
+              buildCommand = ''
+                export HOME="$NIX_BUILD_TOP/home"
+                # Resolved in the build directory and copied to $out at the
+                # end, never written there directly. A fixed-output derivation
+                # may not reference a store path and its own output is a store
+                # path, so pub writing its cache's absolute location into its
+                # own metadata is enough to fail the check.
+                cache="$NIX_BUILD_TOP/cache"
+                export PUB_CACHE="$cache/pub-cache"
+                export GITLIBS="$cache/gitlibs"
+                export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                mkdir -p "$HOME" "$PUB_CACHE" "$GITLIBS" "$cache/m2"
+
+                # The stub: our dependency files, nothing of our source. `:paths`
+                # still names ../common, so that has to exist for tools.deps to
+                # build a classpath — empty is enough.
+                proj="$NIX_BUILD_TOP/stub"
+                mkdir -p "$proj/src/stub" "$NIX_BUILD_TOP/common"
+                cp ${./flutter/deps.edn} "$proj/deps.edn"
+                cp ${./flutter/pubspec.yaml} "$proj/pubspec.yaml"
+                chmod u+w "$proj/deps.edn" "$proj/pubspec.yaml"
+                cat > "$proj/src/stub/main.cljd" <<'EOF'
+                (ns stub.main)
+                (defn main [] nil)
+                EOF
+
+                cd "$proj"
+                # `:main` has to name the stub, or the compiler goes looking for
+                # frq.main in a tree that is not here.
+                sed -i 's/:main frq\.main/:main stub.main/' deps.edn
+
+                flutter config --no-analytics &>/dev/null || true
+                flutter config --enable-linux-desktop >/dev/null || true
+
+                clojure -Sdeps '{:mvn/local-repo "'"$cache"'/m2"}' -M:cljd compile
+
+                # What the compile left behind, and only that. The analyzer
+                # project is keyed by the ClojureDart sha, so the directory
+                # under cache/ is copied wholesale rather than named here.
+                mkdir -p "$out/clojuredart"
+                cp -r .clojuredart/cache "$out/clojuredart/cache"
+                cp -r "$cache/m2" "$out/m2"
+                cp -r "$cache/gitlibs" "$out/gitlibs"
+                cp -r "$PUB_CACHE" "$out/pub-cache"
+
+                # A fixed-output derivation may not reference a store path, and
+                # a resolved pub project is nothing but store paths:
+                # package_config.json names the Flutter SDK and every package
+                # in the cache by absolute path. So the analyzer project ships
+                # *unresolved* — its pubspec and its analyzer.dart and nothing
+                # else — and `flutter pub get --offline` re-resolves it against
+                # this cache at build time, where naming the store is allowed.
+                find "$out" \( -name '.dart_tool' -o -name '.flutter-plugins' \
+                    -o -name '.flutter-plugins-dependencies' \) -prune -exec rm -rf {} +
+                find "$out" -name '.packages' -delete
+
+
+                # A fixed-output hash is a promise that two runs agree, so
+                # everything a tool writes *about* a run rather than about a
+                # dependency has to go: pub's log carries timestamps, Maven
+                # rewrites its resolution metadata on every resolve, and
+                # tools.gitlibs keeps bare clones it only needs in order to
+                # make a checkout. None of it is read offline.
+                rm -rf "$out/pub-cache/log" "$out/pub-cache/_temp" \
+                       "$out/pub-cache/git" "$out/pub-cache/global_packages" \
+                       "$out/pub-cache/bin"
+
+                # tools.gitlibs keeps a bare clone per URL under _repos/, and a
+                # bare clone is packfiles — which two runs of the same fetch do
+                # not have to produce byte for byte. It cannot simply be
+                # deleted, because `procure` calls `ensure-git-dir` before it
+                # looks at anything else and would clone it again, over a
+                # network this has and the build that uses it does not.
+                #
+                # It does not need the objects, though. `procure` finds the sha
+                # with `match-exact` against the checkout already in libs/, so
+                # the bare repo only has to exist. Emptied and re-initialised,
+                # it is a fixed handful of files from the pinned git and the
+                # same on every run.
+                find "$out/gitlibs/_repos" -name HEAD | while read -r head; do
+                  repo="$(dirname "$head")"
+                  rm -rf "$repo"
+                  git init --bare -q "$repo"
+                  # The sample hooks are shell scripts, so they carry a
+                  # `#!/nix/store/.../bash` line — which is exactly the kind of
+                  # store reference a fixed-output derivation may not hold. An
+                  # empty bare repo nothing ever runs has no use for them.
+                  rm -rf "$repo/hooks"
+                done
+                # pub's version listings, which record when they were fetched.
+                # This is the one that actually moved between two runs of this
+                # derivation: the package sources under hosted/ were identical
+                # and the listings beside them were not. Nothing offline reads
+                # them — a resolution that already has every package on disk
+                # never asks pub.dev what versions exist.
+                find "$out/pub-cache" -name '.cache' -type d -prune -exec rm -rf {} +
+                find "$out/m2" \( -name '*.lastUpdated' -o -name '_remote.repositories' \
+                    -o -name 'resolver-status.properties' -o -name '*.part' \
+                    -o -name 'maven-metadata-*.xml*' \) -delete
+                find "$out" \( -name '.DS_Store' -o -name '*.log' -o -name '.git' \) \
+                    -prune -exec rm -rf {} +
+                find "$out" -type d -empty -delete
+                chmod -R u+w "$out"
+
+                # Last, after every cleanup above: anything still naming the
+                # store fails the fixed-output check, and the error names one
+                # path out of thousands of files. This names the files.
+                if refs="$(grep -rlI /nix/store "$out" 2>/dev/null)" && [ -n "$refs" ]; then
+                  echo "cljd-deps: these still reference the store:" >&2
+                  echo "$refs" | head -20 >&2
+                fi
+
+                # If two runs disagree, this says which half to look in. Cheap,
+                # and the alternative is a hash mismatch with nothing attached.
+                for d in "$out"/*; do
+                  echo "cljd-deps subtree $(basename "$d") $( (cd "$d" && find . -type f \
+                      -exec sha256sum {} + | sort -k2 | sha256sum) )" >&2
+                done
+                for d in "$out"/pub-cache/*/*; do
+                  [ -d "$d" ] || continue
+                  echo "cljd-deps pub $(basename "$d") $( (cd "$d" && find . -type f \
+                      -exec sha256sum {} + | sort -k2 | sha256sum) )" >&2
+                done
+              '';
+
+              outputHashMode = "recursive";
+              outputHashAlgo = "sha256";
+              # Moves when flutter/deps.edn or flutter/pubspec.yaml move, and
+              # not when frq's own source does — see the stub above.
+              outputHash = "sha256-gfJGlKCPaJsKcXfCWOJY1089XEfzTndEx0LVf3JOXfs=";
+            };
+
+          # The Flutter desktop GUI, built rather than run out of the tree.
+          #
+          # `just flutter-desktop` is the working-tree loop and this is its
+          # opposite number, the same way `nix build .#frq` is `just run`'s: the
+          # source is the flake's, the output is a store path, and the build is
+          # a sandbox with no network. It is the first thing here that builds
+          # purely — the APK cannot, because Gradle fetches as it goes.
+          #
+          # Two stages, because the Dart does not exist until ClojureDart writes
+          # it. `preBuild` runs the compiler over `flutter/src` and `common/`
+          # with `--offline`, out of the caches `cljd-deps` fetched; everything
+          # after that is an ordinary Flutter application as far as nixpkgs is
+          # concerned.
+          #
+          # The caches are copied in rather than used where they lie. Maven,
+          # tools.gitlibs and pub all expect to be able to write to their own
+          # cache — a lock file, a resolved marker — and the store is read-only,
+          # so pointing them at $out of a fixed-output derivation fails in three
+          # different ways at three different depths.
+          #
+          # `src` is the whole tree and not `flutter/`: `flutter/deps.edn` puts
+          # `../common` on the classpath, which is the entire point of that
+          # directory, and a source root of `flutter/` would leave the screens
+          # outside it.
+          flutter-desktop-unwrapped = pkgs.flutter.buildFlutterApplication rec {
+            pname = "frq-flutter";
+            version = "0.1.0";
+
+            src = lib.cleanSourceWith {
+              src = ./.;
+              # Build trees and caches, which are large, machine-specific and
+              # would make every one of them a new store path.
+              filter = path: type:
+                let base = baseNameOf path; in
+                !(builtins.elem base [
+                  "build" ".home" ".clojuredart" ".cpcache" "cljd-out"
+                  ".dart_tool" "result" ".git" ".jolt" "buck-out"
+                ]);
+            };
+            sourceRoot = "source/flutter";
+
+            # Read at eval time, so the lock in git is the lock that is built.
+            autoPubspecLock = ./flutter/pubspec.lock;
+
+            # git, because tools.deps resolves the ClojureDart dependency through
+            # tools.gitlibs even when every byte of it is already on disk — see
+            # the _repos note in cljd-deps.
+            nativeBuildInputs = [ pkgs.clojure pkgs.jdk17 pkgs.git ];
+
+            preBuild = ''
+              export PUB_CACHE="$NIX_BUILD_TOP/pub-cache"
+              export GITLIBS="$NIX_BUILD_TOP/gitlibs"
+              cp -r ${self.packages.${pkgs.stdenv.hostPlatform.system}.cljd-deps}/pub-cache "$PUB_CACHE"
+              cp -r ${self.packages.${pkgs.stdenv.hostPlatform.system}.cljd-deps}/gitlibs "$GITLIBS"
+              cp -r ${self.packages.${pkgs.stdenv.hostPlatform.system}.cljd-deps}/m2 "$NIX_BUILD_TOP/m2"
+              mkdir -p .clojuredart
+              cp -r ${self.packages.${pkgs.stdenv.hostPlatform.system}.cljd-deps}/clojuredart/cache .clojuredart/cache
+              chmod -R u+w "$PUB_CACHE" "$GITLIBS" "$NIX_BUILD_TOP/m2" .clojuredart
+
+              # Resolve the analyzer project here rather than in cljd-deps,
+              # which was not allowed to name the store. Offline, out of the
+              # cache that derivation did fetch. ClojureDart only reaches for
+              # the network when `bin/analyzer.dart` is missing, and it is not.
+              for helper in .clojuredart/cache/*/cljd_helper; do
+                ( cd "$helper" && flutter pub get --offline )
+              done
+
+              # --offline is what keeps `pub get` out of a sandbox that has no
+              # network; the analyzer project it would otherwise resolve is
+              # already in .clojuredart, put there by cljd-deps.
+              clojure -Sdeps "{:mvn/local-repo \"$NIX_BUILD_TOP/m2\"}" \
+                  -M:cljd compile --offline
+            '';
+
+            meta = {
+              description = "frq's screens on Flutter's Linux target (no GL launcher)";
+              mainProgram = "frq";
+              platforms = systems;
+            };
+          };
+
+          # The same shape as `frq` above: a launcher, and a package that is a
+          # symlink to it. The reason is the same one `frqScript` gives — on
+          # NixOS the store's Mesa is the system's and the window opens, and
+          # anywhere else the real driver is the host's, so the process is
+          # handed to nixGL. Without it the store build dies on a distrobox
+          # Arch with "No provider of eglGetPlatformDisplayEXT found", which is
+          # that failure wearing an EGL hat.
+          #
+          # A wrapper *around* the built application rather than a `postFixup`
+          # inside it, because buildFlutterApplication's own dartFixupHook runs
+          # after postFixup and rewrites `bin/frq` — so anything done to that
+          # path from inside is undone on the way out.
+          flutter-desktop =
+            let
+              unwrapped =
+                self.packages.${pkgs.stdenv.hostPlatform.system}.flutter-desktop-unwrapped;
+              script = pkgs.writeShellScript "frq" ''
+                runner=""
+                [ -e /run/current-system ] || runner="${nixGLFor pkgs}/bin/nixGLIntel"
+                exec ''${runner} ${unwrapped}/bin/frq "$@"
+              '';
+            in
+            pkgs.runCommand "frq-flutter-0.1.0"
+              {
+                meta = {
+                  description = "frq's screens on Flutter's Linux target";
+                  mainProgram = "frq";
+                  platforms = systems;
+                };
+              }
+              ''
+                mkdir -p "$out/bin"
+                ln -s ${script} "$out/bin/frq"
+              '';
         });
 
       # Where `just run` runs, and — because entering it realises what it
