@@ -40,6 +40,35 @@
 
 (defonce ^:private draft-rows (atom 1))
 
+;; How tall the compose field is allowed to grow. The same ceiling in both
+;; backends, for different reasons: a window past it scrolls with the caret in
+;; view, and a terminal past it would be spending a quarter of the screen on
+;; a message that has not been sent yet.
+(def ^:private draft-max-rows 5)
+
+(defn- terminal-draft-rows
+  "How many rows the terminal's compose field wants for what is in it.
+
+  The library sizes an entry by the `:rows` it was given and reports nothing
+  back — there is no `:on-rows` to grow on, the way a window grows — so the
+  wrapping is counted here instead, and the answer is both what the field is
+  given and what `below-messages` keeps for it.
+
+  An empty field is one row, so the bar starts as a line rather than as a
+  block of ruled nothing, and the text begins at the top of the rect and grows
+  downwards from there.
+
+  The width is the row less what is beside the field — the picture button, the
+  Send button, and the gaps around them, about twenty-two cells of eight points
+  each. An estimate, and the cheap way to be wrong: a row over-counted is a row
+  of conversation, where a row under-counted is a line of the draft with
+  nowhere to go."
+  []
+  (let [cols (max 20 (quot (- @cells/window-width (* 22 8)) 8))
+        wrapped (fn [line] (max 1 (long (Math/ceil (/ (count line) (double cols))))))]
+    (min draft-max-rows
+         (max 1 (reduce + (map wrapped (str/split-lines (or @cells/draft ""))))))))
+
 ;; What the rows under the conversation need left to them: the jump button's
 ;; row, the separator, the compose bar and the air around it. The columns of
 ;; the row reserve it, and so nothing inside them has to — a `:scroll` that
@@ -75,9 +104,29 @@
   108)
 (def overview-lines 8)
 
+(defn- overview-list-height
+  "How tall the strip's list of lines is, in points.
+
+  The number is both the reserve the backlog is laid out against and the
+  height the terminal's scroll is given, and it has to be one number: a pane
+  an inch taller than what was kept for it is a compose bar an inch off the
+  bottom of the screen.
+
+  Counted from the lines there are, up to the ceiling — a room with two lines
+  in it should not have a screenful reserved against it — and from the ceiling
+  once there are more, which is the point at which the pane starts scrolling
+  instead of growing.
+
+  A row of chrome a line, not the twenty points a window's line box is: a line
+  here is one row of the terminal, and twenty points of a window's scale comes
+  out as a little over half of one. Eight lines then asked for five rows, got
+  five, and cut three lines off a strip that had just been given a scroll to
+  show them in."
+  []
+  (* @chrome-row (min overview-lines (count (actions/recent-everywhere)))))
+
 (defn- overview-height []
-  (* (chrome-scale)
-     (+ 24 (* 20 (min overview-lines (count (actions/recent-everywhere)))) 16)))
+  (+ (overview-list-height) (* (chrome-scale) (+ 24 16))))
 
 (defn- below-messages []
   ;; 115 is that, counted: the gap under the row of columns, the jump button's
@@ -94,18 +143,20 @@
         (+ 115
            (if @cells/replying-to 34 0)
            (if @cells/attachment 76 0)))
-     ;; The two extra rows the terminal's compose field wraps into, in points:
-     ;; a row down the page is two cells' worth of the scale.
-     (if @terminal? (* 4 (chrome-scale)) 0)
-     ;; And the lines a window's compose field has GROWN by. Unscaled and
-     ;; outside the terminal's arm on purpose: the field only reports its
-     ;; height where it can change — the terminal's is the fixed block of
-     ;; three rows reserved just above — so `draft-rows` is one there and
-     ;; this term is zero. Twenty points a line is a 16-point face's line
-     ;; box rounded up: the reserve has to be at least what the field took,
-     ;; because a point too few does not crop the list, it slides the
-     ;; compose bar off the bottom of the window.
-     (* 20 (dec @draft-rows))
+     ;; The rows the compose field has GROWN by, and the row of air above it.
+     ;;
+     ;; Twenty points a line in a window: a 16-point face's line box rounded
+     ;; up, and the reserve has to be at least what the field took, because a
+     ;; point too few does not crop the list — it slides the compose bar off
+     ;; the bottom of the window. `draft-rows` is what the field reported.
+     ;;
+     ;; A row of chrome a line in a terminal, counted here rather than
+     ;; reported: nothing there fires `:on-rows`, so `terminal-draft-rows` is
+     ;; asked the same question the field was given its height by. It used to
+     ;; be a fixed three rows whatever was in it, two of them blank.
+     (if @terminal?
+       (* @chrome-row (terminal-draft-rows))
+       (* 20 (dec @draft-rows)))
      ;; And the overview strip, when it is up. Reserved here rather than
      ;; anywhere else because this is the number the backlog is laid out
      ;; against: without it the strip is drawn past the bottom of the window
@@ -948,11 +999,12 @@
   horizontal split this is. The backlog above keeps its own scroll and its own
   place in it, so reading down here does not move the conversation.
 
-  A terminal gets a handful of lines and no scroll. Its rows are cells rather
-  than points, and a second scrolling pane in a screen that is already a
-  conversation, a compose bar and a tab bar leaves neither half enough rows to
-  be worth reading — so there it stays the strip it was, and `below-messages`
-  reserves it by the row."
+  A terminal scrolls it too, but inside a fixed block of rows rather than a
+  half of the column: the screen is already a conversation, a compose bar and
+  a tab bar, and a second half-height pane would leave neither half enough
+  rows to read. So the strip is as tall as `overview-lines`, `below-messages`
+  reserves exactly that, and the lines past the eighth are a wheel or a page
+  away instead of being cut off with nothing to say they were there."
   []
   (let [lines (actions/recent-everywhere)
         ;; The way back, and only while there is somewhere to go: the strip
@@ -998,10 +1050,23 @@
                   ms)
                  [[:dim-label {:label "Nothing has been said in any other room yet."}]]))]
     (if @terminal?
-      (into [:vbox {:key :overview :spacing 4 :margin-top 4}
-             [:separator {}]
-             [heading]]
-            (rows (take overview-lines lines)))
+      [:vbox {:key :overview :spacing 4 :margin-top 4}
+       [:separator {}]
+       [heading]
+       ;; The same name as the window's, and for the same reason: the strip
+       ;; comes and goes with a keypress, and a reader who had paged down it
+       ;; should not be put back at the top for having looked away.
+       (into [:scroll {:scroll-key "overview-list" :orientation :vertical
+                       :spacing 4
+                       ;; The reserve, exactly, and as a ceiling as well as a
+                       ;; floor — see `overview-list-height`. A height-request
+                       ;; on its own is a minimum: the pane took the height of
+                       ;; everything in it, drew every line, and paid for the
+                       ;; surplus out of the conversation above rather than
+                       ;; scrolling.
+                       :height-request (overview-list-height)
+                       :max-height (overview-list-height)}]
+             (rows lines))]
       [:vbox {:key :overview :spacing 4 :margin-top 4 :fill-height true}
        [:separator {}]
        [heading]
@@ -1243,6 +1308,12 @@
      ;; reply banner, the edit banner and the attachment share a wrapper now
      ;; and cost one between them whether or not they have anything in them.
      ;; This margin plus the window's own is what answers it underneath.
+     ;; Air above the bar as well as under it. A row rather than a margin
+     ;; because a terminal reads `:margin` and not `:margin-top`, and this is
+     ;; the backend that needs it: the banners above are usually empty and the
+     ;; strip or the last line of the conversation sat directly on the field,
+     ;; so a message being typed read as one more message in the room.
+     (when @terminal? [:spacer {:key :compose-gap :size @chrome-row}])
      [:hbox {:spacing 8 :align :center :margin-bottom 12}
       ;; narrow enough that Send keeps its place on a phone-width row
       ;; A picture is pasted where everything else is typed: Ctrl+V. The field
@@ -1262,14 +1333,24 @@
       (if (and (actions/desktop?) (not @terminal?))
         [:image {:src "src/frq/icons/insert-image.png"
                  :size [36 36]
+                 ;; On the middle of the field rather than the top of it: the
+                 ;; box grows downwards as a message is typed, and a button
+                 ;; pinned to its first row drifts away from the thing it acts
+                 ;; on. Read by the terminal, where the row can be several
+                 ;; cells tall; a window's backends ignore it.
+                 :valign :center
                  ;; for a backend that sizes a picture by its bounds instead
                  :max-width 36
                  :max-height 36
                  :on-click actions/open-image-picker!}]
-        [:button {:label "🖼" :on-click actions/open-image-picker!}])
-      ;; In a terminal the row is the width of the screen and a message is
-      ;; longer than 260 points of it: the field takes the surplus and wraps
-      ;; into three rows rather than scrolling one line sideways.
+        [:button {:label "🖼" :valign :center :on-click actions/open-image-picker!}])
+      ;; In a terminal the row is the width of the screen, so the field takes
+      ;; the surplus rather than scrolling one line sideways — and it is as
+      ;; tall as what has been typed into it. Three rows were kept for it
+      ;; always, empty almost always, drawn as two ruled boxes under the one
+      ;; being typed in: rows spent on a paragraph nobody had written, taken
+      ;; off the conversation above. Now the box is a line until there is a
+      ;; second line to put in it.
       [:entry {:text @cells/draft
                :width-request 260
                ;; Always, not only in a terminal. A window is the case that
@@ -1278,19 +1359,21 @@
                ;; of the bar with the rest of it empty. The number stays as
                ;; the minimum it always was.
                :hexpand true
-               :rows (if @terminal? 3 1)
-               ;; In a window the field starts as one line and takes another
-               ;; every time the message stops fitting, up to five — past
-               ;; which it scrolls, keeping the caret in view. A paragraph
-               ;; typed into a one-line box was readable a dozen characters
-               ;; at a time, which is not how anybody writes one.
-               :max-rows 5
+               :rows (if @terminal? (terminal-draft-rows) 1)
+               ;; The field starts as one line and takes another every time
+               ;; the message stops fitting, up to five — past which it
+               ;; scrolls, keeping the caret in view. A paragraph typed into a
+               ;; one-line box was readable a dozen characters at a time,
+               ;; which is not how anybody writes one.
+               ;;
+               ;; A window grows itself and says so through `:on-rows`; a
+               ;; terminal is given the height `terminal-draft-rows` counted,
+               ;; which is the same ceiling reached the other way round.
+               :max-rows draft-max-rows
                :on-rows #(reset! draft-rows %)
-               ;; The break is worth saying out loud where it is new: Enter
-               ;; sends, as it always has, and the box under it takes a
-               ;; paragraph now — which nobody would think to try unasked.
-               :placeholder (if @terminal? "Message — Shift+Enter for a new line" "Message")
+               :placeholder "Message"
                :on-change #(reset! cells/draft %)
                :on-paste-empty actions/paste-image!
                :on-activate actions/send-draft!}]
-      [:button {:label "Send" :kind :primary :on-click actions/send-draft!}]]]))
+      [:button {:label "Send" :kind :primary :valign :center
+                :on-click actions/send-draft!}]]]))
