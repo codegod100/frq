@@ -1237,7 +1237,14 @@
       :forget-session! (fn []
                          (reset! cells/broker-token nil)
                          (reset! cells/session nil))
-      :jump-to-present! (fn [] (reset! cells/at-present? true))
+      ;; Back to the newest line. Both halves, in the order `frq.state` gives
+      ;; them: the flag is what takes the button off the screen, and the tick
+      ;; is what `frq.hiccup`'s scroll reads as "someone asked to be taken to
+      ;; the end". Setting the flag alone hid the button and left the reader
+      ;; where they were — which is the one outcome worse than no button.
+      :jump-to-present! (fn []
+                          (reset! cells/at-present? true)
+                          (swap! cells/jump-tick inc))
       :open-channel! open-room!})
     (f/run
       (m/MaterialApp .title "frq" .theme (t/app-theme))

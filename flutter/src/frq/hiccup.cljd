@@ -224,6 +224,46 @@
          (when (.-hasClients ctrl)
            (.jumpTo ctrl (.-maxScrollExtent (.-position ctrl)))))))))
 
+(defonce ^:private scroll-watch
+  ;; Per `:scroll-key`: the controller currently being listened to, the
+  ;; `:on-change` the screen last handed us, and the last answer given.
+  ;;
+  ;; The listener is added once per controller and the callback is looked up
+  ;; through here when it fires, because the closure a build hands us is a new
+  ;; one every build — adding it each time would stack a listener per frame on
+  ;; a widget whose whole job is to fire often.
+  (atom {}))
+
+(defn- watch-end!
+  "Tell `on-change` whether `k` is showing the end, as the reader moves it.
+
+  \"end\" or \"middle\", which is what the window backend's scroll area says
+  and what `chat-screen` reads to decide whether the jump button is needed.
+  Only when the answer changes: every pixel of a flick is a callback, and each
+  one that reached a cell would rebuild the screen under the finger.
+
+  The same 24-point slack `end-ward!` uses, and for the same reason — a list
+  that has just been jumped to its extent can sit a fraction short of it, and
+  a reader who is at the bottom should not be told they are not."
+  [k ^m/ScrollController ctrl on-change]
+  (when on-change
+    (let [entry (get @scroll-watch k)]
+      (swap! scroll-watch assoc k (assoc entry :on-change on-change :ctrl ctrl))
+      (when-not (identical? ctrl (:ctrl entry))
+        (.addListener
+         ctrl
+         (fn []
+           (when (.-hasClients ctrl)
+             (let [pos (.-position ctrl)
+                   at-end (>= (.-pixels ^m/ScrollPosition pos)
+                              (- (.-maxScrollExtent ^m/ScrollPosition pos) 24.0))
+                   said (if at-end "end" "middle")
+                   {prev :said f :on-change} (get @scroll-watch k)]
+               (when (not= prev said)
+                 (swap! scroll-watch assoc-in [k :said] said)
+                 (when f (f said)))))
+           nil))))))
+
 (defn- fills-column?
   "Whether a node takes the height its column has left over.
 
@@ -734,7 +774,8 @@
        ;; "competing" and then draws nothing.
        :scroll
        (let [k (str (:scroll-key p))
-             token (:scroll-to-bottom p)]
+             token (:scroll-to-bottom p)
+             on-change (:on-change p)]
          (f/widget
           ;; `:managed`, so the controller belongs to this widget and is
           ;; disposed with it. One controller per key in a global map was the
@@ -744,7 +785,8 @@
           ;; "ScrollController attached to multiple scroll views", which took
           ;; the whole screen.
           :managed [ctrl (m/ScrollController)]
-          :let [_ (end-ward! k ctrl token)]
+          :let [_ (watch-end! k ctrl on-change)
+                _ (end-ward! k ctrl token)]
           (m/SingleChildScrollView
            .controller ctrl
            .child (col (dbl (:spacing p) 0.0) (body node)))))
