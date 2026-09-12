@@ -1,0 +1,41 @@
+(ns frq.upload.dart
+  "Sending the picture, over dart:io.
+
+  `frq.upload.core` builds the multipart body and reads freeq's answer; this is
+  the one write and the one read. The desktop's half of this is jolt's own TLS
+  and a hand-built request line — here `HttpClient` is the runtime's, which is
+  the same reason `frq.net.dart` has no OpenSSL in it."
+  (:require ["dart:io" :as io]
+            ["dart:convert" :as conv]
+            [frq.upload.core :as core]))
+
+(defonce ^:private client (io/HttpClient))
+
+(defn ^:async upload!
+  "Upload the file at `path` as `did`'s, answering the URL freeq serves it back
+  at. Throws with a message meant to be shown."
+  [host did channel path filename]
+  (let [file (io/File. path)
+        bytes (await (.readAsBytes file))
+        {p :path ct :content-type body :body} (core/request did channel filename
+                                                            (vec bytes))
+        uri (Uri.https host p)
+        req (await (.postUrl client uri))]
+    (.set (.-headers req) "user-agent" "frq")
+    (.set (.-headers req) "accept" "application/json")
+    (.set (.-headers req) "content-type" ct)
+    ;; Byte by byte into a builder rather than handing the vector over: what
+    ;; `frq.upload.core` answers with is a PersistentVector, `add` wants a
+    ;; List<int>, and ClojureDart does not bridge the one to the other — the
+    ;; same generic edge `frq.net.dart` splits its own lines to avoid. The
+    ;; first attempt put "PersistentVector<dynamic> is not a subtype of
+    ;; List<int>" on screen, which at least the error banner showed.
+    (let [out (io/BytesBuilder)]
+      (doseq [b body] (.addByte out b))
+      (.add req (.takeBytes out)))
+    (let [resp (await (.close req))
+          payload (await (.join (.transform resp (.-decoder conv/utf8))))
+          status (.-statusCode resp)]
+      (if (and (>= status 200) (< status 300))
+        (core/url-of payload)
+        (throw (ex-info (core/error-message (str status) payload) {}))))))

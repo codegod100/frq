@@ -17,6 +17,7 @@
   compiler: the clock and the saved session, read through exactly the
   namespaces the desktop reads them through."
   (:require ["dart:async" :as async]
+            ["dart:io" :as dio]
             ["package:flutter/material.dart" :as m]
             ["package:path_provider/path_provider.dart" :as pp]
             [cljd.flutter :as f]
@@ -46,6 +47,8 @@
             [frq.edits :as edits]
             [frq.profile :as profile]
             [frq.avatars.dart :as avatars]
+            ["package:image_picker/image_picker.dart" :as picker]
+            [frq.upload.dart :as upload]
             [frq.irc.mutate :as mutate]
             [frq.oauth.core :as oauth]
             [frq.oauth.dart :as oauth-dart]
@@ -559,6 +562,75 @@
     [:button {:label "Disconnect" :destructive true :on-click #(disconnect!)}]]
    [:dim-label {:label "The chats screen is next: it wants rooms, messages and avatars, none of which are ported yet."}]])
 
+(defn- outgoing-dir []
+  (let [d (str (fio/config-dir) "/outgoing")]
+    (fio/mkdirs! d)
+    d))
+
+(defn- discard! [path]
+  (try (fio/delete-file! path) (catch Object _ nil)))
+
+(defn- clear-attachment!
+  "Drop the picture without sending it, and the copy of it with it."
+  []
+  (when-let [a @cells/attachment]
+    (reset! cells/attachment nil)
+    (discard! (:path a))))
+
+(defn ^:async attach!
+  "Hold the picture already copied to `path` against the next line, and start
+  its upload.
+
+  The upload starts at once rather than at send, so by the time a line is
+  written the picture is usually already up. A failure lands in `error` like
+  any other and takes the attachment with it — there is nothing to send and
+  nothing to show."
+  [path filename]
+  (let [did (:did @cells/session)
+        host-name (str @cells/form-host)
+        channel (str @cells/current)]
+    (reset! cells/error nil)
+    (clear-attachment!)
+    (reset! cells/attachment {:path path :status :uploading})
+    (try
+      (let [url (await (upload/upload! host-name did channel path filename))]
+        ;; Only if this is still the picture on screen: a reader who attached
+        ;; another, or cleared it, has said what they want, and an upload
+        ;; landing afterwards does not get to undo that.
+        (swap! cells/attachment #(if (= (:path %) path)
+                                   (assoc % :url url :status :ready)
+                                   %))
+        (when-not (= (:path @cells/attachment) path) (discard! path)))
+      (catch Object e
+        (swap! cells/attachment #(if (= (:path %) path) nil %))
+        (discard! path)
+        (reset! cells/error (str (or (ex-message e) e)))))))
+
+(defn ^:async open-image-picker!
+  "Ask for a picture, the way a phone asks.
+
+  The system chooser, not this app's browsing screen: what the chooser hands
+  back is a grant for the one picture chosen, so the app needs no permission
+  over the reader's pictures at all — and without such a permission, browsing
+  finds almost nothing to show. `frq.state/open-image-picker!` says the same
+  thing from the other side and falls back to browsing where there is no
+  chooser, which is every desktop.
+
+  Copied into our own storage rather than attached where it lies: the send
+  drops the attachment's file when it is done with it, and what it drops has
+  to be ours — not the reader's own picture, sitting in their gallery."
+  []
+  (try
+    (let [chosen (await (.pickImage (picker/ImagePicker)
+                                    .source picker/ImageSource.gallery))]
+      (when chosen
+        (let [copy (str (outgoing-dir) "/" (.-millisecondsSinceEpoch (DateTime/now))
+                        ".png")]
+          (await (.copy (dio/File. (.-path chosen)) copy))
+          (await (attach! copy "picture.png")))))
+    (catch Object e
+      (reset! cells/error (str "Could not read that picture: " (or (ex-message e) e))))))
+
 (defn- send-draft! []
   (let [text (str @cells/draft)
         room (str @cells/current)
@@ -576,8 +648,21 @@
           (reset! cells/editing nil)
           (reset! cells/draft ""))
 
-      (and (seq text) (seq room) @conn)
-      (do
+      ;; A picture still on its way up holds the send rather than losing it:
+      ;; the line stays in the box, said so, and the reader presses send again
+      ;; a moment later. Sending the text without its picture would be the one
+      ;; outcome nobody asked for.
+      (= :uploading (:status @cells/attachment))
+      (reset! cells/error "The picture is still uploading.")
+
+      (and (or (seq text) (:url @cells/attachment)) (seq room) @conn)
+      (let [url (:url @cells/attachment)
+            ;; The picture becomes its link, at the end of the line: what goes
+            ;; on the wire is the text the reader wrote and a URL after it,
+            ;; which is what every other client in the channel knows how to
+            ;; show. A line that is only a picture is only the link.
+            text (.trim (str text (when url (str " " url))))]
+        (do
       (net/send-line! @conn (str "PRIVMSG " room " :" text))
       ;; Echoed locally only when the server will not echo it back. With
       ;; `echo-message` negotiated it does — that is what the cap is for, and
@@ -586,7 +671,11 @@
       (when-not (handshake/acked? @caps "echo-message")
         (swap! cells/channels update room
                #(update % :messages conj {:from @cells/form-nick :text text})))
-      (reset! cells/draft "")))))
+      ;; The attachment has done its job the moment the link is on the wire.
+      (when-let [a @cells/attachment]
+        (reset! cells/attachment nil)
+        (discard! (:path a)))
+      (reset! cells/draft ""))))))
 
 (defn- message-by-id [room id]
   (when id
@@ -677,6 +766,23 @@
                         (when-let [c @conn] (net/send-line! c (str "PART " name)))
                         (swap! cells/channels dissoc name))
       :send-draft! send-draft!
+
+      ;; Pictures. The chooser is the platform's, so the browsing screen the
+      ;; desktop falls back to is never opened here — and its actions would
+      ;; have nothing to list anyway, since everything outside this app's own
+      ;; storage is behind a permission it does not ask for.
+      :open-image-picker! open-image-picker!
+      :clear-attachment! clear-attachment!
+      :close-image-picker! (fn [] (reset! cells/image-picker nil))
+      :browse! (fn [_] nil)
+      :picker-roots (fn [] [])
+      :picker-entries (fn [_] {:dirs [] :files []})
+      :parent-dir (fn [_] nil)
+      :pick-image! (fn [_] nil)
+      ;; Android has no clipboard of pictures to read, which is the other half
+      ;; of why the chooser above exists.
+      :paste-image! (fn []
+                      (reset! cells/error "No picture on the clipboard."))
 
       ;; Answering. Both are a cell and nothing else — what the composer does
       ;; with `replying-to` is the shared screen's business.

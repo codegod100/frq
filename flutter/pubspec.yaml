@@ -41,6 +41,10 @@ dependencies:
   # dart:io cannot do on its own — the loopback listener that catches the
   # answer is plain dart:io.
   url_launcher: ^6.3.1
+  # The system picture chooser. What it hands back is a grant for the one
+  # picture chosen, so the app needs no permission over the reader's pictures
+  # at all — which is also why browsing for one finds almost nothing here.
+  image_picker: ^1.1.2
 dev_dependencies:
   flutter_test:
     sdk: flutter
