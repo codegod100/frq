@@ -43,5 +43,12 @@
 
 ;; The durable half of an OAuth sign-in. The web-token beside it is single-use,
 ;; so a reconnect mints a fresh one from this rather than replaying the old.
+; ------------------------------------------------------------------ rooms
+;; name -> {:name :messages [{:from :text}] :unread n :joined? bool}
+(defonce channels (atom {}))
+(defonce current (atom nil))
+(defonce join-input (atom ""))
+(defonce search (atom ""))
+
 (defonce broker-token (atom nil))
 (defonce login-url (atom nil))            ; shown while the browser is open

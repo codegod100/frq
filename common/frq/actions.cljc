@@ -21,7 +21,19 @@
 (defn- call [k args]
   (when-let [f (get @impl k)] (apply f args)))
 
+(defn connected?
+  "Whether there is a live connection. A query rather than a cell: what counts
+  as connected is a socket, and each platform holds its own."
+  []
+  (boolean (call :connected? [])))
+
 (defn connect! [] (call :connect! []))
 (defn disconnect! [] (call :disconnect! []))
 (defn forget-session! [] (call :forget-session! []))
 (defn open-url! [url] (call :open-url! [url]))
+
+;; ------------------------------------------------------------------ rooms
+
+(defn join! [name] (call :join! [name]))
+(defn open-channel! [name] (call :open-channel! [name]))
+(defn leave-channel! [name] (call :leave-channel! [name]))

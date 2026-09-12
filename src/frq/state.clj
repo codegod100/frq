@@ -5,6 +5,7 @@
   of `atom`s here; the IRC reader thread pushes into the same ones. `apply-msg!`
   is the only place a wire message turns into UI state."
   (:require [clojure.string :as str]
+            [frq.rooms :as rooms]
             [glimmer.ratom :as r :refer [atom]]
             [frq.actions :as actions]
             [frq.cells :as cells]
@@ -47,6 +48,10 @@
 (def form-app-password cells/form-app-password)
 (def session cells/session)
 (def broker-token cells/broker-token)
+(def channels cells/channels)
+(def current cells/current)
+(def join-input cells/join-input)
+(def search cells/search)
 (def login-url cells/login-url)
 
 (def popular-channels
@@ -64,9 +69,6 @@
 ;; How much backlog to ask for when the server did not volunteer any.
 (def history-limit 100)
 
-;; name -> {:name :messages [{:from :text}] :unread n :joined? bool}
-(defonce channels (atom {}))
-(defonce current (atom nil))
 (defonce draft (atom ""))
 ;; The message the draft is answering, as {:id :from :text}, or nil. Held whole
 ;; rather than as an id alone so the compose bar can say who is being answered
@@ -94,7 +96,6 @@
 ;; The picture being looked at full size, or nil. Vidya's tree has no overlay,
 ;; so this is a screen of its own rather than a layer over the chat.
 (defonce lightbox (atom nil))            ; {:path :url}
-(defonce join-input (atom ""))
 
 ;; Whether the chat screen is showing who is in the channel. Off by default:
 ;; the panel costs the conversation a column, and the reader is here for the
@@ -202,7 +203,6 @@
 ;; A counter rather than a clock: the list only needs their order, and a
 ;; monotonic tick cannot be surprised by the system time moving.
 (defonce access-tick (atom 0))
-(defonce search (atom ""))
 
 ;; Comings and goings, hidden or not. A quiet room reads better with them —
 ;; they are how you notice someone arriving — and a busy one drowns in them,
@@ -269,11 +269,7 @@
        (reset! rooms-saved-at now)
        (future (store/save-rooms! (room-records)))))))
 
-(defn dm?
-  "Whether a buffer is a conversation with a person rather than a room. Every
-  channel name starts with `#`; what does not is somebody's nick."
-  [name]
-  (and (seq name) (not (str/starts-with? name "#"))))
+(def dm? rooms/dm?)
 
 (defn normalize-channel [s]
   (let [s (str/trim (or s ""))]
@@ -1833,20 +1829,7 @@
       (when (seq session-id)
         (irc/tagmsg! c channel (av/leave-tags session-id instance))))))
 
-(defn channel-list
-  "Buffers most recently opened first, filtered by the search box.
-
-  A conversation list is read from the top, and the one you were just in is the
-  one you are most likely to want again. Buffers never opened — a DM that
-  arrived, a channel someone mentioned — sort under those, by name, rather than
-  jumping the queue."
-  []
-  (let [q (str/lower-case (str/trim @search))]
-    (->> (vals @channels)
-         (filter #(or (str/blank? q)
-                      (str/includes? (str/lower-case (:name %)) q)))
-         (sort-by (juxt #(- (:accessed % 0)) :name))
-         vec)))
+(def channel-list rooms/channel-list)
 
 (defn channel-order
   "The buffer names, most recently opened first — what gets written to disk.
@@ -1997,15 +1980,16 @@
        (sort-by #(or (:at %) 0))
        (take-last overview-limit)))
 
-(defn last-preview [buffer]
-  (if-let [m (last (:messages buffer))]
-    (str (:from m) ": " (:text m))
-    "No messages yet"))
+(def last-preview rooms/last-preview)
 
-;; What the shared connect screen calls. Installed here rather than in an
-;; entry point because these are this namespace's own reducers, and the screen
-;; that calls them is no longer in a position to name them.
+;; What the shared screens call. Installed here rather than in an entry point
+;; because these are this namespace's own reducers, and the screens that call
+;; them are no longer in a position to name them.
 (actions/install!
  {:connect! connect!
   :disconnect! disconnect!
-  :forget-session! forget-session!})
+  :forget-session! forget-session!
+  :connected? connected?
+  :join! join!
+  :open-channel! open-channel!
+  :leave-channel! leave-channel!})

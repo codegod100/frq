@@ -135,6 +135,26 @@ screen rather than the subtree that read it. Fine at this size.
 reads is `frq.cells` and what it calls is `frq.actions`, and each platform
 fills those in: `frq.state`'s reducers on the desktop, dart:io here.
 
+## Two screens shared, and where the renderer stops
+
+`frq.screens.connect` and `frq.screens.chats` are in `common/` now, with the
+cells under them in `frq.cells`, the derivations in `frq.rooms`, the backend
+metrics in `frq.metrics` and the things a screen cannot do itself behind
+`frq.actions`. `frq.app` requires both and the desktop draws them — verified in
+the TUI, including the conversation list with its rooms and previews.
+
+The phone draws the connect screen. It does not draw the chats one yet, and
+the gap is in `frq.hiccup` rather than in the screen: `:fill-height` is iced's
+`Length::Fill`, the space left over, which is Flutter's `Expanded` — not a
+taller `mainAxisSize`. Getting that onto the right children without breaking
+the bands around them is unfinished; the attempt blanked the screen and was
+reverted rather than shipped half-working.
+
+`:entry` is the same lesson twice. An entry with no `:width-request` fills its
+row, which in a Row is `Expanded`; the connect screen's server boxes carry
+widths and came out fine, and the chats screen's join box carries none and did
+not.
+
 ## The order to do the rest in
 
 1. ~~**`frq.irc`**~~ — started. The parser is `common/frq/irc/parse.cljc` now,
