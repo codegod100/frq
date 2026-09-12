@@ -344,6 +344,26 @@
   chat view re-renders without every message row watching the media cache."}
   media-tick (atom 0))
 
+(defn local-id
+  "A name for a line the server did not name.
+
+  freeq tags a message with a `msgid` and that is a line's identity everywhere
+  it matters — a reply points at one, an edit rewrites one, a reaction lands on
+  one. But not every line arrives with one: a replayed backlog can come over
+  with no tags at all, and a line this client has just sent has none until the
+  server echoes it back.
+
+  Those lines are not nameless to the reader, though. They are on the screen,
+  they are in the overview, and pressing one should go to it. So they get a
+  name made out of what they are: who said it, what it said, when, and where.
+  Two lines identical in all four are the same line as far as anything this
+  client does with one is concerned.
+
+  `local-` because it is this client's alone, and it is never sent: the
+  server knows only the names it gave out."
+  [channel from text at]
+  (str "local-" (hash [channel from text at])))
+
 (defn push-message!
   "Append a line to a buffer, creating it if needed, and bump the unread count
   unless that buffer is the one on screen. Any image it links to is fetched in
@@ -358,6 +378,8 @@
   ([channel from text] (push-message! channel from text {}))
   ([channel from text {:keys [at did id reply-to reactions edited?]}]
    (let [at (or at (clock/now-ms))
+         ;; A name of our own where the server gave none. See `local-id`.
+         mine (when-not id (local-id channel from text at))
          who (avatars/actor did from)
          ;; A room reaching the store matters more than the throttle does: a
          ;; connection joins every channel at once, and the writes for all but
@@ -430,7 +452,7 @@
                                 :at at
                                 ;; `:id` is what a reply points at, and
                                 ;; `:reply-to` is what this one points at.
-                                :id id :reply-to reply-to
+                                :id id :local-id mine :reply-to reply-to
                                 ;; The sender has since rewritten this line.
                                 ;; Replay says so with a tag rather than by
                                 ;; sending the revision, so a message can
@@ -1851,10 +1873,13 @@
     (count saved)))
 
 (defn message-by-id
-  "The message a reply points at, if this buffer still holds it."
+  "The message a reply points at, if this buffer still holds it.
+
+  By either name, since a jump may be aiming at a line the server never gave
+  one to. See `local-id`."
   [channel id]
   (when id
-    (first (filter #(= id (:id %)) (get-in @channels [channel :messages])))))
+    (first (filter #(= id (rooms/row-id %)) (get-in @channels [channel :messages])))))
 
 (defn react-from-picker!
   "Put the chosen emoji on the message the picker was opened for, and close it.

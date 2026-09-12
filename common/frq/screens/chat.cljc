@@ -753,16 +753,16 @@
   Sender above the text, not beside it: a wrapping label in a horizontal row
   lays out against the row's width rather than the column's, so one long URL
   drags every line that follows it off the left edge."
-  [i m]
-  (let [;; What a jump landed on wears a surface of its own for a moment, so
+  [i m jump highlight]
+  (let [;; What this line is called, and what a jump is aiming at and landed
+        ;; on. Handed down rather than asked for here — `message-rows` says
+        ;; why this pair is not two cells like everything else on this row.
+        ;;
+        ;; What a jump landed on wears a surface of its own for a moment, so
         ;; the answer to "which one was I sent to" is on the screen rather
         ;; than in the reader's count of rows.
-        ;; Through `derived`, as is everything below that asks about shared
-        ;; state: a row that read the highlight itself re-rendered for every
-        ;; jump anywhere in the backlog.
-        highlit? (boolean (and (:id m)
-                               (cells/derived-value [:highlit (:id m)]
-                                         #(= (:id m) @cells/highlight))))]
+        rid (rooms/row-id m)
+        highlit? (boolean (and rid (= rid highlight)))]
     [:vbox {:key i :spacing 2 :margin 0
             ;; Clear of the right edge: the actions ride that edge, and the
             ;; list's scrollbar rides it too — without this the ↩ is what the
@@ -773,9 +773,10 @@
             ;; closed-up line to belong to.
             :margin-top 10
             ;; The jump target is what a "go to message" click scrolls to.
-            :scroll-here (boolean (and (:id m)
-                                       (cells/derived-value [:jump (:id m)]
-                                                 #(= (:id m) @cells/jump-to))))}
+            ;; By `row-id`, not by `:id`: a line the server never named is
+            ;; still a line on the screen, and a jump aimed at it has to be
+            ;; able to say which one it means.
+            :scroll-here (boolean (and rid (= rid jump)))}
      ;; The gap above, where the margin cannot be one. `:margin-top 10` is
      ;; most of a row in a window and nothing at all in a terminal — ten points
      ;; against a row of sixteen, rounded down, because a gap that thin is what
@@ -805,7 +806,24 @@
   A backlog can reach back weeks, and `11:04 AM` says nothing about which day
   it was. The heading is what makes the time above it mean something."
   [messages]
-  (mapcat (fn [i m]
+  ;; What a jump is aiming at and what it landed on, read here — in a render —
+  ;; and handed down as two plain values.
+  ;;
+  ;; They were a cell per row, so that a jump woke the two rows it moved
+  ;; between rather than the whole backlog, which is what `derived-value` is
+  ;; for and what it still does for a hover. But a row's cell was deref'd
+  ;; while this seq was realised, which is neither the row's render nor this
+  ;; one, so the read was recorded against nobody: `jump-to` changed, the cells
+  ;; changed, and no component was woken to put the new answer in the tree. The
+  ;; prop reached the window on the render that opened the room and never
+  ;; again — so a jump that needed a second frame, which is every jump into a
+  ;; room that has to be built first, never got one.
+  ;;
+  ;; A jump is a click. Re-rendering a backlog on one is affordable in a way
+  ;; that being wrong about it is not.
+  (let [jump @cells/jump-to
+        highlight @cells/highlight]
+    (mapcat (fn [i m]
             (let [prev (when (pos? i) (nth messages (dec i)))
                   day (some-> (:at m) clock/day)
                   new-day? (and day (not= day (some-> (:at prev) clock/day)))]
@@ -818,10 +836,10 @@
                 ;; and a line that arrives anywhere but the end — a backlog
                 ;; replay, an echo taking the place of what was sent — shifts
                 ;; every row after it onto the widgets of its neighbour.
-                true (conj ^{:key (or (:id m) (str "row-" i))}
-                           [message-row i m]))))
-          (range (count messages))
-          messages))
+                true (conj ^{:key (or (rooms/row-id m) (str "row-" i))}
+                           [message-row i m jump highlight]))))
+            (range (count messages))
+            messages)))
 
 (defn- messages-scroll-key
   "What the backlog's scroll position is remembered under.
@@ -894,9 +912,8 @@
    ;; about, and a jump that landed on the newest message instead would answer
    ;; a question nobody asked from a strip that was showing the answer.
    ;;
-   ;; Unless the line has no id to aim at — one this client has sent and the
-   ;; server has not echoed back yet — and then the room is all there is to
-   ;; offer.
+   ;; Every line has a name to aim at — the server's where it gave one, and
+   ;; `rooms/row-id`'s where it did not — so every row here goes somewhere.
    ;;
    ;; 600ms to land and five seconds marked: the room is a room away, so the
    ;; screen it scrolls in has to be built before there is anything to scroll,
@@ -905,11 +922,8 @@
    ;; I pressed", and it has to still be there when they have finished
    ;; recognising where they are.
    [:button {:label (:channel m)
-             :on-click (if (:id m)
-                         #(do (actions/leaving-for-overview!)
-                              (goto-message! (:channel m) (:id m) 600 5000))
-                         #(do (actions/leaving-for-overview!)
-                              (actions/open-channel! (:channel m))))}]
+             :on-click #(do (actions/leaving-for-overview!)
+                            (goto-message! (:channel m) (rooms/row-id m) 600 5000))}]
    ;; And the line itself, as something to read rather than to press. It was a
    ;; link for a moment, which made the strip two things at once: a line the
    ;; server has echoed back has an id to aim at and a line this client has

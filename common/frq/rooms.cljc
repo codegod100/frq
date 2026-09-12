@@ -14,6 +14,26 @@
   [name]
   (and (seq name) (not (str/starts-with? name "#"))))
 
+(defn row-id
+  "What this client calls a line: the server's name for it where there is one,
+  and the name it was given here where there is not.
+
+  freeq tags a message with a `msgid` and that is a line's identity everywhere
+  it matters — a reply points at one, an edit rewrites one, a reaction lands on
+  one. But not every line arrives with one: a replayed backlog can come over
+  with no tags at all, and a line this client has just sent has none until the
+  server echoes it back.
+
+  Those lines are not nameless to the reader, though. They are on the screen,
+  they are in the overview, and pressing one should go to it — so `frq.state`
+  gives them a `:local-id` made out of what they are. It is never sent: a
+  reply, an edit and a reaction all name a message to the server, and the
+  server knows only the names it gave out. This is for everything that is the
+  client's own business with a line — which one to scroll to, and which one to
+  mark when it gets there."
+  [m]
+  (or (:id m) (:local-id m)))
+
 (defn last-preview [buffer]
   (if-let [m (last (:messages buffer))]
     (str (:from m) ": " (:text m))
