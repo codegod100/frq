@@ -695,6 +695,25 @@
       :member-list (fn [room] (members/member-list @cells/channels room))
       :toggle-users! (fn [] (swap! cells/show-users? not))
       :toggle-overview! (fn [] (swap! cells/overview? not))
+      ;; What the strip is a list of: every other room's recent lines, a turn
+      ;; each. `frq.rooms` reads it off the cells, so both halves ask the same
+      ;; question of the same buffers — the desktop's is the same def.
+      :recent-everywhere rooms/recent-everywhere
+      ;; Where the reader was when a line in the strip took them out of it,
+      ;; and the way back to it. The room, not the place in it: one scroll
+      ;; position is remembered per conversation either way.
+      :leaving-for-overview! (fn [] (reset! cells/overview-return @cells/current))
+      :overview-back! (fn []
+                        (when-let [room @cells/overview-return]
+                          (reset! cells/overview-return nil)
+                          (actions/open-channel! room)))
+      ;; Timers, for the two the strip's jump needs: aim the scroll, then let
+      ;; go of it, and clear the mark a while after that. `Future.delayed` in
+      ;; milliseconds, which is the unit `frq.screens.chat` asks in.
+      :after! (fn [ms f]
+                (.then (async/Future.delayed (Duration .milliseconds ms))
+                       (fn [_] (f) nil))
+                nil)
       :toggle-chat-list! (fn [] (swap! cells/hide-chat-list? not))
       :toggle-hide-join-part! (fn [] (swap! cells/hide-join-part? not))
       :quit! (fn [] nil)
