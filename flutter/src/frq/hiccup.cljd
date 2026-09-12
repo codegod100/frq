@@ -560,15 +560,32 @@
                      ;; It only ever comes up because `flexed` below hands a
                      ;; button a bounded width — unbounded, this changes
                      ;; nothing.
-                     .child (m/Text (str (:label p ""))
-                                    .maxLines 1
-                                    .softWrap false
-                                    .overflow m/TextOverflow.ellipsis
-                                    .style (m/TextStyle
-                                            .fontSize t/text-body
-                                            .color fg
-                                            .height 1.35
-                                            .fontWeight m/FontWeight.w500)))))))
+                     ;;
+                     ;; Unless the caller says the label is the whole point,
+                     ;; and then it is the type size that gives instead. The
+                     ;; people panel is where that is true: it is a column of
+                     ;; nicks, and "chadfowler.c…" and "chadfowler.co…" are
+                     ;; the same word to a reader — a name a point or two
+                     ;; smaller is still a name, and a name cut short is not.
+                     ;; `:whole-label` puts the text in a FittedBox, which
+                     ;; measures it on one unbounded line and scales it down
+                     ;; only by as much as the width it was given demands: a
+                     ;; nick that already fits is drawn at t/text-body like
+                     ;; every other, so a short column does not shrink.
+                     .child (let [lbl (m/Text (str (:label p ""))
+                                              .maxLines 1
+                                              .softWrap false
+                                              .overflow m/TextOverflow.ellipsis
+                                              .style (m/TextStyle
+                                                      .fontSize t/text-body
+                                                      .color fg
+                                                      .height 1.35
+                                                      .fontWeight m/FontWeight.w500))]
+                              (if (:whole-label p)
+                                (m/FittedBox .fit m/BoxFit.scaleDown
+                                             .alignment m/Alignment.centerLeft
+                                             .child lbl)
+                                lbl)))))))
 
 ;; ----------------------------------------------------------------- widget
 
