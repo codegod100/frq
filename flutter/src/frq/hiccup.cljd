@@ -424,16 +424,38 @@
 
 ;; ------------------------------------------------------------------ text
 
+(defn- any-fills-row?
+  "Whether anything in a row's children asks for what the row has left.
+
+  Through nested seqs, because a `for` over rows arrives as one child."
+  [nodes]
+  (boolean (some (fn [n0]
+                   (let [n (expand n0)]
+                     (if (seq? n) (any-fills-row? n) (fills-row? n))))
+                 nodes)))
+
 (defn- flexed
   "Children of a Flex, with the ones that fill wrapped in Expanded.
 
-  `fills?` says which, so a Row asks about width and a Column about height."
-  [fills? nodes]
+  `fills?` says which, so a Row asks about width and a Column about height.
+
+  `sibling-fills?` is whether anything in the row already asks for what is
+  left, and it is the Join row that needs the question asked: an Expanded entry
+  beside a Flexible button are two flex children of one flex each, so the
+  button is allotted half the row, draws its label in a corner of it, and
+  leaves the rest of its half empty — the row then has slack, `:align :end`
+  pushes what is in it to the right, and the box the reader types into starts
+  halfway across the card. A button beside something that fills takes the width
+  of its label and no share at all; the thing that fills is what gives."
+  ([fills? nodes]
+   (flexed fills? nodes
+           (and (identical? fills? fills-row?) (any-fills-row? nodes))))
+  ([fills? nodes sibling-fills?]
   (persistent!
    (reduce (fn [acc n0]
              (let [n (expand n0)]
              (cond (nil? n) acc
-                   (seq? n) (reduce conj! acc (flexed fills? n))
+                   (seq? n) (reduce conj! acc (flexed fills? n sibling-fills?))
                    (fills? n) (conj! acc (m/Expanded .child (render n)))
                    ;; A pane that fills the column takes the row's width too:
                    ;; the message list sits in a row beside the people panel,
@@ -458,11 +480,11 @@
                    ;; stripes. Loose rather than Expanded — a button asks for
                    ;; the width of its label and gets it whenever the row has
                    ;; it, and only gives way when the row has not.
-                   (and (identical? fills? fills-row?)
+                   (and (identical? fills? fills-row?) (not sibling-fills?)
                         (vector? n) (= :button (first n)))
                    (conj! acc (m/Flexible .child (render n)))
                    :else (conj! acc (render n)))))
-           (transient []) nodes)))
+           (transient []) nodes))))
 
 (defn- txt
   [ctx s size color & {:keys [weight]}]
