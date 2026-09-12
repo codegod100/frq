@@ -143,17 +143,26 @@ metrics in `frq.metrics` and the things a screen cannot do itself behind
 `frq.actions`. `frq.app` requires both and the desktop draws them — verified in
 the TUI, including the conversation list with its rooms and previews.
 
-The phone draws the connect screen. It does not draw the chats one yet, and
-the gap is in `frq.hiccup` rather than in the screen: `:fill-height` is iced's
-`Length::Fill`, the space left over, which is Flutter's `Expanded` — not a
-taller `mainAxisSize`. Getting that onto the right children without breaking
-the bands around them is unfinished; the attempt blanked the screen and was
-reverted rather than shipped half-working.
+The phone draws both.
 
-`:entry` is the same lesson twice. An entry with no `:width-request` fills its
-row, which in a Row is `Expanded`; the connect screen's server boxes carry
-widths and came out fine, and the chats screen's join box carries none and did
-not.
+`Length::Fill` is the whole of what the renderer was missing, in two
+directions. `:fill-height` down a column and a width-less `:entry` across a
+row are the same instruction — *take what is left* — and that is Flutter's
+`Expanded`, not a bigger `mainAxisSize`. A band that says only `max` is handed
+loose constraints by its parent, asks for infinity, and takes the screen with
+it.
+
+So `flexed` wraps whichever children fill, with `fills-column?` for a column
+and `fills-row?` for a row, and a Row holding one is `max` so it has width to
+divide. A `:page` scrolls itself and a `:vbox :fill-height` takes the bounded
+height the Scaffold gives it — which is why nothing wraps the screen any more:
+a scroll view around the tree is exactly what takes that bound away.
+
+What made this expensive was looking for it as an exception. A layout error
+happens after the build: no `try` sees it, `(catch Object ...)` sees it, the
+red error box does not appear, and the log stays empty. `FlutterError.onError`
+is where they go, and installing that handler in `frq.main` should have been
+the first move rather than the tenth.
 
 ## The order to do the rest in
 

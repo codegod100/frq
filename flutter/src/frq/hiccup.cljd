@@ -70,6 +70,29 @@
 
 (declare render)
 
+(defn- fills-row?
+  "Whether a node takes the width its row has left over.
+
+  jolt-cosmic gives an entry Length::Fixed(w) when it has a width and
+  Length::Fill otherwise; Fill in a Row is Flutter's Expanded. A TextField that
+  is neither is offered unbounded width, which is a layout error."
+  [node]
+  (and (vector? node)
+       (= :entry (first node))
+       (let [p (second node)]
+         (or (not (map? p)) (nil? (:width-request p)) (:hexpand p)))))
+
+(defn- fills-column?
+  "Whether a node takes the height its column has left over.
+
+  `:fill-height` is Length::Fill down the other axis — Expanded, not a taller
+  mainAxisSize. `:scroll` is excluded: it returns an Expanded of its own."
+  [node]
+  (and (vector? node)
+       (not= :scroll (first node))
+       (let [p (second node)]
+         (and (map? p) (:fill-height p)))))
+
 (defn- children
   "Flatten seqs, drop nils. `(for [...] ...)` in a component yields a seq in
   the child position and glimmer splices it; so does this."
@@ -82,6 +105,19 @@
            (transient []) nodes)))
 
 ;; ------------------------------------------------------------------ text
+
+(defn- flexed
+  "Children of a Flex, with the ones that fill wrapped in Expanded.
+
+  `fills?` says which, so a Row asks about width and a Column about height."
+  [fills? nodes]
+  (persistent!
+   (reduce (fn [acc n]
+             (cond (nil? n) acc
+                   (seq? n) (reduce conj! acc (flexed fills? n))
+                   (fills? n) (conj! acc (m/Expanded .child (render n)))
+                   :else (conj! acc (render n))))
+           (transient []) nodes)))
 
 (defn- txt
   [ctx s size color & {:keys [weight]}]
@@ -144,7 +180,19 @@
                                    .children cs))]
      (case tag
        :vbox
-       (let [c (col (dbl (:spacing p) 0.0) kids)]
+       ;; `:fill-height` is what pins a tab bar to the bottom: the band above
+       ;; it asks for the rest of the screen, and a column sized to its
+       ;; contents has no rest to give.
+       (let [c (m/Column
+                .crossAxisAlignment m/CrossAxisAlignment.start
+                .mainAxisSize (if (:fill-height p)
+                                m/MainAxisSize.max
+                                m/MainAxisSize.min)
+                .spacing (dbl (:spacing p) 0.0)
+                .children (flexed fills-column? (body node)))
+             c (if-let [mg (:margin p)]
+                 (m/Padding .padding (m/EdgeInsets.all (dbl mg 0.0)) .child c)
+                 c)]
          (if-let [w (:width-request p)]
            (m/SizedBox .width (dbl w 0.0) .child c)
            c))
@@ -157,21 +205,27 @@
        ;; The page looked blank and nothing was logged, because nothing was
        ;; wrong: the content was exactly where it had been asked to go.
        :page
-       (m/Align
+       (m/SingleChildScrollView
+        .child
+        (m/Align
         .alignment m/Alignment.topCenter
         .heightFactor 1.0
         .child (m/ConstrainedBox
                 .constraints (m/BoxConstraints .maxWidth (dbl (:max-width p) 520.0))
                 .child (m/Padding
                         .padding (m/EdgeInsets.all t/space-s)
-                        .child (col t/space-xs kids))))
+                        .child (col t/space-xs kids)))))
 
        :hbox
        (m/Row
         .crossAxisAlignment m/CrossAxisAlignment.center
-        .mainAxisSize m/MainAxisSize.min
+        ;; A row holding something that fills has to be given the width to
+        ;; divide, so it is max rather than min whenever a child asks.
+        .mainAxisSize (if (some fills-row? (body node))
+                        m/MainAxisSize.max
+                        m/MainAxisSize.min)
         .spacing (dbl (:spacing p) 0.0)
-        .children kids)
+        .children (flexed fills-row? (body node)))
 
        :label     (txt ctx (:label p "") t/text-body t/on-bg)
        :dim-label (txt ctx (:label p "") t/text-caption t/dim)
