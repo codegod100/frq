@@ -22,6 +22,7 @@
             [frq.hiccup :as h]
             [frq.io.dart :as host]
             [frq.net.dart :as net]
+            [frq.atproto.dart :as atproto]
             [frq.clock :as clock]
             [frq.store :as store]))
 
@@ -61,6 +62,25 @@
     (catch Exception e
       (reset! status (str "failed: " e)))))
 
+(defonce ^:private handle (atom "nandi-test.bsky.social"))
+(defonce ^:private identity-out (atom nil))
+
+(defn ^:async resolve-identity!
+  "handle → DID → PDS, over HTTPS from the phone.
+
+  The same three calls `frq.atproto` makes on the desktop, off the same
+  `frq.atproto.core`: core says what to ask and what the answer means, and
+  only who waits for it differs."
+  []
+  (reset! identity-out ["resolving…"])
+  (try
+    (let [h @handle
+          did (await (atproto/resolve-handle h))
+          pds (await (atproto/pds-endpoint did))]
+      (reset! identity-out [(str "did  " did) (str "pds  " pds)]))
+    (catch Exception e
+      (reset! identity-out [(str "failed: " e)]))))
+
 (defn- screen
   "glimmer's tags, painted by `frq.hiccup`. Nothing here is Flutter."
   []
@@ -86,6 +106,16 @@
                               (when-let [p (seq (:params m))]
                                 (str "  " (last p))))}]]))]
    [:card {}
+    [:title-2 {:label "Identity"}]
+    [:entry {:key :handle
+             :text @handle
+             :placeholder "alice.bsky.social"
+             :on-change #(reset! handle %)}]
+    [:button {:label "Resolve" :primary true :on-click #(resolve-identity!)}]
+    (when-let [out @identity-out]
+      (for [[i line] (map-indexed vector out)]
+        [:label {:key i :label line}]))]
+   [:card {}
     [:title-2 {:label "Shared with the desktop"}]
     [:label {:label (str "clock  " (clock/clock-time (clock/now-ms)))}]
     [:label {:label (str "store  " (if-let [s (store/load-session)]
@@ -108,6 +138,6 @@
       ;; rebuild, so the cells changed and the screen did not — which looks
       ;; exactly like a button that does not fire.
       (f/widget
-       :watch [st status ls lines]
+       :watch [st status ls lines io identity-out hh handle]
        (m/SingleChildScrollView
         .child (h/render (screen)))))))

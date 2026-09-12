@@ -145,8 +145,18 @@ only tags `frq.app` uses, so it is a test of the backend and nothing more.
    MOTD, which is the thing the jolt APK could never do. What is left of this
    one is the protocol half: CAP, SASL and the idle-ping logic still live in
    `src/frq/irc.clj` and want `frq.msgsig` and `frq.atproto` under them first.
-2. **`frq.atproto`** (209), **`frq.oauth`** (182) — hand-rolled HTTPS over
-   OpenSSL bindings today, `dart:io` and `package:http` here.
+2. ~~**`frq.atproto`**~~ — done. `common/frq/atproto/core.cljc` is the JSON,
+   the base64url, the SASL payloads, and a `-req`/`-parse` pair per step of the
+   flow; `frq.atproto` and `frq.atproto.dart` supply the middle. **handle → DID
+   → PDS resolves on the phone**, over `HttpClient`.
+
+   **`frq.oauth`** — half done. `common/frq/oauth/core.cljc` has the URL, the
+   handoff payload and the session refresh. What has no Android answer yet is
+   the capture: the desktop binds a loopback socket and serves a page the
+   browser redirects to, and an Android app cannot listen on localhost for a
+   browser it does not own. That wants an app link or a custom scheme, an
+   intent filter, and a redirect URI the broker will accept — a decision about
+   freeq's broker, not a porting problem.
 3. **`frq.msgsig`** (268), **`frq.wire`** (81) — need a crypto seam beside the
    io one.
 4. **`frq.avatars`**, **`frq.media`**, **`frq.profile`**, **`frq.platform`** —

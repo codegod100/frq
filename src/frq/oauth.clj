@@ -11,6 +11,7 @@
   `broker_token`. The web-token is single-use: `/session` mints a fresh one
   from the broker token on every later connection."
   (:require [clojure.string :as str]
+            [frq.oauth.core :as core]
             [frq.atproto :as atproto]
             [frq.platform :as platform]
             [frq.wire :as wire]
@@ -18,25 +19,16 @@
             [jolt.host :as host]
             [jolt.socket :as socket]))
 
-(def default-broker "https://auth.freeq.at")
-
 ;; ------------------------------------------------------------------ urls
+;;
+;; Moved to `frq.oauth.core` under common/, which is everything about this
+;; flow that is not the waiting: the URL, the payload, the session refresh.
+;; Re-exported so callers did not move.
 
-(defn url-encode
-  "Percent-encode everything a handle could hold that a query string cannot."
-  [s]
-  (apply str
-         (for [b (.getBytes (or s ""))
-               :let [c (char (bit-and (int b) 0xff))]]
-           (if (or (Character/isLetterOrDigit c) (#{\- \_ \. \~} c))
-             c
-             (format "%%%02X" (bit-and (int b) 0xff))))))
-
-(defn login-url [broker handle return-to]
-  (let [base (str/replace (or broker default-broker) #"/+$" "")
-        handle (-> (or handle "") str/trim (str/replace #"^@" ""))]
-    (str base "/auth/login?handle=" (url-encode handle)
-         "&return_to=" (url-encode return-to))))
+(def default-broker core/default-broker)
+(def url-encode core/url-encode)
+(def login-url core/login-url)
+(def tokens-of core/tokens-of)
 
 (defn open-browser!
   "Hand the URL to the desktop. A failure here is not fatal — the caller shows
@@ -110,22 +102,6 @@
         [fd port]
         (do (socket/c-close fd) (recur (inc port)))))))
 
-(defn tokens-of
-  "The broker's base64url JSON payload as {:token :broker-token :nick :did
-  :handle}."
-  [payload]
-  (let [json (atproto/b64-decode (str/trim payload))
-        token (atproto/json-str json "token")
-        broker (atproto/json-str json "broker_token")]
-    (when-not (and token broker)
-      (throw (ex-info (or (atproto/json-str json "error") "Malformed sign-in payload")
-                      {:body json})))
-    {:token token
-     :broker-token broker
-     :nick (atproto/json-str json "nick")
-     :did (atproto/json-str json "did")
-     :handle (or (atproto/json-str json "handle") "")}))
-
 (defn await-callback!
   "Serve the loopback capture until the browser posts the handoff back.
 
@@ -158,25 +134,10 @@
 
 ;; ------------------------------------------------------------------ session
 
-(defn- broker-host [broker]
-  (-> (or broker default-broker)
-      (str/replace #"^https?://" "")
-      (str/split #"/")
-      first))
-
 (defn refresh-session
-  "Mint a fresh single-use web-token from the durable broker token. This is
-  what a reconnect uses; the token from the browser handoff is spent."
+  "Mint a fresh single-use web-token from the durable broker token."
   [broker broker-token]
-  (let [body (atproto/request (broker-host broker) "/session"
-                              (atproto/json-object {"broker_token" broker-token}))
-        token (atproto/json-str body "token")]
-    (when-not token
-      (throw (ex-info (or (atproto/json-str body "message")
-                          "Broker session refresh failed — sign in again")
-                      {:body body})))
-    {:token token
-     :broker-token broker-token
-     :nick (atproto/json-str body "nick")
-     :did (atproto/json-str body "did")
-     :handle (or (atproto/json-str body "handle") "")}))
+  (core/refresh-session-parse
+   broker-token
+   (let [{:keys [host path body]} (core/refresh-session-req broker broker-token)]
+     (atproto/request host path body))))

@@ -73,6 +73,8 @@
   :slurp                slurp*
   :spit                 spit*
   :write-private-file!  write-private-file!
+  :utf8-bytes           (fn [s] (mapv #(bit-and (int %) 0xff) (.getBytes (str s))))
+  :utf8-string          (fn [bs] (String. (byte-array (map unchecked-byte bs))))
   :wall-nanos           host/wall-nanos
   :mono-nanos           host/mono-nanos
   :local-offset-seconds (fn [secs] (host/tz-offset-seconds @zone secs))})

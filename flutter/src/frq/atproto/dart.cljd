@@ -1,0 +1,60 @@
+(ns frq.atproto.dart
+  "The phone's AT Protocol: `frq.atproto.core` with dart:io under it.
+
+  The mirror of `frq.atproto` on the desktop, and shorter than it by the whole
+  of the HTTP — jolt hand-rolls request lines onto a TLS socket because
+  mvn-http's `fetch` writes to a file and cannot POST, and `HttpClient` simply
+  does it. TLS included, which is the part Android never had.
+
+  Async all the way down, so these cannot be the same functions the desktop
+  exposes even though they do the same thing. That is the reason core is split
+  into `-req` and `-parse` pairs rather than shared whole: the descriptions and
+  the answers are portable, and only who waits for them is not."
+  (:require ["dart:convert" :as conv]
+            ["dart:io" :as io]
+            [frq.atproto.core :as core]))
+
+(defonce ^:private client (io/HttpClient.))
+
+(defn ^:async fetch
+  "Perform one `-req` descriptor and return the body as a string.
+
+  `body` nil is a GET. Always https: every host core names is an AT Protocol
+  service, and there is no plaintext variant of any of them."
+  [{:keys [host path body]}]
+  ;; Uri.parse of a whole URL rather than Uri.https of host and path: a
+  ;; resolveHandle path carries its query string, and Uri.https would escape
+  ;; the ? into the path.
+  (let [uri (Uri.parse (str "https://" host path))
+        req (await (if body (.postUrl client uri) (.getUrl client uri)))]
+    (.set (.-headers req) "user-agent" "frq")
+    (.set (.-headers req) "accept" "application/json")
+    (when body
+      (.set (.-headers req) "content-type" "application/json")
+      (.write req body))
+    (let [resp (await (.close req))]
+      (await (.join (.transform resp (.-decoder conv/utf8)))))))
+
+(defn ^:async resolve-handle
+  "A handle (alice.bsky.social) to its DID. A DID passes through untouched."
+  [handle]
+  (let [req (core/resolve-handle-req handle)]
+    (core/resolve-handle-parse handle (when req (await (fetch req))))))
+
+(defn ^:async pds-endpoint
+  "The DID's PDS service endpoint, from its DID document."
+  [did]
+  (core/pds-endpoint-parse did (await (fetch (core/pds-doc-req did)))))
+
+(defn ^:async create-session
+  "Sign in to the PDS with an app password. Returns
+  {:did :handle :access-jwt :pds}.
+
+  The password goes to the user's own PDS and nowhere else — freeq never sees
+  it, and verifies the token it gets by asking that same PDS."
+  [identifier password]
+  (let [did (await (resolve-handle identifier))
+        pds (await (pds-endpoint did))]
+    (core/create-session-parse
+     identifier did pds
+     (await (fetch (core/create-session-req pds identifier password))))))

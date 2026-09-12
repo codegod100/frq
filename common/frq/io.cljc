@@ -85,6 +85,23 @@
   [path s]
   (call :write-private-file! [path s]))
 
+;; -------------------------------------------------------------------- text
+
+(defn utf8-bytes
+  "A string as a sequence of byte values, 0-255.
+
+  In the seam because there is no portable way to say it: jolt has
+  `.getBytes`, which is Java, and ClojureDart has `dart:convert`. `frq.atproto`
+  needs it for base64url — SASL is bytes, and a handle with a non-ASCII
+  character in it encodes to more of them than it has characters."
+  [s]
+  (call :utf8-bytes [s]))
+
+(defn utf8-string
+  "The inverse: byte values back to the text they spell."
+  [bytes]
+  (call :utf8-string [bytes]))
+
 ;; ------------------------------------------------------------------- time
 
 (defn wall-nanos [] (call :wall-nanos []))
