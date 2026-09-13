@@ -239,6 +239,20 @@
 ;; around it after the frame.
 (defonce ^:private jump-context (atom nil))
 
+;; How many jumps have been served. `here-ward!` bumps it as it scrolls, and
+;; `end-ward!` reads it when it schedules and again when it runs: a jump that
+;; landed in between is one this frame belongs to, whatever `jump-context`
+;; says by then.
+;;
+;; The pending flag alone was not enough, and the trace says why. There is
+;; more than one `:scroll` on the chat screen — the message list and the
+;; people panel — so `end-ward!` and `here-ward!` are each called once per
+;; scroll per frame, and the callbacks interleave: the first scroll's
+;; here-ward serves the jump and clears the context, and the message list's
+;; end-ward then reads that nil as "no jump pending" and hauls the view back
+;; to the bottom. The scroll was right for one frame and gone by the next.
+(defonce ^:private jumps-served (atom 0))
+
 (defn- end-ward!
   "Put `k` at the end after this frame, when it should be.
 
@@ -277,16 +291,26 @@
                        (- (.-maxScrollExtent ^m/ScrollPosition pos) 24.0)))]
     (when (or (not= mark token) at-end)
       (swap! scroll-marks assoc k token)
-      (.addPostFrameCallback
-       (.-instance m/WidgetsBinding)
-       (fn [_]
-         ;; Not when a jump is pending: being taken to a line and being taken
-         ;; to the end are the same gesture as far as `jump-tick` is
-         ;; concerned — the screen renames the viewport either way — and the
-         ;; end is the wrong one of the two. By now the marked row has been
-         ;; built, so this knows which gesture it was.
-         (when (and (nil? @jump-context) (.-hasClients ctrl))
-           (.jumpTo ctrl (.-maxScrollExtent (.-position ctrl)))))))))
+      (let [served @jumps-served]
+        (.addPostFrameCallback
+         (.-instance m/WidgetsBinding)
+         (fn [_]
+           ;; Not when a jump is pending, and not when one was served after
+           ;; this callback was scheduled: being taken to a line and being
+           ;; taken to the end are the same gesture as far as `jump-tick` is
+           ;; concerned, and the end is the wrong one of the two.
+           ;;
+           ;; The counter is what makes that ordering-proof. The pending flag
+           ;; alone read right and was not: there is more than one `:scroll`
+           ;; on the chat screen, so these callbacks interleave with
+           ;; `here-ward!`'s, and the first scroll's here-ward serves the jump
+           ;; and clears the flag before the message list's end-ward ever
+           ;; looks at it. Every jump landed and was hauled back to the bottom
+           ;; in the same frame.
+           (when (and (nil? @jump-context)
+                      (= served @jumps-served)
+                      (.-hasClients ctrl))
+             (.jumpTo ctrl (.-maxScrollExtent (.-position ctrl))))))))))
 
 (defonce ^:private scroll-watch
   ;; Per `:scroll-key`: the controller currently being listened to, the
@@ -349,6 +373,11 @@
        ;; that may be gone.
        (reset! jump-context nil)
        (when (.-mounted c)
+         ;; Counted before the scroll rather than after it: an `end-ward!`
+         ;; callback queued behind this one has to see that this frame was
+         ;; spent on a jump, and `ensureVisible` answers a Future — by the
+         ;; time that completes, the callback it is racing has run.
+         (swap! jumps-served inc)
          (m/Scrollable.ensureVisible c .alignment 0.3)))
      ;; The callback is void and `ensureVisible` answers a Future: returned
      ;; from the tail, it is a value out of a function that has none to give,
@@ -672,7 +701,8 @@
          ;; The row a jump is aiming at, saying so as it is built. Here and
          ;; not in an arm of the `case` below, because the mark is a property
          ;; any tag may carry — it happens to be a `:vbox` today.
-         _ (when (:scroll-here p) (reset! jump-context ctx))
+         _ (when (:scroll-here p)
+             (reset! jump-context ctx))
          kids (children (body node))
          ;; One column builder for every container, so the rule about what
          ;; fills is applied in one place: children that take what is left are
