@@ -81,12 +81,19 @@
       (str/replace "\n" "\\n")))
 
 (defn tag-value
-  "One IRCv3 tag's value, unescaped, or nil."
+  "One IRCv3 tag's value, unescaped, or nil.
+
+  A tag written with no value at all and one written `key=` say the same
+  thing, which IRCv3 spells out and which this used to disagree with: the
+  bare form fell through as nil and the empty one came back as `\"\"`. A
+  caller asks `tag-value` whether a fact is there, and an empty string is a
+  fact that is there — which is how a `+reply=` on a line answering nothing
+  put a reply chip above it, pointing at a message no id could find."
   [tags key]
   (when tags
     (some (fn [pair]
             (let [[k v] (str/split pair #"=" 2)]
-              (when (= k key) (unescape-tag v))))
+              (when (= k key) (not-empty (unescape-tag v)))))
           (str/split tags #";"))))
 
 (defn nick-of
