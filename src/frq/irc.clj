@@ -104,14 +104,29 @@
   (when (:outbox conn)
     (flush-outbox-tls! conn)))
 
+(defn- trace!
+  "One line of the conversation with the server, under FRQ_TRACE.
+
+  Whole, not the first hundred characters: the tags come first and a line
+  carries a signature long enough to push every other tag past that cut, so
+  the truncated form could not answer what a `+reply` said — or whether there
+  was one — which is the question the trace exists for.
+
+  Except an `AUTHENTICATE` payload, which is the credential itself. A trace is
+  something you paste into a bug report, and a session token is not."
+  [dir line]
+  (when (System/getenv "FRQ_TRACE")
+    (let [line (str/trimr line)
+          line (if (str/starts-with? line "AUTHENTICATE ") "AUTHENTICATE <redacted>" line)]
+      (binding [*out* *err*] (println (str "frq/irc: " dir " " line))))))
+
 (defn- flush-outbox-tls! [conn]
   (let [pending (locking (:lock conn)
                   (let [q @(:outbox conn)]
                     (reset! (:outbox conn) [])
                     q))]
     (doseq [text pending]
-      (when (System/getenv "FRQ_TRACE")
-        (binding [*out* *err*] (println "frq/irc: >>" (str/trimr text))))
+      (trace! ">>" text)
       (try (write! conn text)
            (catch Exception e
              (binding [*out* *err*] (println "frq/irc: write failed:" (or (ex-message e) (str e))))
@@ -155,8 +170,7 @@
               lines (str/split acc #"\r?\n" -1)
               complete (butlast lines)]
           (doseq [line complete :when (seq (str/trim line))]
-            (when (System/getenv "FRQ_TRACE")
-              (binding [*out* *err*] (println "frq/irc: <<" (subs line 0 (min 100 (count line))))))
+            (trace! "<<" line)
             (let [msg (parse-line line)]
               (when (= "PING" (:command msg))
                 (send-line! conn (str "PONG :" (first (:params msg)))))

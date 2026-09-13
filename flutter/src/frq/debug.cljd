@@ -1,0 +1,54 @@
+(ns frq.debug
+  "A line of diagnostics from a running Flutter build, to a file.
+
+  Nothing else here reaches you. `print` is `cljd.core/print` and writes to
+  `*out*`, which is nowhere at all in a compiled bundle; `dart:developer`'s
+  `log` — what `frq.net.dart` uses, and what its comment claims reaches a
+  terminal under `just flutter-desktop` — goes to the VM service, so it too
+  is silent when the bundle is launched directly, which is what that recipe
+  does. Both were tried first, and both looked exactly like the code never
+  running. A file is the one sink that cannot be swallowed by whoever is
+  holding stdout.
+
+  Off unless `FRQ_JOT` names a path, so a `jot!` left in a hot build path
+  costs one `getenv`-backed deref and nothing else. The file is appended to
+  rather than truncated: the interesting run is usually the one after the one
+  that told you what to look at.
+
+      FRQ_JOT=/tmp/frq-jump.log just flutter-desktop run
+
+  Written for a jump that fired, scrolled, and was silently undone in the same
+  frame — see `frq.hiccup/end-ward!`. What settled it was not one line but the
+  order of several from different callbacks, which is the shape of question
+  this answers well: who ran, in what order, with what numbers. A debugger
+  cannot ask it, because stopping the app is what makes the frame stop being
+  a frame."
+  (:require ["dart:io" :as io]))
+
+(defonce ^:private sink
+  ;; Read once. An env var does not change under a running app, and this is
+  ;; called from inside build and post-frame callbacks.
+  (delay (let [p (get (.-environment io/Platform) "FRQ_JOT")]
+           (when (and p (seq p)) p))))
+
+(defn on?
+  "Whether anything is listening, for a caller with expensive diagnostics to
+  build. `jot!` asks this itself; this is for the `(when (debug/on?) ...)`
+  around a string that costs something to make."
+  []
+  (some? @sink))
+
+(defn jot!
+  "Append one line, when `FRQ_JOT` named a file. Answers nil either way.
+
+  Never throws: a diagnostic that takes the app down with it is worse than no
+  diagnostic, and the path may be unwritable for reasons that have nothing to
+  do with what is being looked at."
+  [& parts]
+  (when-let [path @sink]
+    (try
+      (.writeAsStringSync (io/File. path)
+                          (str (apply str parts) "\n")
+                          .mode io/FileMode.append)
+      (catch Exception _ nil)))
+  nil)

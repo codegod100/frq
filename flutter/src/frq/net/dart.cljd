@@ -17,6 +17,7 @@
   (:require ["dart:convert" :as conv]
             ["dart:developer" :as dev]
             ["dart:io" :as io]
+            [frq.debug :as debug]
             [frq.irc.parse :as parse]))
 
 ;; Whether to log every line in and out, under the name `frq.wire`.
@@ -26,8 +27,16 @@
 ;; server sent it back. A field on a parsed message says what we made of a
 ;; line; only the line says what arrived.
 ;;
-;; `dart:developer` rather than stdout, so it reaches both targets the same
-;; way — a terminal under `just flutter-desktop`, and `adb logcat` on a phone.
+;; `dart:developer` rather than stdout, because stdout is nowhere: `print` in
+;; a compiled bundle writes to a `*out*` nothing is holding. `logcat` picks
+;; this up on a phone, which is what it is for.
+;;
+;; It does not reach a terminal under `just flutter-desktop`, though — that
+;; recipe launches the bundle itself, and `dev/log` goes to the VM service,
+;; not to the process's output. This comment used to claim otherwise, and a
+;; session spent looking for the wire log on the desktop is how that was
+;; found out. `frq.debug` is the way to see it there: `FRQ_JOT` names a file
+;; and every line lands in it.
 ;;
 ;; A comment rather than a docstring because `defonce` takes none: it is
 ;; `(defonce name expr)` and nothing else, and the extra form is an arity
@@ -36,7 +45,16 @@
 
 (defn- wire! [direction line]
   (when @wire-log?
-    (dev/log (str direction " " line) .name "frq.wire")))
+    (dev/log (str direction " " line) .name "frq.wire")
+    ;; And to the file when one is asked for, which is the only way to read
+    ;; this on a desktop build. Redacted the way the desktop's own trace is:
+    ;; a line beginning `AUTHENTICATE` carries the credential itself, and a
+    ;; log is something you paste into a bug report.
+    (when (debug/on?)
+      (debug/jot! direction " "
+                  (if (.startsWith (str line) "AUTHENTICATE ")
+                    "AUTHENTICATE <redacted>"
+                    line)))))
 
 (defn ^:async connect!
   "Open a connection and start reading it.
