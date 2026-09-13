@@ -148,11 +148,43 @@
         (do (aset ary i (first s))
             (recur (next s) (inc i)))))))
 
+(defonce ^:private http (io/HttpClient.))
+
+(defn ^:async ^:private get-text!
+  "One GET, its body as a string — nil for anything but a 200, and nil for a
+  request that never got there."
+  [url headers]
+  (try
+    (let [^io/HttpClientRequest req (await (.getUrl ^io/HttpClient http
+                                                    (Uri.parse (str url))))]
+      (.set (.-headers req) "user-agent" "frq")
+      (doseq [[k v] headers] (.set (.-headers req) (str k) (str v)))
+      (let [^io/HttpClientResponse resp (await (.close req))]
+        (if (= 200 (.-statusCode resp))
+          (await (.join (.transform resp (.-decoder conv/utf8))))
+          ;; Drained, or `HttpClient` holds the connection open and hands it
+          ;; back out — the same rule `frq.media.dart` learned.
+          (do (await (.drain resp)) nil))))
+    (catch Exception _ nil)))
+
+(defn ^:async ^:private fetch-text!
+  "`frq.io/fetch-text!` over dart:io.
+
+  Async rather than a `.then` on what `get-text!` returns: cljd sees that
+  return as dynamic and says so, and a call it cannot resolve is one that
+  fails at run time rather than at the compiler. The Future this returns is
+  nobody's to wait on — `on-done` is where the answer goes, which is the whole
+  shape of the seam."
+  [url headers on-done]
+  (on-done (await (get-text! url headers)))
+  nil)
+
 (defn install!
   "`dir` is the app's storage directory, already awaited from path_provider."
   [dir]
   (fio/install!
    {:getenv               (fn [n] (get (.-environment io/Platform) n))
+    :fetch-text!          fetch-text!
     ;; Android picks the activity: whatever answers an https VIEW intent,
     ;; which is the browser the reader already uses and is already signed in
     ;; to. `externalApplication` and not an in-app web view on purpose — a

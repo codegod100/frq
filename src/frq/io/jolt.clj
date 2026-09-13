@@ -5,6 +5,7 @@
   the seam is that `frq.store` and `frq.clock` under `common/` never mention a
   backend. Every desktop entry point requires this before `frq.app`."
   (:require [clojure.string :as str]
+            [frq.atproto :as atproto]
             [frq.io :as io]
             [frq.platform :as platform]
             [jolt.host :as host]))
@@ -101,9 +102,27 @@
     true
     (catch Exception _ false)))
 
+(defn- fetch-text!
+  "`frq.io/fetch-text!` over the same hand-rolled HTTPS `frq.atproto` uses.
+
+  On a future, because the caller is a UI thread and this is a socket: the
+  answer arrives at `on-done` whenever it arrives, and a request that throws
+  answers nil rather than taking the thread down with it. https only — every
+  URL this is asked for is one frq built out of the host the reader signed in
+  to."
+  [url headers on-done]
+  (future
+    (on-done
+     (try
+       (let [[_ host path] (re-matches #"https://([^/]+)(/.*)?" (str url))]
+         (when host
+           (atproto/request host (or path "/") nil headers)))
+       (catch Exception _ nil)))))
+
 (io/install!
  {:getenv               host/getenv
   :open-url!            platform/open-url!
+  :fetch-text!          fetch-text!
   :config-dir           config-dir
   :file-exists?         host/file-exists?
   :directory?           host/directory?

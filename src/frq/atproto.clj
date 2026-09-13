@@ -37,25 +37,32 @@
 
 (defn request
   "One HTTPS request, connection-per-request. Returns the response body.
-  `body` nil makes it a GET."
-  [host path body]
-  (tls/ensure-native!)
-  (let [t (tls/tls-connect host 443)
-        payload (or body "")
-        head (str (if body "POST " "GET ") path " HTTP/1.1\r\n"
-                  "Host: " host "\r\n"
-                  "User-Agent: frq\r\n"
-                  "Accept: application/json\r\n"
-                  (when body
-                    (str "Content-Type: application/json\r\n"
-                         "Content-Length: " (count (.getBytes payload)) "\r\n"))
-                  "Connection: close\r\n\r\n")]
-    (try
-      (tls/tls-write t (.getBytes (str head payload)))
-      (let [resp (read-all! t)
-            [_ b] (str/split resp #"\r\n\r\n" 2)]
-        (or b ""))
-      (finally (try (tls/tls-close t) (catch Exception _ nil))))))
+  `body` nil makes it a GET.
+
+  `headers` are written after the ones every request here carries, for a
+  caller that has to identify itself — `frq.io.jolt`'s `fetch-text!` sends the
+  freeq bearer this way. A header named twice is the caller's problem; nothing
+  here overrides what it is given."
+  ([host path body] (request host path body nil))
+  ([host path body headers]
+   (tls/ensure-native!)
+   (let [t (tls/tls-connect host 443)
+         payload (or body "")
+         head (str (if body "POST " "GET ") path " HTTP/1.1\r\n"
+                   "Host: " host "\r\n"
+                   "User-Agent: frq\r\n"
+                   "Accept: application/json\r\n"
+                   (apply str (for [[k v] headers] (str k ": " v "\r\n")))
+                   (when body
+                     (str "Content-Type: application/json\r\n"
+                          "Content-Length: " (count (.getBytes payload)) "\r\n"))
+                   "Connection: close\r\n\r\n")]
+     (try
+       (tls/tls-write t (.getBytes (str head payload)))
+       (let [resp (read-all! t)
+             [_ b] (str/split resp #"\r\n\r\n" 2)]
+         (or b ""))
+       (finally (try (tls/tls-close t) (catch Exception _ nil)))))))
 
 ;; ------------------------------------------------------------------ JSON
 

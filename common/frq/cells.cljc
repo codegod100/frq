@@ -51,6 +51,12 @@
 (defonce search (atom ""))
 
 (defonce broker-token (atom nil))
+
+;; What the server hands out as a NOTICE the moment SASL succeeds, for the
+;; half of freeq that is REST rather than IRC. Only `frq.replies` uses it so
+;; far — asking what a msgid was, for a reply pointing at a line that arrived
+;; already collapsed. Cleared on disconnect with everything else a session is.
+(defonce api-bearer (atom nil))
 (defonce login-url (atom nil))            ; shown while the browser is open
 
 ;; ------------------------------------------------------------------- chat
@@ -265,7 +271,7 @@
   []
   [screen status error connecting? form-host form-port form-tls? form-nick
    auth-mode form-handle form-app-password session channels current
-   join-input search broker-token login-url draft editing replying-to
+   join-input search broker-token api-bearer login-url draft editing replying-to
    attachment jump-tick show-users? hide-chat-list? overview? at-present?
    emoji-group emoji-search highlight jump-to lightbox overview-return
    saved-to reacting window-height window-width reaction-hover hide-join-part?

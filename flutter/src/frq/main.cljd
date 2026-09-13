@@ -17,6 +17,7 @@
   compiler: the clock and the saved session, read through exactly the
   namespaces the desktop reads them through."
   (:require ["dart:async" :as async]
+            [clojure.string :as str]
             ["dart:io" :as dio]
             ["package:flutter/material.dart" :as m]
             ["package:path_provider/path_provider.dart" :as pp]
@@ -45,6 +46,7 @@
             [frq.members :as members]
             [frq.reactions :as reactions]
             [frq.edits :as edits]
+            [frq.replies :as replies]
             [frq.profile :as profile]
             [frq.avatars.dart :as avatars]
             ["package:image_picker/image_picker.dart" :as picker]
@@ -122,12 +124,17 @@
   are this half's. The links are read again off the new text because a
   revision can add one or take one away, and a row drawing the picture its
   line no longer mentions is the shape that gave it away. The desktop's
-  `frq.state/edit-message!` is the same function over its own atom."
-  [room msgid from text]
-  (let [out (edits/apply-edit @cells/channels room msgid from text
-                              #(assoc % :images (images-in text)))]
-    (reset! cells/channels (:channels out))
-    (:result out)))
+  `frq.state/edit-message!` is the same function over its own atom.
+
+  `revision` is the msgid the server gave the edit itself, kept on the message
+  because an answer to an already-rewritten line names that one."
+  ([room msgid from text] (edit-message! room msgid from text nil))
+  ([room msgid from text revision]
+   (let [out (edits/apply-edit @cells/channels room msgid from text
+                               {:decorate #(assoc % :images (images-in text))
+                                :revision revision})]
+     (reset! cells/channels (:channels out))
+     (:result out))))
 
 ;; ------------------------------------------------------------------- rooms
 ;;
@@ -418,10 +425,14 @@
         (avatars/fetch! (profile/actor (:account m) who) bump!)
         (if edit-of
           ;; A revision is not a new line: it replaces the one it names, under
-          ;; that line's own id and never the revision's own wire msgid, which
-          ;; nothing else refers to. One older than the backlog we hold has
-          ;; nothing here to replace, and is shown as itself rather than lost.
-          (when (= :absent (edit-message! name edit-of who text))
+          ;; that line's own id rather than its own wire msgid — which is not
+          ;; nothing, though: an answer to a line already rewritten names the
+          ;; revision, because the revision is the wording being answered, so
+          ;; it rides along as a name the message also answers to. One older
+          ;; than the backlog we hold has nothing here to replace, and is
+          ;; shown as itself rather than lost.
+          (when (= :absent (edit-message! name edit-of who text
+                                          (irc/tag-value tags "msgid")))
             (swap! cells/channels
                    #(-> (rooms/ensure-channel % name)
                         (update-in [name :messages] conj
@@ -430,6 +441,9 @@
                                     :images (images-in text)
                                     :did (:account m)
                                     :id edit-of
+                                    ;; Same two names, for the line shown in
+                                    ;; place of the original.
+                                    :edit-ids (set (remove nil? [(irc/tag-value tags "msgid")]))
                                     :at at
                                     :actor (profile/actor (:account m) who)
                                     :edited? true})
@@ -783,6 +797,20 @@
                                           ;; because "refused" is what a
                                           ;; reader needs and the code is what
                                           ;; a bug report does.
+                                          ;; The server's half of freeq that
+                                          ;; is REST rather than IRC: one
+                                          ;; NOTICE, straight after SASL
+                                          ;; succeeds, and the only way to get
+                                          ;; a bearer. Kept rather than shown
+                                          ;; — `frq.replies` spends it asking
+                                          ;; what a msgid was.
+                                          (and (= "NOTICE" cmd)
+                                               (str/starts-with? (str text)
+                                                                 "API-BEARER "))
+                                          (reset! cells/api-bearer
+                                                  (str/trim (subs (str text)
+                                                                  (count "API-BEARER "))))
+
                                           (= "FAIL" cmd)
                                           (let [ps (vec (:params m))
                                                 why (str (or (first ps) "Request")
@@ -849,6 +877,9 @@
   (reset! closing? true)
   (when-let [c @conn] (net/close! c))
   (reset! conn nil)
+  ;; The bearer is this session's, and so is every answer asked for with it.
+  (reset! cells/api-bearer nil)
+  (replies/forget-asks!)
   (forget-memberships!)
   (reset! cells/connecting? false)
   (reset! cells/status "Not connected")
@@ -1044,10 +1075,11 @@
       (reset! cells/replying-to nil)
       (reset! cells/draft ""))))))
 
-(defn- message-by-id [room id]
-  (when id
-    (first (filter #(= id (rooms/row-id %))
-                   (get-in @cells/channels [room :messages])))))
+(defn- message-by-id
+  "The message `id` names — by any name it has had. `frq.rooms/answers-to?`
+  is the rule, shared so the desktop resolves a reply the same way."
+  [room id]
+  (rooms/message-by-id @cells/channels room id))
 
 (defn- toggle-reaction!
   "Put my emoji on a message, or take it off if it is already mine.
@@ -1184,6 +1216,10 @@
       ;; Answering. Both are a cell and nothing else — what the composer does
       ;; with `replying-to` is the shared screen's business.
       :reply-to! (fn [m] (reset! cells/replying-to (select-keys m [:id :from :text])))
+      ;; A reply chip that found nothing asks what that msgid was. `bump!` is
+      ;; the same repaint a picture or a face arriving uses — the same shape
+      ;; of answer, landing after the row that wanted it was drawn.
+      :resolve-reply! (fn [channel id] (replies/resolve! channel id bump!))
       :cancel-reply! (fn [] (reset! cells/replying-to nil))
 
       ;; Reacting. The pill itself, then the picker behind it.
@@ -1266,10 +1302,11 @@
       :cancel-edit! (fn []
                       (reset! cells/editing nil)
                       (reset! cells/draft ""))
-      :message-by-id (fn [room id]
-                       (->> (get-in @cells/channels [room :messages])
-                            (filter #(= id (:id %)))
-                            first))
+      ;; By either name, like the desktop's: a line this client sent has no
+      ;; server msgid yet and is pointed at by the `:local-id` it made for
+      ;; itself, so matching on `:id` alone lost the chip and the way back to
+      ;; it for every message of our own.
+      :message-by-id (fn [room id] (message-by-id room id))
       ;; Where a face is. A URL and not a path, which is what the desktop
       ;; answers — see `frq.avatars.dart`, and `:avatar` in `frq.hiccup`,
       ;; which is the one place that has to know which it got. Both names
@@ -1308,6 +1345,11 @@
       :quit! (fn [] (dio/exit 0))
       :forget-session! (fn []
                          (reset! cells/broker-token nil)
+                         ;; The bearer belongs to the session being dropped,
+                         ;; and what was asked under it deserves asking again
+                         ;; under the next one.
+                         (reset! cells/api-bearer nil)
+                         (replies/forget-asks!)
                          (reset! cells/session nil))
       ;; Back to the newest line. Both halves, in the order `frq.state` gives
       ;; them: the flag is what takes the button off the screen, and the tick

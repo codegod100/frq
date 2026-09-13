@@ -545,6 +545,12 @@
 (defn- goto-message!
   "Show message `id`, in `channel`, and say which one it was.
 
+  `id` is a `frq.rooms/row-id` — what the row on screen calls itself, and what
+  `message-row` matches a scroll target against. A caller holding some other
+  name for the same line (a reply names the revision of a message that has
+  been rewritten; see `frq.rooms/answers-to?`) resolves it to the message
+  first and asks for that.
+
   Three things in a fixed order: be in the room, aim the scroll at the line,
   and mark it once it is there. `jump-to` comes off again as soon as the frame
   that scrolled has been painted — a scroll target that stays set pins the
@@ -584,15 +590,30 @@
   without knowing what it answers, and the message it answers is usually off
   the top of the screen. Clicking takes you there."
   [channel id]
+  ;; A miss is a question rather than an answer. The line being answered may
+  ;; be one this buffer holds under another name — replay collapses an edited
+  ;; message onto the id it kept, and the reply names the revision — so the
+  ;; first render that cannot find it asks freeq what that msgid was, once.
+  ;; `frq.replies` does the asking, remembers what it has asked, and repaints
+  ;; only when it learned something, so the branch below is chosen again with
+  ;; the answer in hand.
+  (actions/resolve-reply! channel id)
   [:vbox {:key :reply}
    (if-let [target (actions/message-by-id channel id)]
      ;; A link, not a button: the chip is a pointer back to a line, not an
      ;; action, and a filled pill above every answer was the loudest thing in
      ;; the column.
      [:link {:label (str "↩ " (:from target) ": " (summarise target 48))
+             ;; Aimed at what the row calls itself, which is not always what
+             ;; the reply called it: a line found through `answers-to?` was
+             ;; found under one of its other names — a revision's msgid — and
+             ;; the row on screen is keyed by `row-id`. Scrolling to the name
+             ;; in the reply landed on nothing at all, so the chip quoted the
+             ;; right message and went nowhere when it was pressed.
+             ;;
              ;; The line being answered is in the room already open, so the
              ;; next frame is the one that scrolls.
-             :on-click #(goto-message! channel id 120 2000)}]
+             :on-click #(goto-message! channel (rooms/row-id target) 120 2000)}]
      ;; The message it answers is older than this buffer goes.
      [:dim-label {:label "↩ replying to an earlier message"}])])
 

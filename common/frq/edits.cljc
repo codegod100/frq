@@ -5,6 +5,13 @@
   keeps its reactions, replies and pins attached to it. So an edit is not a new
   line: it replaces the one it names, in place, under that line's own id.
 
+  The revision's own msgid is kept beside it rather than dropped. Nothing else
+  refers to it, this used to say, which was very nearly true and wrong where
+  it counted: someone answering a line that has already been rewritten replies
+  to the wording in front of them, so the `+reply` names the revision. A
+  client that threw that id away held the message under a name no reply used,
+  and every such answer came out as a chip pointing at nothing.
+
   Pure over the channels map, like `frq.members` and `frq.reactions`, and
   shared for the same reason — who may rewrite what is the server's rule and
   neither half of frq gets a say in it."
@@ -24,15 +31,20 @@
   that believed the wire alone would let a hostile relay put words in somebody
   else's mouth.
 
-  `decorate` is applied to the rewritten message, for whatever the caller
-  derives from the text it now carries — the desktop re-reads the picture links
-  out of it there. `frq.media` is not portable and this does not need it to be."
+  `opts` are `:decorate`, applied to the rewritten message for whatever the
+  caller derives from the text it now carries — the desktop re-reads the
+  picture links out of it there; `frq.media` is not portable and this does not
+  need it to be — and `:revision`, the msgid the server gave the edit itself,
+  which joins `:edit-ids` on the message so a reply naming it still finds the
+  line it belongs to. See `frq.rooms/answers-to?`."
   ([channels channel msgid from text]
-   (apply-edit channels channel msgid from text identity))
-  ([channels channel msgid from text decorate]
+   (apply-edit channels channel msgid from text nil))
+  ([channels channel msgid from text opts]
    (if-not (and channel msgid)
      {:channels channels :result :absent}
-     (let [msgs (get-in channels [channel :messages])]
+     (let [{:keys [decorate revision]} (if (map? opts) opts {:decorate opts})
+           decorate (or decorate identity)
+           msgs (get-in channels [channel :messages])]
        (if-not msgs
          {:channels channels :result :absent}
          (let [result (volatile! :absent)
@@ -41,9 +53,13 @@
                                (if (= (str/lower-case (or (:from msg) ""))
                                       (str/lower-case (or from "")))
                                  (do (vreset! result :applied)
-                                     (decorate (assoc msg
-                                                      :text text
-                                                      :edited? true)))
+                                     (decorate (cond-> (assoc msg
+                                                              :text text
+                                                              :edited? true)
+                                                 revision
+                                                 (update :edit-ids
+                                                         (fnil conj #{})
+                                                         revision))))
                                  (do (vreset! result :refused) msg))
                                msg))
                            msgs)]

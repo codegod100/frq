@@ -10,7 +10,8 @@
   reader pressing a pill here."
   (:require [clojure.string :as str]
             [frq.cells :as cells]
-            [frq.emoji :as emoji]))
+            [frq.emoji :as emoji]
+            [frq.rooms :as rooms]))
 
 (defn parse-tally
   "The server's tally of what is already on a message, as
@@ -49,13 +50,17 @@
 
   The message it names may not be there — a reaction on something older than
   the backlog we asked for — and then there is nothing to show it on, so
-  nothing happens."
+  nothing happens.
+
+  Named the way a reply names one: somebody reacting to a line that has since
+  been rewritten puts the emoji on the revision's msgid, which is a name the
+  message answers to. See `frq.rooms/answers-to?`."
   [channels channel msgid emoji nick on?]
   (if (and channel msgid (seq (or emoji "")))
     (if-let [msgs (get-in channels [channel :messages])]
       (assoc-in channels [channel :messages]
                 (mapv (fn [msg]
-                        (if (= msgid (:id msg))
+                        (if (rooms/answers-to? msg msgid)
                           (update msg :reactions with-reaction emoji nick on?)
                           msg))
                       msgs))

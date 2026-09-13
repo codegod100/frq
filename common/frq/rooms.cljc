@@ -37,6 +37,31 @@
   [m]
   (or (:id m) (:local-id m)))
 
+(defn answers-to?
+  "Whether `id` names this line — by any of the names it has had.
+
+  `row-id` is what this client calls a line; this is what everybody else may
+  call it. A message keeps the id it was born with through every revision (see
+  `frq.edits`), but the server gives each revision a msgid of its own, and
+  anyone replying to a line that has already been rewritten answers the
+  wording in front of them — so the `+reply` names the revision rather than
+  the original. Both are this message, so both find it.
+
+  The local name counts too: a line this client has just sent has no msgid
+  until the server echoes it back, and its own reply chip points at the
+  `:local-id` until then."
+  [m id]
+  (boolean (and id (or (= id (:id m))
+                       (= id (:local-id m))
+                       (contains? (:edit-ids m) id)))))
+
+(defn message-by-id
+  "The message `id` names, if this buffer still holds it. See `answers-to?`
+  for what counts as naming one."
+  [channels channel id]
+  (when id
+    (first (filter #(answers-to? % id) (get-in channels [channel :messages])))))
+
 (defn last-preview [buffer]
   (if-let [m (last (:messages buffer))]
     (str (:from m) ": " (:text m))

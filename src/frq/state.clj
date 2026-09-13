@@ -12,6 +12,7 @@
             [glimmer.ratom :as r :refer [atom]]
             [frq.actions :as actions]
             [frq.cells :as cells]
+            [frq.replies :as replies]
             [jolt.host :as host]
             [frq.atproto :as atproto]
             [frq.av :as av]
@@ -298,7 +299,7 @@
   and `:reply-to` is the one it answers. `:reactions` is what people have put
   on it already, which on a replayed backlog the server hands over in full."
   ([channel from text] (push-message! channel from text {}))
-  ([channel from text {:keys [at did id reply-to reactions edited?]}]
+  ([channel from text {:keys [at did id reply-to reactions edited? edit-ids]}]
    (let [at (or at (clock/now-ms))
          ;; A name of our own where the server gave none. See `local-id`.
          mine (when-not id (local-id channel from text at))
@@ -350,6 +351,9 @@
                                 ;; `:id` is what a reply points at, and
                                 ;; `:reply-to` is what this one points at.
                                 :id id :local-id mine :reply-to reply-to
+                                ;; Any other msgid this same line answers to
+                                ;; — a revision's. See `frq.rooms/answers-to?`.
+                                :edit-ids (set (remove nil? edit-ids))
                                 ;; The sender has since rewritten this line.
                                 ;; Replay says so with a tag rather than by
                                 ;; sending the revision, so a message can
@@ -460,12 +464,16 @@
 
   `frq.edits` is the fold and what it answers; the atom and the picture links
   are this half's. A message keeps the id it was born with across every
-  revision, which is what keeps its reactions, replies and pins attached to it."
-  [channel msgid from text]
-  (let [out (edits/apply-edit @channels channel msgid from text
-                              #(assoc % :images (media/image-urls text)))]
-    (reset! channels (:channels out))
-    (:result out)))
+  revision, which is what keeps its reactions, replies and pins attached to it
+  — and `revision`, the msgid of the edit itself, is kept on it too, because a
+  reply to an already-rewritten line names that one."
+  ([channel msgid from text] (edit-message! channel msgid from text nil))
+  ([channel msgid from text revision]
+   (let [out (edits/apply-edit @channels channel msgid from text
+                               {:decorate #(assoc % :images (media/image-urls text))
+                                :revision revision})]
+     (reset! channels (:channels out))
+     (:result out))))
 
 (defn- names-line [channel names]
   (swap! channels #(members/with-names (ensure-channel % channel) channel names)))
@@ -650,15 +658,23 @@
                       replayed-edit? (= "1" (irc/tag-value tags "+freeq.at/edited"))]
                   (if edit-of
                     ;; A revision is not a new line: it replaces the one it
-                    ;; names, under that line's own id — never the revision's
-                    ;; wire msgid, which nothing else refers to.
-                    (when (= :absent (edit-message! buffer edit-of from text))
+                    ;; names, under that line's own id rather than its own
+                    ;; wire msgid. That msgid is not nothing, though — an
+                    ;; answer to a line already rewritten names the revision,
+                    ;; because the revision is the wording being answered — so
+                    ;; it rides along on the message as a name it also
+                    ;; answers to.
+                    (when (= :absent (edit-message! buffer edit-of from text
+                                                    (irc/tag-value tags "msgid")))
                       ;; The original is outside the backlog we hold, so show
                       ;; the current text rather than dropping what was said.
                       (push-message! buffer from text
                                      {:at at
                                       :did (:account msg)
                                       :id edit-of
+                                      ;; Same two names, for the line we are
+                                      ;; showing in place of the original.
+                                      :edit-ids #{(irc/tag-value tags "msgid")}
                                       :edited? true
                                       :reply-to (or (irc/tag-value tags "+reply")
                                                     (irc/tag-value tags "+draft/reply"))}))
@@ -799,10 +815,21 @@
                (when (str/starts-with? (or target "") "#")
                  (apply-mode! target modes args)))
       "NOTICE"
-      (if-let [ch @policy-asking]
-        (swap! channels #(update-in (ensure-channel % ch) [ch :policy-text]
-                                    (fnil conj []) (str/trimr (or (last params) ""))))
-        (reset! status (or (last params) @status)))
+      (let [text (str/trimr (or (last params) ""))]
+        (cond
+          ;; The server's half of freeq that is REST rather than IRC: sent
+          ;; once, straight after SASL succeeds, and the only way to get one.
+          ;; Kept rather than shown — see `frq.replies`, which spends it
+          ;; asking what a msgid was.
+          (str/starts-with? text "API-BEARER ")
+          (reset! cells/api-bearer (str/trim (subs text (count "API-BEARER "))))
+
+          @policy-asking
+          (swap! channels #(update-in (ensure-channel % @policy-asking)
+                                      [@policy-asking :policy-text]
+                                      (fnil conj []) text))
+
+          :else (reset! status (or (last params) @status))))
       ("372" "375" "376" "002" "003" "004")
       (reset! status (or (last params) @status))
       ;; 473 invite-only, 474 banned, 475 keyed, 477 needs registration,
@@ -848,6 +875,11 @@
       ;; when the session ends, and signing with it afterwards would be
       ;; signing with a key nobody can check.
       "*DISCONNECTED*" (do (msgsig/forget!)
+                           ;; The bearer belongs to the session that is over,
+                           ;; and what was asked under it deserves asking
+                           ;; again under the next one.
+                           (reset! cells/api-bearer nil)
+                           (replies/forget-asks!)
                            (reset! conn nil)
                            (reset! connecting? false)
                            (swap! channels
@@ -1004,6 +1036,8 @@
   []
   (store/clear-session!)
   (reset! broker-token nil)
+  (reset! cells/api-bearer nil)
+  (replies/forget-asks!)
   (reset! session nil)
   (reset! auth-mode :guest)
   (reset! status "Not connected"))
@@ -1530,11 +1564,11 @@
 (defn message-by-id
   "The message a reply points at, if this buffer still holds it.
 
-  By either name, since a jump may be aiming at a line the server never gave
-  one to. See `local-id`."
+  By any name it has had — a `:local-id` for a line the server never named,
+  and the msgid of any revision of it. `frq.rooms/answers-to?` is that rule,
+  shared so both halves resolve a reply the same way."
   [channel id]
-  (when id
-    (first (filter #(= id (rooms/row-id %)) (get-in @channels [channel :messages])))))
+  (rooms/message-by-id @channels channel id))
 
 (defn react-from-picker!
   "Put the chosen emoji on the message the picker was opened for, and close it.
@@ -1626,6 +1660,11 @@
   :react-from-picker! react-from-picker!
   :recent-everywhere recent-everywhere
   :reply-to! reply-to!
+  ;; A reply chip that found nothing asks what that msgid was; the repaint is
+  ;; the same tick a picture or a face arriving uses, because it is the same
+  ;; shape of answer — something a row read, arriving after the row was drawn.
+  :resolve-reply! (fn [channel id]
+                    (replies/resolve! channel id #(swap! media-tick inc)))
   :start-edit! start-edit!
   :toggle-reaction! toggle-reaction!
   :unhover-reaction! unhover-reaction!})

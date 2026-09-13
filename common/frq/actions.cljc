@@ -108,6 +108,7 @@
 (defn react-from-picker! [& args] (call :react-from-picker! args))
 (defn recent-everywhere [& args] (call :recent-everywhere args))
 (defn reply-to! [& args] (call :reply-to! args))
+(defn resolve-reply! [& args] (call :resolve-reply! args))
 (defn start-edit! [& args] (call :start-edit! args))
 (defn toggle-reaction! [& args] (call :toggle-reaction! args))
 (defn unhover-reaction! [& args] (call :unhover-reaction! args))

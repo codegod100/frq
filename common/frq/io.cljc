@@ -120,7 +120,7 @@
   [bytes]
   (call :utf8-string [bytes]))
 
-;; ------------------------------------------------------------------- time
+;; ---------------------------------------------------------------- network
 
 (defn open-url!
   "Hand `url` to whatever shows web pages here, and say whether that worked.
@@ -131,6 +131,25 @@
   the OAuth screen shows the URL so it can be opened by hand."
   [url]
   (boolean (call :open-url! [url])))
+
+(defn fetch-text!
+  "Ask `url` for its body, as text, and hand it to `on-done` — nil where the
+  request could not be made or the server refused.
+
+  Off whatever thread the caller is on: the desktop drops it on a future and
+  Dart awaits it, so neither blocks a frame. The callback is the only answer;
+  there is no synchronous form, because one of the two sides cannot give one.
+
+  `headers` is a map of name to value, which is the whole reason this is here
+  rather than in `frq.media`: a picture is fetched by URL alone, and asking
+  freeq about a message means carrying the bearer it handed out at sign-in.
+
+  Text and not parsed JSON: the two sides have very different JSON, and
+  `frq.atproto.core/json-*` reads a string on both."
+  [url headers on-done]
+  (call :fetch-text! [url headers on-done]))
+
+;; ------------------------------------------------------------------- time
 
 (defn wall-nanos [] (call :wall-nanos []))
 (defn mono-nanos [] (call :mono-nanos []))
