@@ -9,8 +9,11 @@ memory long before it finishes, and the minutes spent finding that out are
 minutes not spent on the change. So:
 
 ```bash
-modal run containers/frq/container.py        # nix build .#frq, on Modal
+modal run .modal/frq/container.py   # .#appimage, on Modal
 ```
+
+The container is `.modal/`, not a fourth source tree: it is CI config that
+happens to live here, the way `.github/` would be.
 
 `--dry-run` locally to see what *would* be built, then hand the build to Modal.
 The one exception is a derivation you already know is trivial and already
@@ -52,7 +55,7 @@ Let them write to the terminal, or `tee` them if you want a copy to grep
 afterwards:
 
 ```bash
-modal run containers/frq/container.py 2>&1 | tee /tmp/frq-build.log
+modal run .modal/frq/container.py 2>&1 | tee /tmp/frq-build.log
 ```
 
 Trim afterwards, on the file, where the whole run is still there to re-read.
