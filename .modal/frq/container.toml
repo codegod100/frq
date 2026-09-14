@@ -12,6 +12,14 @@ runtime     = "sandbox"
 # the point of copying rather than fetching.
 context = "../.."
 include = ["."]
+# The build state a local checkout carries: 395MB of a 441MB repo, uploaded on
+# every start and wanted by nothing out there. Flutter builds into a volume of
+# its own, and the jolt and clojure caches are this machine's.
+ignore  = [
+    "flutter/build", "flutter/.home", "flutter/.dart_tool",
+    "flutter/.clojuredart", "flutter/.cpcache",
+    ".jolt", ".cpcache", "result", "build", ".git",
+]
 
 # The Modal Volume that makes a second build cheap. Mounted at run time, which
 # is when the build happens here -- nothing is written to it while the image is
@@ -95,6 +103,10 @@ fi
 env     = { }
 
 [nix]
+# Every nix command in the container reads the mounted cache, including one
+# typed by hand in a shell. Passing --extra-substituters per command only ever
+# covered the scripts.
+substituters = ["file:///nix-cache"]
 # No devShell: we want `nix build`, not a shell to run something inside, so
 # there is nothing to warm at build time and no reason for the ptyshim. The
 # build happens at run time, in the Sandbox, on a real VM -- which is the

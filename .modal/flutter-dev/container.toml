@@ -11,6 +11,30 @@ runtime     = "sandbox"
 # levels up and `.` is the whole tree.
 context = "../.."
 include = ["."]
+# `dev` is the shell you actually want. Bare `nix develop` here resolves to the
+# flake's default shell -- libcosmic, jolt-native, a thousand crates of Rust --
+# which is the wrong tree and an expensive way to find out.
+# The devShell, baked in rather than entered. `print-dev-env` writes the whole
+# environment out as shell -- PATH, the compiler, every variable mkShell sets
+# -- and realises its inputs on the way, so the closure becomes an image layer
+# instead of a fetch every container pays for. Sourcing it from .bashrc means a
+# shell attached to this container *is* the devShell: no `nix develop`, no
+# clone of the flake's git inputs, no wait.
+#
+# `dev` stays for the case where the baked env is stale against a flake edit.
+commands = [
+  "nix print-dev-env /app#flutter-desktop --accept-flake-config > /etc/devshell.sh",
+  "echo '. /etc/devshell.sh' >> /root/.bashrc",
+  "printf '#!/bin/sh\\nexec nix develop /app#flutter-desktop \"$@\"\\n' > /usr/local/bin/dev && chmod +x /usr/local/bin/dev",
+]
+# The build state a local checkout carries: 395MB of a 441MB repo, uploaded on
+# every start and wanted by nothing out there. Flutter builds into a volume of
+# its own, and the jolt and clojure caches are this machine's.
+ignore  = [
+    "flutter/build", "flutter/.home", "flutter/.dart_tool",
+    "flutter/.clojuredart", "flutter/.cpcache",
+    ".jolt", ".cpcache", "result", "build", ".git",
+]
 
 # Two volumes doing two different jobs. `nix-cache` is the binary cache every
 # container here reads from and writes back to. `devshell` is the working
@@ -52,7 +76,7 @@ set -e
 # devShell it keeps the state of. Anything else using this volume picks its
 # own name and the two never meet.
 SHELL_DIR=/devshell/frq-flutter-desktop
-mkdir -p "$SHELL_DIR"
+mkdir -p "$SHELL_DIR" "$SHELL_DIR/.cache"
 
 # A worktree's `.git` is a *file* naming a gitdir back on the machine that
 # copied it in, and nix believes it and goes looking for a path that is not
@@ -113,9 +137,19 @@ if [ -f /nix-cache/nix-cache-info ]; then
     nix copy --no-check-sigs --all --to file:///nix-cache
 fi
 """
-env     = { }
+# Nix's own cache, on the volume rather than in the container. Without it
+# every Sandbox starts empty and `nix develop` re-clones the flake's git
+# inputs -- jolt-src, jolt-native, glimmer, nixgl and their transitives --
+# because flake.lock pins which revision to fetch, not whether it is already
+# on disk. Set here rather than in the command so an interactive shell into
+# this container gets it too.
+env     = { XDG_CACHE_HOME = "/devshell/frq-flutter-desktop/.cache" }
 
 [nix]
+# Every nix command in the container reads the mounted cache, including one
+# typed by hand in a shell. Passing --extra-substituters per command only ever
+# covered the scripts.
+substituters = ["file:///nix-cache"]
 # No devShell warming at image build time: this enters `nix develop` at run
 # time, on the VM, where the cache answers for its closure. The ptyshim that
 # warming would need under gVisor is deprecated and does not come back.
