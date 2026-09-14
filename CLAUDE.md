@@ -2,22 +2,63 @@
 
 ## Nix
 
-You are already running inside the Arch distrobox, where `nix` lives, so run
-nix commands directly — do not wrap them in `distrobox enter`:
+**STOP BUILDING LOCALLY. Build on Modal.** This machine is for editing and for
+evaluating — `nix flake check`, `nix eval`, `nix build --dry-run`, `nix repl`
+— and not for realising a derivation. A local `nix build .#frq` gets killed for
+memory long before it finishes, and the minutes spent finding that out are
+minutes not spent on the change. So:
 
 ```bash
-nix build .#frq
+modal run containers/frq/container.py        # nix build .#frq, on Modal
 ```
 
-A remote builder (`eu.nixbuild.net`) is already configured here. Large builds
-want `--store ssh-ng://eu.nixbuild.net --eval-store auto` rather than a
-`builders` entry, so the whole graph stays there and only .drv files go up —
-libjoltcosmic's dependency tree is the one that makes this worth remembering.
+`--dry-run` locally to see what *would* be built, then hand the build to Modal.
+The one exception is a derivation you already know is trivial and already
+substitutable; if you are unsure, it is not the exception.
+
+`modal app logs` is no substitute for watching that command: it resolves
+deployed apps by name, not the ephemeral one a `modal run` creates, and carries
+nothing until the Sandbox starts — the image build streams to the client and
+nowhere else.
+
+You are already running inside the Arch distrobox, where `nix` lives, so run
+the evaluating commands directly — do not wrap them in `distrobox enter`.
+
+The container runs as a Modal **Sandbox on a real VM**, which is what makes
+`nix build` work out there at all: the ptyshim that used to stand in for a
+working pty under gVisor is deprecated, and nothing here should reintroduce it.
+Substitution comes from the `nix-cache` Modal Volume plus cache.nixos.org and
+nix-cache.wasix.org — libjoltcosmic's dependency tree is the one that makes
+that cache worth having.
+
+A remote builder (`eu.nixbuild.net`) is also configured here, for the case
+where you want the graph built somewhere other than Modal: `--store
+ssh-ng://eu.nixbuild.net --eval-store auto` rather than a `builders` entry, so
+the whole graph stays there and only .drv files go up.
 
 One thing this container is *not* representative of: `/etc/localtime` is a
 regular file here rather than a symlink, so anything that reads the zone out
 of its path sees nothing. That is a real deployment shape, not an artefact —
 frq.clock handles it.
+
+## Never pipe a long task through `tail`
+
+`tail` and `head` do not emit anything until their input ends, so a build, a
+test run or a deploy piped through one shows nothing at all until it is over —
+and if it is killed or times out first, its output is lost with it. That is the
+opposite of what you want from the commands that take longest.
+
+Let them write to the terminal, or `tee` them if you want a copy to grep
+afterwards:
+
+```bash
+modal run containers/frq/container.py 2>&1 | tee /tmp/frq-build.log
+```
+
+Trim afterwards, on the file, where the whole run is still there to re-read.
+The same goes for `grep` and `awk` in a live pipeline: they buffer when their
+output is not a terminal, so pass `--line-buffered` / `fflush()` or watch the
+file instead.
 
 ## The three source trees
 
