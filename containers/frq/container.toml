@@ -1,6 +1,6 @@
 [container]
 name        = "frq"
-description = "nix build .#frq -- the cosmic GUI"
+description = "nix build .#appimage -- the cosmic GUI, in one file"
 base        = "arch-nix"
 # A Sandbox, not a Function: runs on a real VM, and the command is
 # the sandbox's own process so it dies when the command does.
@@ -27,43 +27,43 @@ timeout = 3600
 
 [run]
 workdir = "/app"
-# The build, not the window: `#frq` is the cosmic GUI (its frqScript runs
-# `-m frq.cosmic`), and nothing here tries to open it -- there is no GL and
-# no display on a build box, which is exactly why this only builds.
+# The build, not the window: `#appimage` bundles `#frq` -- the cosmic GUI,
+# whose frqScript runs `-m frq.cosmic` -- and nothing here tries to open it.
+# There is no GL and no display on a build box, which is why this only builds.
+#
+# `#appimage` rather than `#frq` because of how the result gets home. A store
+# path is only useful to a machine that can take its whole closure, which
+# means walking ~200 narinfos out of the volume one call at a time and then
+# importing them. The AppImage is that same closure squashed into one file:
+# one `modal volume get`, no store import, and it runs off NixOS because the
+# bundle carries the Mesa that nixGL puts the host driver in front of.
 #
 # `path:/app` and not `.`: a checkout copied in here brings its `.git` with
 # it, and in a worktree that is a *file* naming a gitdir back on the host.
 # Nix believes it, tries to open a repository that is not there, and fails
 # before it evaluates anything. `path:` says plain directory and means it.
 #
-# Two halves. The build reads from /nix-cache when there is something there to
-# read, and `nix copy` writes what it produced back. Naming the substituter
-# unconditionally would break the first run -- a directory with no
-# nix-cache-info is not a binary cache yet -- so the test for it is the reason
-# this is a script rather than a line.
-#
-# `--all`, deliberately fat: every path in the container's store goes up, not
-# just the result's runtime closure. The closure alone is the cheap cache, and
-# it only pays off while nothing changes -- nix substitutes libjoltcosmic and
-# never looks at its inputs. Change a dependency, though, and the intermediate
-# outputs are gone: crane's deps-only artifact, the toolchain, the vendored
-# crates, all rebuilt from nothing. Those are exactly the paths a fat cache
-# keeps, so a partial invalidation costs a partial rebuild rather than a whole
-# one. It buys that with volume size and with upload time on every run.
+# The cache is read as a substituter and written with `nix copy --all`, but
+# only when this run actually produced something the cache has not got. That
+# test is the difference between a nine-minute run and a two-minute one: on a
+# full hit `--all` still interrogates every one of the cache's thousands of
+# paths to discover it has nothing to write, and that interrogation cost more
+# than the build it exists to avoid. Asking whether the result's own narinfo
+# is already there answers the same question in one stat.
 #
 # `--max-jobs auto` on the command line and not only in nix.conf: the base
 # image carries that setting now, but only from the next `modal run
 # arch_nix.py` onwards, and the flag costs nothing once it is redundant.
 # Nix's default is 1 -- the whole graph end to end, one derivation at a time.
 #
-# `set -e` earns its place: the last command here is `du`, so without it a
+# `set -e` earns its place: the last command here is a `ls`, so without it a
 # failed `nix build` would still leave the sandbox exiting 0 and the run would
 # report success. The substituter test is an `if` rather than `&&` for the same
 # reason -- under `set -e` a false `&&` would abort the whole script on the
 # first run, when there is legitimately nothing in the cache yet.
 command = """
 set -e
-mkdir -p /nix-cache
+mkdir -p /nix-cache/artifacts
 subs=""
 if [ -f /nix-cache/nix-cache-info ]; then
     subs="--extra-substituters file:///nix-cache"
@@ -75,11 +75,22 @@ fi
 # and under `set -e` that kills the run before it builds anything.
 nix config show max-jobs
 nix config show cores
-nix build path:/app#frq --accept-flake-config $subs \
-    --max-jobs auto --cores 0 \
-    --print-out-paths --print-build-logs
-nix copy --no-check-sigs --all --to file:///nix-cache
-echo "cache size: $(du -sh /nix-cache | cut -f1)"
+
+out=$(nix build path:/app#appimage --accept-flake-config $subs \
+    --max-jobs auto --cores 0 --print-out-paths --print-build-logs)
+echo "built: $out"
+
+cp -L "$out" /nix-cache/artifacts/frq.AppImage
+chmod +x /nix-cache/artifacts/frq.AppImage
+ls -la /nix-cache/artifacts/frq.AppImage
+
+hash=$(basename "$out" | cut -d- -f1)
+if [ -f "/nix-cache/$hash.narinfo" ]; then
+    echo "cache: $hash already held, nothing to write"
+else
+    echo "cache: writing the store back"
+    nix copy --no-check-sigs --all --to file:///nix-cache
+fi
 """
 env     = { }
 
