@@ -19,3 +19,6 @@
 
 # samizdat writes its journal into whatever project it is pointed at.
 .samizdat/
+
+# Python bytecode, from the loader the .modal/ containers import.
+__pycache__/
