@@ -17,20 +17,19 @@ image, app = c.image, c.app
 # No @app.function here: a Sandbox runs its command as its own process and
 # nothing of this module is imported into it. Registering a Function would be
 # dead weight, and its kwargs are where vm_runtime would be wrongly applied.
+# One entrypoint, not two: a second `@app.local_entrypoint` makes plain
+# `modal run container.py` ambiguous, and Modal refuses it rather than
+# picking. `--shell` is a flag on the one there is.
 @app.local_entrypoint()
-def main(command: str = ""):
-    c.run_sandbox(command)
+def main(command: str = "", shell: bool = False):
+    if not shell:
+        c.run_sandbox(command)
+        return
 
-
-@app.local_entrypoint()
-def shell():
-    """Leave a Sandbox running and say how to get into it.
-
-    `modal shell --image` only takes registry references, so it cannot be
-    pointed at a published Modal image like arch-nix. Attaching to a running
-    Sandbox can, and that Sandbox is this container: same image, same volumes,
-    same resources. It outlives this process, so it also has to be killed.
-    """
+    # `modal shell --image` only takes registry references, so it cannot be
+    # pointed at a published Modal image like arch-nix. Attaching to a running
+    # Sandbox can, and that Sandbox is this container: same image, same
+    # volumes, same env.
     sb = c.open_sandbox()
     print(f"sandbox {sb.object_id} up, with {', '.join(c.volumes) or 'no volumes'}")
     print(f"  attach: modal shell {sb.object_id}   (from another terminal)")

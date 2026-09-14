@@ -23,7 +23,7 @@ include = ["."]
 #
 # `dev` stays for the case where the baked env is stale against a flake edit.
 commands = [
-  "nix print-dev-env /app#flutter-desktop --accept-flake-config > /etc/devshell.sh",
+  "nix print-dev-env /app#flutter-desktop --accept-flake-config --extra-substituters file:///nix-cache > /etc/devshell.sh",
   "echo '. /etc/devshell.sh' >> /root/.bashrc",
   "printf '#!/bin/sh\\nexec nix develop /app#flutter-desktop \"$@\"\\n' > /usr/local/bin/dev && chmod +x /usr/local/bin/dev",
 ]

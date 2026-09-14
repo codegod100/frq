@@ -419,3 +419,37 @@ flutter-desktop action="build":
             ;;
         *) echo "usage: just flutter-desktop [build|run]" >&2; exit 1 ;;
     esac
+
+# The containers in `.modal/`, run on Modal rather than here. This machine
+# evaluates and Modal builds — see CLAUDE.md, which says so rather more
+# firmly — and these two recipes are the whole interface to that.
+#
+# Named for where the work happens, the way `cosmic` and `flutter-desktop`
+# are named for what paints: there is no re-entry test here because nothing
+# re-enters, and no `nix` variable because nix runs out there.
+#
+#   just modal frq                 build `.#appimage` on Modal
+#   just modal flutter-dev         the incremental Flutter loop
+modal container="frq" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    shift
+    exec modal run ".modal/{{container}}/container.py" "$@"
+
+# A sandbox left running with the container's own image, volumes and
+# environment, and the command to get into it. `modal shell --image` cannot
+# be pointed at a published Modal image like arch-nix, so attaching to a
+# running sandbox is the only way to get a shell that is the container.
+#
+# It blocks: an ephemeral app stops when its entrypoint returns and takes the
+# sandbox with it. Attach from a second terminal, and Ctrl-C here when done —
+# the sandbox bills until you do.
+#
+#   just modal-shell               flutter-dev, the usual one
+#   just modal-shell frq           the appimage container
+modal-shell container="flutter-dev":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    exec modal run ".modal/{{container}}/container.py" --shell
