@@ -1,6 +1,7 @@
 """Turn a `container.toml` into a `modal.Image` and a `modal.App`.
 
-Every container under `containers/` is a directory with a `container.toml` and
+Every container -- under `containers/` here, `.modal/` in a repo that merely
+builds itself on Modal -- is a directory with a `container.toml` and
 a stub `container.py`. See `spec.md` for the keys; this file is what reads
 them. Nothing here is Modal-specific configuration in its own right -- each
 spec key maps onto a documented Modal argument, and the mapping is meant to
@@ -206,6 +207,13 @@ class Container:
                 image = image.add_local_dir(src, dest, copy=True)
             else:
                 image = image.add_local_file(src, dest, copy=True)
+
+        # A repo copied in brings its `.git` along, and in a worktree that is a
+        # *file* holding `gitdir: <path on the machine that copied it>`. Nix
+        # believes it and goes looking for a checkout that is not there --
+        # `nix develop` and `nix build .#x` both die before evaluating
+        # anything. Nothing in a container wants the git metadata, so it goes.
+        image = image.run_commands(f"rm -rf {self.workdir}/.git")
 
         if commands := build.get("commands", []):
             image = image.run_commands(*commands)
