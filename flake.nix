@@ -699,14 +699,31 @@
 
             src = lib.cleanSourceWith {
               src = ./.;
-              # Build trees and caches, which are large, machine-specific and
-              # would make every one of them a new store path.
-              filter = path: type:
-                let base = baseNameOf path; in
-                !(builtins.elem base [
-                  "build" ".home" ".clojuredart" ".cpcache" "cljd-out"
-                  ".dart_tool" "result" ".git" ".jolt" "buck-out"
-                ]);
+              # Two trees, and only two: `flutter/` is the app and `common/`
+              # is the screens its deps.edn puts on the classpath. The root is
+              # still the source root because of that `../common`, but letting
+              # the *whole* root in means every file in the repo is an input —
+              # so editing flake.nix, or CLAUDE.md, or the jolt half in `src/`,
+              # invalidated the entire Dart compile and paid ten minutes for a
+              # change the Flutter build cannot even see.
+              #
+              # Matched on the path relative to the root rather than on
+              # basename: `src` as a basename would also exclude `flutter/src`
+              # and `common/src`, which is everything that matters.
+              filter =
+                let root = toString ./.; in
+                path: type:
+                  let
+                    rel = lib.removePrefix (root + "/") (toString path);
+                    inTree = d: rel == d || lib.hasPrefix (d + "/") rel;
+                  in
+                  (inTree "flutter" || inTree "common")
+                  # Build trees and caches, which are large, machine-specific
+                  # and would make every one of them a new store path.
+                  && !(builtins.elem (baseNameOf path) [
+                    "build" ".home" ".clojuredart" ".cpcache" "cljd-out"
+                    ".dart_tool" "result" ".git" ".jolt" "buck-out"
+                  ]);
             };
             sourceRoot = "source/flutter";
 
@@ -766,10 +783,38 @@
             let
               unwrapped =
                 self.packages.${pkgs.stdenv.hostPlatform.system}.flutter-desktop-unwrapped;
+
+              # buildFlutterApplication's own wrapper appends a bare `/lib` to
+              # LD_LIBRARY_PATH — the host's, not the bundle's. Off NixOS that
+              # is a foreign library directory in front of nothing, and the app
+              # dies in the loader before main: first
+              #
+              #   /lib/libc.so.6: undefined symbol: __pointer_chk_guard
+              #
+              # and, once the store's glibc is put ahead of it,
+              #
+              #   libc.so.6: version `GLIBC_2.43' not found
+              #       (required by /lib/libglib-2.0.so.0)
+              #
+              # which is the same bug wearing the other hat: the host's glib
+              # against the store's glibc. Ordering cannot fix a mixture, so
+              # the entry goes rather than moves. The wrapper is generated, so
+              # this edits a copy and asserts the edit landed — a silent miss
+              # here is a runtime failure on someone else's machine.
+              fixed = pkgs.runCommand "frq-flutter-wrapper" { } ''
+                mkdir -p "$out/bin"
+                sed "s|'/lib'||g" ${unwrapped}/bin/frq > "$out/bin/frq"
+                chmod +x "$out/bin/frq"
+                if grep -q "'/lib'" "$out/bin/frq"; then
+                  echo "the /lib entry outlived the edit; look at the wrapper" >&2
+                  exit 1
+                fi
+              '';
+
               script = pkgs.writeShellScript "frq" ''
                 runner=""
                 [ -e /run/current-system ] || runner="${nixGLFor pkgs}/bin/nixGLIntel"
-                exec ''${runner} ${unwrapped}/bin/frq "$@"
+                exec ''${runner} ${fixed}/bin/frq "$@"
               '';
             in
             pkgs.runCommand "frq-flutter-0.1.0"

@@ -1,0 +1,125 @@
+[container]
+name        = "frq-flutter-dev"
+description = "the Flutter desktop build, incremental, in a nix devShell"
+base        = "arch-nix"
+# A Sandbox, not a Function: runs on a real VM, and the command is
+# the sandbox's own process so it dies when the command does.
+runtime     = "sandbox"
+
+[build]
+# The container lives inside the repo it builds, so the copy is rooted two
+# levels up and `.` is the whole tree.
+context = "../.."
+include = ["."]
+
+# Two volumes doing two different jobs. `nix-cache` is the binary cache every
+# container here reads from and writes back to. `devshell` is the working
+# state of a `nix develop` loop, and it is shared by every container that has
+# one -- each gets its own directory under it, named for the devShell it
+# belongs to, so two projects (or two shells of one project) never write the
+# same tree. Modal Volumes have no locking, so the directories are the only
+# thing keeping them apart, and two runs of the *same* devshell must not
+# overlap.
+[volumes]
+nix-cache = "/nix-cache"
+devshell  = "/devshell"
+
+[resources]
+cpu     = 8
+memory  = 16384
+timeout = 3600
+
+[run]
+workdir = "/app"
+# Nix for the dependencies, the ordinary toolchain for the build. `nix build`
+# cannot do this: a derivation is all-or-nothing, so any edit is a fresh
+# sandbox and a fresh compile of everything. Here the devShell supplies the
+# compiler and the libraries, and `flutter build` decides what is stale --
+# which is the whole reason `just flutter-desktop` exists as the working-tree
+# loop rather than as another `nix build`.
+#
+# rsync and not cp, with --checksum and not mtimes: Modal copies the source in
+# with fresh timestamps on every run, so a plain copy would look entirely new
+# to Flutter and rebuild the lot. --checksum compares content, leaves the
+# unchanged files' timestamps alone, and lets the incremental build work.
+#
+# The excludes are the state that must NOT be overwritten from /app -- it is
+# what we are here to keep. `just flutter-desktop` seeds those caches only
+# when they are missing, so finding them warm is all it takes.
+command = """
+set -e
+# This container's own directory on the shared devshell volume, named for the
+# devShell it keeps the state of. Anything else using this volume picks its
+# own name and the two never meet.
+SHELL_DIR=/devshell/frq-flutter-desktop
+mkdir -p "$SHELL_DIR"
+
+# A worktree's `.git` is a *file* naming a gitdir back on the machine that
+# copied it in, and nix believes it and goes looking for a path that is not
+# here. It has to go before any flake reference to /app.
+rm -rf /app/.git
+
+echo "sync: /app -> $SHELL_DIR"
+# `nix shell --command` and not `nix profile install`: a profile install puts
+# rsync in ~/.nix-profile/bin, which is not on the PATH of the shell already
+# running, so the very next line said `rsync: command not found`.
+#
+# rsync and not cp, with --checksum and not mtimes: Modal copies the source in
+# with fresh timestamps every run, so a plain copy looks entirely new to
+# Flutter and rebuilds the lot. --checksum compares content and leaves the
+# unchanged files' timestamps alone, which is the whole basis of the
+# incremental build.
+#
+# The excludes are the state we are here to keep -- overwriting them from /app
+# would defeat the volume. `just flutter-desktop` seeds those caches only when
+# they are missing, so finding them warm is all it takes.
+nix shell nixpkgs#rsync --accept-flake-config \
+    --extra-substituters file:///nix-cache --command \
+  rsync -a --checksum --delete \
+    --exclude 'flutter/.home/' \
+    --exclude 'flutter/.clojuredart/' \
+    --exclude 'flutter/build/' \
+    --exclude 'flutter/.dart_tool/' \
+    --exclude '.git' \
+    /app/ "$SHELL_DIR/"
+
+cd "$SHELL_DIR"
+echo "state carried over:"
+du -sh flutter/.home flutter/.clojuredart flutter/build 2>/dev/null \
+  || echo "  (none yet -- first run)"
+
+# Nix for the dependencies, the ordinary toolchain for the build. `nix build`
+# cannot do this: a derivation is all-or-nothing, so any edit is a fresh
+# sandbox and a fresh compile of everything. Here the devShell supplies the
+# compiler and the libraries and `flutter build` decides what is stale.
+# Evaluated from /app and built in the volume. Both halves matter: /app is the
+# pristine copy, so nix stores a source tree of the repo rather than one
+# carrying gigabytes of flutter/build, while the recipe still runs where the
+# state it reuses lives -- `just -f` is what puts it there, since the recipe
+# cds to its own justfile's directory.
+nix develop /app#flutter-desktop --accept-flake-config \
+    --extra-substituters file:///nix-cache \
+    --max-jobs auto --command just -f "$SHELL_DIR/justfile" flutter-desktop
+
+echo "built:"
+du -sh flutter/build
+
+# The devShell's closure is gigabytes of Flutter, Dart, clang and GTK, and the
+# store it landed in belongs to the image rather than to a volume -- so
+# without this every run re-fetches it from upstream. Written back, the next
+# run substitutes it from file:///nix-cache instead.
+if [ -f /nix-cache/nix-cache-info ]; then
+    echo "cache: writing the devShell closure back"
+    nix copy --no-check-sigs --all --to file:///nix-cache
+fi
+"""
+env     = { }
+
+[nix]
+# No devShell warming at image build time: this enters `nix develop` at run
+# time, on the VM, where the cache answers for its closure. The ptyshim that
+# warming would need under gVisor is deprecated and does not come back.
+flake = false
+shim  = false
+
+# [experimental] overrides the sandbox default of vm_runtime = true.
