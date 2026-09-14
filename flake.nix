@@ -465,6 +465,18 @@
           appimage =
             nix-appimage.bundlers.${pkgs.stdenv.hostPlatform.system}.default frq;
 
+          # The other desktop GUI, squashed the same way. `flutter-desktop` is
+          # already the nixGL-wrapped launcher rather than the raw Flutter
+          # bundle, so this carries the same store Mesa for the same reason —
+          # and it is the whole point here, since a host with Flutter's
+          # runtime deps but no Nix is exactly who wants one file.
+          #
+          # Named by its backend, the way the outputs it wraps are: `appimage`
+          # is libcosmic's and this is Flutter's, and neither is the default.
+          flutter-appimage =
+            nix-appimage.bundlers.${pkgs.stdenv.hostPlatform.system}.default
+              self.packages.${pkgs.stdenv.hostPlatform.system}.flutter-desktop;
+
           # Everything `clojure -M:cljd compile` would otherwise reach the
           # network for, fetched once and hashed.
           #
@@ -530,7 +542,12 @@
                 cp ${./common/deps.edn} "$NIX_BUILD_TOP/common/deps.edn"
                 cp ${./flutter/deps.edn} "$proj/deps.edn"
                 cp ${./flutter/pubspec.yaml} "$proj/pubspec.yaml"
-                chmod u+w "$proj/deps.edn" "$proj/pubspec.yaml"
+                # The lock, or `pub get` resolves against pub.dev and takes
+                # whatever satisfies the ranges today. Every build then fetches
+                # a slightly different set and the fixed-output hash is a
+                # promise nothing can keep.
+                cp ${./flutter/pubspec.lock} "$proj/pubspec.lock"
+                chmod u+w "$proj/deps.edn" "$proj/pubspec.yaml" "$proj/pubspec.lock"
                 cat > "$proj/src/stub/main.cljd" <<'EOF'
                 (ns stub.main)
                 (defn main [] nil)
@@ -573,9 +590,16 @@
                 # rewrites its resolution metadata on every resolve, and
                 # tools.gitlibs keeps bare clones it only needs in order to
                 # make a checkout. None of it is read offline.
+                #
+                # active_roots is the one that was actually breaking this. Pub
+                # records the project directories using the cache, sharded by
+                # a hash of the path, and $NIX_BUILD_TOP is different on every
+                # run -- so two builds whose hosted/ trees were byte-identical
+                # still disagreed, purely over which directory had asked. Four
+                # builds gave four hashes until this went.
                 rm -rf "$out/pub-cache/log" "$out/pub-cache/_temp" \
                        "$out/pub-cache/git" "$out/pub-cache/global_packages" \
-                       "$out/pub-cache/bin"
+                       "$out/pub-cache/bin" "$out/pub-cache/active_roots"
 
                 # tools.gitlibs keeps a bare clone per URL under _repos/, and a
                 # bare clone is packfiles — which two runs of the same fetch do
@@ -630,7 +654,10 @@
                 done
                 for d in "$out"/pub-cache/*/*; do
                   [ -d "$d" ] || continue
-                  echo "cljd-deps pub $(basename "$d") $( (cd "$d" && find . -type f \
+                  # The path relative to $out, not the basename: two runs that
+                  # disagree here disagree about *which* directory exists, and
+                  # a bare `09` names nothing you can go and look at.
+                  echo "cljd-deps pub ''${d#$out/} $( (cd "$d" && find . -type f \
                       -exec sha256sum {} + | sort -k2 | sha256sum) )" >&2
                 done
               '';
@@ -639,7 +666,7 @@
               outputHashAlgo = "sha256";
               # Moves when flutter/deps.edn or flutter/pubspec.yaml move, and
               # not when frq's own source does — see the stub above.
-              outputHash = "sha256-gfJGlKCPaJsKcXfCWOJY1089XEfzTndEx0LVf3JOXfs=";
+              outputHash = "sha256-qSGx7WFdVyV7yu4R+EjiQHZcLqwDjYSlohiZcXB43DY=";
             };
 
           # The Flutter desktop GUI, built rather than run out of the tree.
