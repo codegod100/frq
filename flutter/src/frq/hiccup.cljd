@@ -47,6 +47,32 @@
   (let [w (:width-request p)]
     (when (and (number? w) (pos? w)) (double w))))
 
+;; How a network image URL is reached from here. Identity, unless told
+;; otherwise.
+;;
+;; The web needs telling. `cdn.bsky.app` serves avatars with no
+;; `Access-Control-Allow-Origin`, and Flutter loads images over XHR in a
+;; browser — so the bytes arrive and are thrown away for want of a header the
+;; far side does not send. The deployed build answers by fetching them through
+;; its own origin; `frq.main-web` installs that, and the desktop and the APK
+;; never call it because neither is subject to CORS at all.
+;;
+;; An atom in the renderer rather than a seam in `frq.io`: nothing under
+;; `common/` renders an image, and the two call sites are both here.
+;;
+;; A comment and not a docstring, for the reason `frq.net.dart/wire-log?`
+;; gives: `defonce` is `(defonce name expr)` and nothing else, and the extra
+;; form is an arity error reported against the namespace rather than the line.
+(defonce image-url (atom identity))
+
+(defn- src-url
+  "`src` as this platform can actually load it."
+  [src]
+  (let [s (str src)]
+    (if (or (.startsWith s "http://") (.startsWith s "https://"))
+      (str (@image-url s))
+      s)))
+
 (defn pointer?
   "Whether there is a mouse here rather than a finger.
 
@@ -1126,7 +1152,7 @@
              bg (when (and src (not= "" src))
                   (if (or (.startsWith (str src) "http://")
                           (.startsWith (str src) "https://"))
-                    (m/NetworkImage (str src))
+                    (m/NetworkImage (src-url src))
                     (m/FileImage (io/File. (str src)))))
              face (m/CircleAvatar
                    .radius (/ s 2.0)
@@ -1173,7 +1199,7 @@
                                   .errorBuilder oops)
                    (or (.startsWith (str src) "http://")
                        (.startsWith (str src) "https://"))
-                   (m/Image.network (str src) .fit m/BoxFit.contain
+                   (m/Image.network (src-url src) .fit m/BoxFit.contain
                                     .errorBuilder oops)
                    :else (m/Image.file (io/File. (str src)) .fit m/BoxFit.contain
                                        .errorBuilder oops))
@@ -1330,9 +1356,27 @@
   (if-not (pointer?)
     (render node)
     (let [[tree dialog] (lift-dialog node)]
-      (if (nil? dialog)
-        (render tree)
-        (let [modal (boolean (:modal (props dialog)))]
+      ;; The Stack is built whether or not there is a dialog, and that is the
+      ;; whole of this. Returning a bare `(render tree)` when there is none
+      ;; meant the root changed SHAPE the moment a hover put a card up — one
+      ;; child, then two — and Flutter rebuilds a subtree rather than updating
+      ;; it when the shape under a slot changes. Two things went with it, and
+      ;; both were blamed on the card:
+      ;;
+      ;; The scroll view's `:managed` ScrollController is state, so it was
+      ;; disposed and remade with a fresh offset: resting on a reaction threw
+      ;; the reader back up the backlog. The same hazard the `:managed`
+      ;; comment on `:scroll` warns about, arrived at from the other side.
+      ;;
+      ;; And the MouseRegion under the pointer was remade too, so its `onExit`
+      ;; never fired — the pointer left a widget that no longer existed, the
+      ;; unhover never ran, and the card stayed up for ever. It got worse the
+      ;; moment avatars started loading, because every one that lands calls
+      ;; `bump!` and rebuilds the tree.
+      ;;
+      ;; So the second layer is always there; with nothing to show it is an
+      ;; empty box that hears nothing.
+      (let [modal (boolean (and dialog (:modal (props dialog))))]
           (m/Stack
            ;; Expand, and not the default loose fit: a Stack hands its
            ;; unpositioned children the parent's constraints *loosened*, so
@@ -1350,7 +1394,7 @@
                           .color (if modal
                                    (m/Color.fromRGBO 0 0 0 0.45)
                                    (m/Color.fromRGBO 0 0 0 0.0)))]
-               (if modal
+               (if (and modal (some? dialog))
                  ;; Absorbing and not merely painting: a press on the dimmed
                  ;; half of the window is a press meant for the card.
                  (m/GestureDetector .onTap (fn [] nil) .child scrim)
@@ -1361,6 +1405,11 @@
             ;; whole window, faces included. The card does its own scrolling.
             (m/Positioned.fill
              .child
-             (m/Padding
-              .padding (m/EdgeInsets.all t/space-s)
-              .child (m/Center .child (render dialog))))]))))))
+             (if (nil? dialog)
+               ;; Nothing to show, and nothing to hear: an empty layer that
+               ;; keeps the shape constant so the screens below are updated
+               ;; rather than rebuilt.
+               (m/IgnorePointer .child (m/SizedBox.shrink))
+               (m/Padding
+                .padding (m/EdgeInsets.all t/space-s)
+                .child (m/Center .child (render dialog)))))])))))

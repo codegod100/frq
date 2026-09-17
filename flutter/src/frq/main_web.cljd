@@ -27,7 +27,9 @@
             [frq.io.web :as host]
             [frq.net.web :as net-web]
             [frq.oauth.web :as oauth-web]
-            [frq.atproto.web :as atproto-web]))
+            [frq.atproto.web :as atproto-web]
+            ["dart:html" :as html]
+            [frq.hiccup :as hiccup]))
 
 (defn ^:async main []
   (app/bind!)
@@ -41,6 +43,22 @@
   ;; the OAuth one above it, and unlike freeq's broker, nothing in it cares
   ;; which origin this build is served from.
   (atproto-web/install!)
+  ;; Images through our own origin. A browser refuses bytes that arrive with
+  ;; no `Access-Control-Allow-Origin`, and neither `cdn.bsky.app` (avatars)
+  ;; nor freeq's /api/v1/media (pasted pictures) sends one — so the fetch
+  ;; succeeds, the header is missing, and Flutter is handed nothing. The
+  ;; server this build is served from proxies both and answers with the
+  ;; header; see PROXY_HOSTS in `.modal/flutter-web/serve.py`.
+  ;;
+  ;; Left alone: anything already on this origin, which needs no help and
+  ;; would otherwise be fetched through a round trip to itself.
+  (let [origin (str (.-origin (.-location html/window)))]
+    (reset! hiccup/image-url
+            (fn [url]
+              (let [u (str url)]
+                (if (.startsWith u origin)
+                  u
+                  (str origin "/proxy?url=" (Uri.encodeComponent u)))))))
   ;; Two questions with one answer: did we just come back from the
   ;; authorization server, and failing that was there a sign-in before today.
   ;; Either way what lands is a session in `frq.cells`, which is what
