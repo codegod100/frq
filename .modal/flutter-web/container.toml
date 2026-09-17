@@ -62,6 +62,10 @@ ignore  = [
     "flutter/build", "flutter/.home", "flutter/.dart_tool",
     "flutter/.clojuredart", "flutter/.cpcache",
     ".jolt", ".cpcache", "result", "build", ".git",
+    # An editor's linter rewrites this while the upload is reading it, and
+    # Modal fails the whole run with "was modified during build process".
+    # Nothing out here reads it.
+    ".clj-kondo",
 ]
 
 # `nix-cache` is the binary cache every container here reads from and writes
