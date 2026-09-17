@@ -29,16 +29,23 @@
 
 (defn- wire! [direction line]
   (when @wire-log?
-    ;; `print` and not `dart:developer`'s log: on the web `print` lands in the
-    ;; browser console, which is the place someone debugging this actually
-    ;; looks, where `dev/log` goes to the VM service and nowhere visible.
-    ;; Redacted here rather than only in the file sink, for that reason —
-    ;; `frq.debug` answers nil on the web, since there is no file to name, so
-    ;; the console is the only sink there is.
-    (print (str "frq.wire " direction " "
-                (if (.startsWith (str line) "AUTHENTICATE ")
-                  "AUTHENTICATE <redacted>"
-                  line)))
+    ;; `window.console.log` and not `print`. Dart's `print` is supposed to
+    ;; reach the browser console and in this build it reaches nothing —
+    ;; boot-time prints put in to trace a white page never appeared either,
+    ;; which cost an afternoon of guessing at a wire log that was never going
+    ;; to show up. The console is the only sink the web has: `frq.debug`
+    ;; answers nil here because there is no file to name.
+    ;;
+    ;; Redacted on the way out, because this is the log someone pastes into a
+    ;; bug report and the line after AUTHENTICATE is the credential.
+    (.log (.-console html/window)
+          (str "frq.wire " direction " "
+               ;; The credential is redacted but its LENGTH is not: a payload
+               ;; too long for what the server will read is exactly the bug
+               ;; this log existed to find, and `<redacted>` hid it.
+               (if (.startsWith (str line) "AUTHENTICATE ")
+                 (str "AUTHENTICATE <redacted " (- (count (str line)) 13) " chars>")
+                 line)))
     (when (debug/on?)
       (debug/jot! direction " " line))))
 

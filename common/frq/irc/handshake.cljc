@@ -17,8 +17,22 @@
             [frq.msgsig :as msgsig]))
 
 (def sasl-chunk
-  "AUTHENTICATE takes at most 400 characters a line."
-  400)
+  "How much of a SASL payload goes on one AUTHENTICATE line.
+
+  400 is the IRCv3 figure, and it comes with an assumption freeq does not
+  meet: that the server reassembles the continuation lines. It does not.
+  `handle_authenticate` base64-decodes the single param it was handed, so a
+  split payload arrives as its own first 400 characters and comes back as
+  `904 SASL authentication failed (bad response)`. What freeq wants is the
+  whole thing on one line, which it can afford — a custom server reading
+  lines off a WebSocket bridge rather than a 512-byte ircd, and the same one
+  that advertises `draft/multiline=max-bytes=40000`.
+
+  It never mattered until `pds-oauth`. A web-token is one short token and a
+  pds-session payload is a DID and an access token, both inside 400. An OAuth
+  payload carries the access token AND a DPoP proof JWT, which took five
+  lines — and only the first was ever read."
+  100000)
 
 (def wanted-caps
   "What this client can use, and why a guest connection negotiates at all.
@@ -55,6 +69,25 @@
              (conj out (str "AUTHENTICATE " (subs rest 0 sasl-chunk))))
       (cond-> (conj out (str "AUTHENTICATE " rest))
         (= sasl-chunk (count rest)) (conj "AUTHENTICATE +")))))
+
+(defn dpop-nonce
+  "The DPoP nonce freeq is relaying, or nil.
+
+  It arrives as `NOTICE <target> :DPOP_NONCE <nonce>` and it is not chatter:
+  the server called the PDS's getSession with our proof, was answered
+  `use_dpop_nonce`, and is passing on the nonce the PDS wants so the next
+  proof can carry it. Ignoring it means minting the same proof again, which
+  freeq answers with the same NOTICE until it stops — `SASL authentication
+  failed (DPoP nonce retry limit exceeded)`.
+
+  Only `pds-oauth` can do anything with this; the other two methods carry no
+  proof to re-mint."
+  [msg]
+  (when (= "NOTICE" (:command msg))
+    (let [text (str (last (:params msg)))]
+      (when (str/starts-with? text "DPOP_NONCE ")
+        (let [nonce (str/trim (subs text (count "DPOP_NONCE ")))]
+          (when (seq nonce) nonce))))))
 
 (defn acked?
   "Whether the server agreed to `cap`, given the set it has acked so far."

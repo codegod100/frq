@@ -236,6 +236,13 @@
   (let [url (str (.replaceAll (str pds) (RegExp. "/+$") "")
                  "/xrpc/com.atproto.server.getSession")
         resp (await (get-with-dpop! url token ""))]
+    ;; Said out loud, because this is the call that decides whether the proof
+    ;; freeq is about to present will be accepted — it is the same request,
+    ;; with the same token and a proof minted the same way. A failure here is
+    ;; the whole answer to "why am I connected as a guest".
+    (.log (.-console html/window)
+          (str "frq.oauth whoami " (:status resp) " "
+               (if (= 200 (:status resp)) "ok" (:body resp))))
     (when (= 200 (:status resp))
       {:handle (acore/json-str (:body resp) "handle")
        :did (acore/json-str (:body resp) "did")
@@ -386,6 +393,89 @@
   (dpop/forget!)
   nil)
 
+(defn ^:async ^:private name-session!
+  "Fill in who the session belongs to, if it does not already say.
+
+  A session that knows its token but not its handle connects as whatever was
+  in the nick box — which is `frq-guest`, and looks for all the world like the
+  sign-in did nothing. `resume!` asks at the moment of sign-in, but a session
+  restored from an earlier visit predates that question, and a `whoami!` that
+  failed once should not settle it for ever. So it is asked again here, where
+  every connect passes."
+  [session]
+  (if (seq (str (or (:handle session) "")))
+    session
+    (let [who (await (whoami! (:pds session) (str (:access-jwt session))))
+          handle (str (or (:handle who) ""))]
+      (if-not (seq handle)
+        session
+        (do
+          (reset! cells/form-handle handle)
+          (reset! cells/form-nick (first (.split ^String handle ".")))
+          (write-fields! (session-file)
+                         {:did (or (:did who) (:did session))
+                          :access (:access-jwt session)
+                          :handle handle
+                          :pds (:pds session)
+                          :refresh (or (:refresh session) "")})
+          (assoc session
+                 :handle handle
+                 :did (or (:did who) (:did session))
+                 :dpop-nonce (str (or (:nonce who) (:dpop-nonce session) ""))))))))
+
+(defn ^:async ^:private refresh!
+  "A fresh access token from the refresh token, or nil.
+
+  The gap this closes: an OAuth access token lives about an hour, the refresh
+  token was stored at sign-in and never used, and a session restored the next
+  day carries a token the PDS will refuse. freeq asks the PDS on our behalf,
+  is told no, and relays a bare `904 SASL authentication failed` — the reason
+  stays in its own log, which is why this was worth ruling out rather than
+  guessing at the proof.
+
+  The token endpoint is rediscovered rather than stored: it is a property of
+  the PDS, `discover!` already knows how to find it, and a stored URL is one
+  more thing that can go stale in the saved session."
+  [session]
+  (let [refresh (str (or (:refresh session) ""))]
+    (when (seq refresh)
+      (let [{:keys [token]} (await (discover! (:pds session)))
+            resp (await (post-form! token
+                                    (form [[:grant_type "refresh_token"]
+                                           [:refresh_token refresh]
+                                           [:client_id (client-id)]])
+                                    nil))]
+        (.log (.-console html/window)
+              (str "frq.oauth refresh " (:status resp)
+                   (when-not (= 200 (:status resp)) (str " " (:body resp)))))
+        (when (= 200 (:status resp))
+          (let [access (acore/json-str (:body resp) "access_token")
+                next-refresh (or (acore/json-str (:body resp) "refresh_token") refresh)]
+            (when (seq (str (or access "")))
+              (write-fields! (session-file)
+                             {:did (:did session) :access access
+                              :handle (or (:handle session) "")
+                              :pds (:pds session) :refresh next-refresh})
+              (assoc session :access-jwt access :refresh next-refresh))))))))
+
+(defn ^:async ^:private usable?
+  "Whether the PDS still accepts this token — asked the way freeq will ask.
+
+  The same getSession call `verify_pds_oauth` makes, so a 200 here means the
+  token and the proof are both good and any SASL failure is elsewhere. It also
+  collects the nonce, which spares the round trip freeq would otherwise spend
+  relaying one."
+  [session]
+  (let [url (str (.replaceAll (str (:pds session)) (RegExp. "/+$") "")
+                 "/xrpc/com.atproto.server.getSession")
+        resp (await (get-with-dpop! url (str (:access-jwt session))
+                                    (str (or (:dpop-nonce session) ""))))]
+    (.log (.-console html/window)
+          (str "frq.oauth token " (:status resp)
+               (when-not (= 200 (:status resp)) (str " " (:body resp)))))
+    {:ok (= 200 (:status resp))
+     :nonce (str (or (:nonce resp) ""))}))
+
 (defn ^:async ^:private prepare-session!
   "Mint the DPoP proof freeq will present to the PDS on our behalf.
 
@@ -396,7 +486,17 @@
   [session]
   (if-not (= :pds-oauth (:kind session))
     session
-    (let [url (str (.replaceAll (str (:pds session)) (RegExp. "/+$") "")
+    (let [session (await (name-session! session))
+          ;; Ask before freeq does. A token an hour old is refused, and the
+          ;; only thing that comes back through IRC is a bare failure.
+          {:keys [ok nonce]} (await (usable? session))
+          session (assoc session :dpop-nonce (if (seq nonce)
+                                               nonce
+                                               (str (or (:dpop-nonce session) ""))))
+          session (if ok
+                    session
+                    (or (await (refresh! session)) session))
+          url (str (.replaceAll (str (:pds session)) (RegExp. "/+$") "")
                    "/xrpc/com.atproto.server.getSession")
           p (await (dpop/proof "GET" url (str (or (:dpop-nonce session) ""))
                                (str (:access-jwt session))))]

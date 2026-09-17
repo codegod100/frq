@@ -739,17 +739,49 @@
                             :on-msg (fn [m]
                                       (note! m)
                                       (room! m)
+                                      ;; The PDS wants a nonce, and says so
+                                      ;; through freeq rather than to us: the
+                                      ;; server called getSession with our
+                                      ;; proof, was told `use_dpop_nonce`, and
+                                      ;; relays the nonce as a NOTICE before
+                                      ;; issuing a fresh challenge. Keeping it
+                                      ;; is what makes the next proof the one
+                                      ;; the PDS will accept — resending the
+                                      ;; same one loops until freeq gives up
+                                      ;; with "DPoP nonce retry limit
+                                      ;; exceeded".
+                                      (when-let [nonce (handshake/dpop-nonce m)]
+                                        (swap! cells/session assoc
+                                               :dpop-nonce nonce))
                                       ;; Capability negotiation and SASL, out of
                                       ;; common/ — the same steps the desktop
                                       ;; takes, and all this does is write what
                                       ;; they answer with.
-                                      (let [{:keys [send] next-caps :caps}
-                                            (handshake/step {:session @cells/session
-                                                             :caps @caps}
-                                                            m)]
-                                        (reset! caps next-caps)
-                                        (doseq [line send]
-                                          (when-let [c @conn] (net/send-line! c line))))
+                                      ;;
+                                      ;; An `AUTHENTICATE` challenge to an
+                                      ;; OAuth session is the one line that
+                                      ;; cannot be answered synchronously: the
+                                      ;; proof has to be minted for this
+                                      ;; moment, with whatever nonce is now
+                                      ;; known, and minting is WebCrypto.
+                                      (let [step! (fn []
+                                                    (let [{:keys [send] next-caps :caps}
+                                                          (handshake/step {:session @cells/session
+                                                                           :caps @caps}
+                                                                          m)]
+                                                      (reset! caps next-caps)
+                                                      (doseq [line send]
+                                                        (when-let [c @conn]
+                                                          (net/send-line! c line)))))]
+                                        (if (and (= "AUTHENTICATE" (str (:command m)))
+                                                 (= :pds-oauth (:kind @cells/session)))
+                                          (.then ^async/Future
+                                                 (handoff/prepare-session! @cells/session)
+                                                 (fn [s]
+                                                   (reset! cells/session s)
+                                                   (step!)
+                                                   nil))
+                                          (step!)))
                                       (let [cmd (str (:command m))
                                             text (str (last (:params m)))]
                                         (cond
