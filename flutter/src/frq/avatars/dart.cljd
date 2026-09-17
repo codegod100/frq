@@ -18,7 +18,7 @@
   guest: `frq.profile/actor` answers nil for a nick that is not handle-shaped,
   and nil never reaches here."
   (:require ["dart:async" :as async]
-            [frq.atproto.dart :as atproto]
+            [frq.atproto.http :as atproto]
             [frq.profile :as profile]))
 
 ;; actor -> {:status :loading | :ready | :failed, :url when there is one}.

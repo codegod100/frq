@@ -12,7 +12,7 @@
   the answers are portable, and only who waits for them is not."
   (:require ["dart:convert" :as conv]
             ["dart:io" :as io]
-            [frq.atproto.core :as core]))
+            [frq.atproto.http :as http]))
 
 (defonce ^:private client (io/HttpClient.))
 
@@ -37,26 +37,11 @@
     (let [^io/HttpClientResponse resp (await (.close req))]
       (await (.join (.transform resp (.-decoder conv/utf8)))))))
 
-(defn ^:async resolve-handle
-  "A handle (alice.bsky.social) to its DID. A DID passes through untouched."
-  [handle]
-  (let [req (core/resolve-handle-req handle)]
-    (core/resolve-handle-parse handle (when req (await (fetch req))))))
-
-(defn ^:async pds-endpoint
-  "The DID's PDS service endpoint, from its DID document."
-  [did]
-  (core/pds-endpoint-parse did (await (fetch (core/pds-doc-req did)))))
-
-(defn ^:async create-session
-  "Sign in to the PDS with an app password. Returns
-  {:did :handle :access-jwt :pds}.
-
-  The password goes to the user's own PDS and nowhere else — freeq never sees
-  it, and verifies the token it gets by asking that same PDS."
-  [identifier password]
-  (let [did (await (resolve-handle identifier))
-        pds (await (pds-endpoint did))]
-    (core/create-session-parse
-     identifier did pds
-     (await (fetch (core/create-session-req pds identifier password))))))
+(defn install!
+  "Register the dart:io transport. The three functions that used to live below
+  this are `frq.atproto.http`'s now: they were `frq.atproto.core`'s `-req` and
+  `-parse` with an await between them and nothing of dart:io in them, so a
+  second copy under the browser backend would have been a second answer to
+  what a handle resolves to."
+  []
+  (http/install! {:fetch fetch}))

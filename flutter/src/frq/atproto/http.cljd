@@ -1,0 +1,57 @@
+(ns frq.atproto.http
+  "One AT Protocol request, named once so both Flutter targets can make it.
+
+  The fourth seam, and the thinnest: `frq.atproto.dart` was already almost all
+  composition. `resolve-handle`, `pds-endpoint` and `create-session` are
+  `frq.atproto.core`'s `-req`/`-parse` pairs with an await in the middle and
+  nothing platform-specific in them at all, so they live here and only `fetch`
+  is installed. dart:io reaches a PDS with `HttpClient`; a browser reaches it
+  with XMLHttpRequest, and is subject to CORS where the native client is not.
+
+  This is the sign-in path that does not involve freeq's auth broker: an app
+  password goes to the reader's own PDS, and what freeq is handed is the token
+  that PDS minted. `frq.oauth.handoff` is the other half — the one that does
+  involve the broker, and therefore the one the broker's return_to allowlist
+  has an opinion about."
+  (:require [frq.atproto.core :as core]))
+
+(defonce ^:private impl (atom {}))
+
+(defn install! [m] (swap! impl merge m) nil)
+
+(defn ^:async fetch
+  "Perform one `-req` descriptor and return the body as a string.
+
+  `body` nil is a GET. Always https: every host core names is an AT Protocol
+  service, and there is no plaintext variant of any of them.
+
+  Awaited here rather than handed back, for `frq.net/connect!`'s reason: cljd
+  cannot see that a dynamic call's return is awaitable."
+  [req]
+  (if-let [f (:fetch @impl)]
+    (await (f req))
+    (throw (ex-info "frq.atproto: no transport installed" {:op :fetch}))))
+
+(defn ^:async resolve-handle
+  "A handle (alice.bsky.social) to its DID. A DID passes through untouched."
+  [handle]
+  (let [req (core/resolve-handle-req handle)]
+    (core/resolve-handle-parse handle (when req (await (fetch req))))))
+
+(defn ^:async pds-endpoint
+  "The DID's PDS service endpoint, from its DID document."
+  [did]
+  (core/pds-endpoint-parse did (await (fetch (core/pds-doc-req did)))))
+
+(defn ^:async create-session
+  "Sign in to the PDS with an app password. Returns
+  {:did :handle :access-jwt :pds}.
+
+  The password goes to the user's own PDS and nowhere else — freeq never sees
+  it, and verifies the token it gets by asking that same PDS."
+  [identifier password]
+  (let [did (await (resolve-handle identifier))
+        pds (await (pds-endpoint did))]
+    (core/create-session-parse
+     identifier did pds
+     (await (fetch (core/create-session-req pds identifier password))))))
