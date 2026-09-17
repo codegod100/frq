@@ -206,8 +206,28 @@
   sent empty rather than guessed at."
   [session nonce]
   (b64-encode
-   (if (= :web-token (:kind session))
+   (case (:kind session)
+     :web-token
      (json-object {"did" "" "method" "web-token" "signature" (:token session)})
+
+     ;; An OAuth access token, which the server cannot simply present to the
+     ;; PDS: a DPoP token is bound to a key, and the holder has to prove it.
+     ;; So the proof travels with it. freeq calls getSession with our token
+     ;; and our proof, and the PDS checks that the proof names that method,
+     ;; that URL and that token — which is what lets a proof be minted for a
+     ;; request this client never makes.
+     ;;
+     ;; `:dpop-proof` is prepared by the caller rather than built here,
+     ;; because minting one is asynchronous and this is not: it is WebCrypto
+     ;; on the web and nothing at all on the other two targets.
+     :pds-oauth
+     (json-object {"did" (:did session)
+                   "signature" (:access-jwt session)
+                   "method" "pds-oauth"
+                   "pds_url" (:pds session)
+                   "dpop_proof" (str (:dpop-proof session))
+                   "challenge_nonce" nonce})
+
      (json-object {"did" (:did session)
                    "signature" (:access-jwt session)
                    "method" "pds-session"

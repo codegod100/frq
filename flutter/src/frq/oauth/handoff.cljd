@@ -1,0 +1,49 @@
+(ns frq.oauth.handoff
+  "How the first broker token gets back into the app, named once for both
+  Flutter targets.
+
+  `frq.net`'s shape again, and the third seam for the same reason: the browser
+  leg of the OAuth handoff is the one part of sign-in that is not a request
+  but a *place to be redirected to*, and the three targets have three
+  different answers. A desktop or a phone binds a loopback listener and reads
+  what the capture page posts back; a browser has no listener and needs none,
+  because the broker redirects it to its own URL with the payload in the
+  fragment.
+
+  Small enough to be one function, and it is the one that differs. Everything
+  around it — `login-url`, `tokens-of`, the base64url payload — is
+  `frq.oauth.core` and portable already.")
+
+(defonce ^:private impl (atom {}))
+
+(defn install! [m] (swap! impl merge m) nil)
+
+(defn ^:async await-callback!
+  "Get the first broker token, however this platform gets one.
+
+  `on-url` is called with the login URL — the desktop shows it beside a
+  listener it has just bound, and the web shows it a moment before the page
+  leaves for it. Returns the tokens.
+
+  Awaited here rather than handed back, for `frq.net/connect!`'s reason: a
+  dynamic call's return is not something cljd can see is awaitable."
+  [broker handle on-url]
+  (if-let [f (:await-callback! @impl)]
+    (await (f broker handle on-url))
+    (throw (ex-info "frq.oauth: no handoff installed" {:op :await-callback!}))))
+
+(defn ^:async prepare-session!
+  "The session, made ready to authenticate with right now.
+
+  A no-op on the loopback path and the whole point on the web one: a
+  `:pds-oauth` session carries a DPoP proof, and a proof is minted for a
+  moment — it has an `iat`, a one-shot `jti`, and sometimes a nonce the PDS
+  handed out. One kept from sign-in would be stale by the time a reconnect
+  used it, so it is made here, immediately before the handshake needs it.
+
+  Returns the session, changed or not, so the caller can simply put back what
+  it gets."
+  [session]
+  (if-let [f (:prepare-session! @impl)]
+    (await (f session))
+    session))

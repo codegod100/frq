@@ -1,0 +1,86 @@
+(ns frq.dpop.web
+  "DPoP, as far as ClojureDart needs to see it.
+
+  A thin wrapper over `web/frq_dpop.js`, and thin on purpose: everything below
+  is WebCrypto, which speaks Promises, ArrayBuffers and JWK objects. The
+  JavaScript does the crypto on its home ground; what crosses this boundary is
+  a string.
+
+  `dart:js` and not `dart:js_util`, which is the shape of everything here:
+  cljd's analyzer resolves `dart:js` and answers `Can't find Dart lib` for both
+  `dart:js_util` and `dart:js_interop`. So there is no `promiseToFuture` to
+  turn a thenable into a Future — and what `dart:js` does offer instead is
+  automatic wrapping of a Dart closure passed as an argument. Hence the
+  callback style on the JavaScript side, and a Completer here to put a Future
+  back on the front of it."
+  (:require ["dart:async" :as async]
+            ["dart:js" :as js]))
+
+(defn- helper
+  "`window.frqDpop`, from the script `web/index.html` loads before the bundle.
+
+  `(. x \"[]\" k)` and not `aget`. `aget` compiles unconditionally to
+  `(x as List)[k as int]`, so reaching for a property of the JS global with it
+  asks Dart to cast `Window` to `List<dynamic>` — which is exactly what the
+  first real sign-in attempt said, in those words. The `[]` operator is what
+  JsObject actually has."
+  []
+  (. js/context "[]" "frqDpop"))
+
+(defn- ^:async call!
+  "Call one callback-style helper function and await its answer.
+
+  The callback takes `(err, value)` with `err` an empty string for success —
+  an empty string rather than null because it survives the crossing without
+  anyone having to ask what JavaScript's absent value became."
+  [method args]
+  (let [done (async/Completer.)]
+    ;; Appended rather than concatenated: `#dart []` is growable, the callers
+    ;; all pass a fresh literal, and `.add` is one call where `followedBy` and
+    ;; `toList` are two and an Iterable in between.
+    (.add args (fn [err value]
+                 (if (seq (str (or err "")))
+                   (.completeError done (Exception. (str err)))
+                   (.complete done (str value)))
+                 nil))
+    (.callMethod (helper) method args)
+    (await (.-future done))))
+
+(defn ^:async proof
+  "One DPoP proof JWT for `htm htu`.
+
+  `nonce` is the server's, when it has asked for one — an empty string means it
+  has not. `token` is the access token this proof should be bound to, and an
+  empty string means the proof is for an unauthenticated call: the PAR request
+  has no token yet, and the token request is what mints one.
+
+  Binding matters for the one call this client never makes. freeq's SASL
+  `pds-oauth` takes our token and our proof and calls the PDS's getSession
+  itself; the PDS checks that the proof names that method, that URL and that
+  token, which is why a proof can be handed to someone else at all."
+  [htm htu nonce token]
+  (await (call! "proof" #dart [(str htm) (str htu)
+                               (str (or nonce "")) (str (or token ""))])))
+
+(defn ^:async challenge
+  "The S256 challenge for a PKCE verifier."
+  [v]
+  (await (call! "challenge" #dart [(str v)])))
+
+(defn verifier
+  "A fresh PKCE verifier. The caller keeps it — it has to outlive the redirect.
+  Synchronous: random bytes need nothing awaited."
+  []
+  (str (.callMethod (helper) "verifier" #dart [])))
+
+(defn random
+  "`n` random bytes, base64url. The OAuth `state` comes from here."
+  [n]
+  (str (.callMethod (helper) "random" #dart [n])))
+
+(defn forget!
+  "Drop the key. A DPoP key that outlives the token it was bound to has
+  nothing left to prove, so signing out takes it with the session."
+  []
+  (.callMethod (helper) "forget" #dart [])
+  nil)

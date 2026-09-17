@@ -20,6 +20,9 @@
             [clojure.string :as str]
             ["dart:io" :as dio]
             ["package:flutter/material.dart" :as m]
+            ;; `defaultTargetPlatform`, which material does not re-export --
+            ;; see the same require in `frq.hiccup`.
+            ["package:flutter/foundation.dart" :as fnd]
             ["package:path_provider/path_provider.dart" :as pp]
             [cljd.flutter :as f]
             [frq.hiccup :as h]
@@ -29,8 +32,14 @@
             ;; the same way the shared half asks for it.
             [frq.io :as fio]
             [frq.crypto.dart :as crypto-dart]
-            [frq.net.dart :as net]
-            [frq.atproto.dart :as atproto]
+            [frq.net :as net]
+            ;; The transport this entry point installs. `frq.main-web`
+            ;; installs the other one, which is why the seam is between them.
+            [frq.net.dart :as net-dart]
+            [frq.atproto.http :as atproto]
+            ;; The dart:io transport this entry point installs; `frq.main-web`
+            ;; installs the XMLHttpRequest one.
+            [frq.atproto.dart :as atproto-dart]
             [frq.clock :as clock]
             [frq.media.core :as media-core]
             [frq.media.dart :as media]
@@ -53,6 +62,9 @@
             [frq.upload.dart :as upload]
             [frq.irc.mutate :as mutate]
             [frq.oauth.core :as oauth]
+            [frq.oauth.handoff :as handoff]
+            ;; The loopback handoff this entry point installs; `frq.main-web`
+            ;; installs the redirect one.
             [frq.oauth.dart :as oauth-dart]
             [frq.irc.parse :as irc]
             [frq.irc.handshake :as handshake]))
@@ -597,7 +609,14 @@
   the broker will redirect to and not a porting problem. So that case says so
   rather than quietly connecting as somebody else."
   []
-  (if-let [bt @cells/broker-token]
+  ;; A session the web half already established. `frq.oauth.web` runs the whole
+  ;; OAuth flow itself and leaves the result here — there is no broker token on
+  ;; that path and nothing to refresh — so finding one means sign-in is done.
+  ;; Without this, restoring it would send the reader straight back out to the
+  ;; authorization server on every connect.
+  (if (= :pds-oauth (:kind @cells/session))
+    @cells/session
+    (if-let [bt @cells/broker-token]
     (do
       (reset! cells/status "Resuming your session…")
       (let [tokens (oauth/refresh-session-parse
@@ -610,9 +629,11 @@
         ;; it does.
         (store/save-session! tokens)
         (assoc tokens :kind :web-token)))
-    ;; No saved token: the browser leg. `frq.oauth.dart` binds the loopback,
-    ;; and what comes back through it is the first broker token.
-    (let [tokens (await (oauth-dart/await-callback!
+    ;; No saved token: the browser leg, through the seam. `frq.oauth.dart`
+    ;; binds a loopback listener and reads what the capture page posts back;
+    ;; `frq.oauth.web` redirects the page and reads the fragment it returns
+    ;; with. What comes back either way is the first broker token.
+    (let [tokens (await (handoff/await-callback!
                          oauth/default-broker
                          (str @cells/form-handle)
                          (fn [url]
@@ -625,7 +646,7 @@
       (reset! cells/login-url nil)
       (reset! cells/broker-token (:broker-token tokens))
       (store/save-session! tokens)
-      (assoc tokens :kind :web-token))))
+      (assoc tokens :kind :web-token)))))
 
 (defn ^:async sign-in!
   "Fill `cells/session` for the mode that was chosen, or say why not.
@@ -692,6 +713,9 @@
   ;; us on the server as a guest, which looks like a success and is not the
   ;; one that was asked for. Bluesky did exactly that until it was asked.
   (when (await (sign-in!))
+  ;; The identity is settled; now make it usable this second. Only the web's
+  ;; OAuth session has anything to do here — see `frq.oauth.handoff`.
+  (reset! cells/session (await (handoff/prepare-session! @cells/session)))
   (let [n (swap! attempt inc)]
       (reset! caps #{})
       (reset! cells/connecting? true)
@@ -1101,7 +1125,15 @@
 
 (defn- close-picker! [] (reset! cells/reacting nil))
 
-(defn ^:async main []
+(defn bind!
+  "The two things every entry point does before it has a host: the binding,
+  and somewhere for a layout error to go.
+
+  Split out with `start!` when the web target arrived, because that one
+  installs a different backend and cannot reach path_provider at all — see
+  `frq.main-web`. Everything here is target-agnostic, which is the test for
+  whether a line belongs in it."
+  []
   (m/WidgetsFlutterBinding.ensureInitialized)
   ;; Layout errors do not come back as exceptions — they happen after the
   ;; build, so nothing can catch them, and what they leave is a blank screen
@@ -1110,9 +1142,23 @@
         (fn [^m/FlutterErrorDetails details]
           (m/debugPrint (str "frq: FLUTTER ERROR " (.-exception details)))
           (m/debugPrint (str "frq: LIBRARY " (.-library details)
-                             " CONTEXT " (.-context details)))))
-  (let [dir (.-path (await (pp/getApplicationSupportDirectory)))]
-    (host/install! dir)
+                             " CONTEXT " (.-context details))))))
+
+(defn ^:async start!
+  "Everything from the first cell to `runApp`, with the host already installed.
+
+  The precondition is the whole point of the split: this asks `frq.io` for the
+  filesystem and never dart:io, so it runs the same over `frq.io.dart` and
+  over `frq.io.web`. What it still installs directly is the rest of the Dart
+  half — crypto, the profile fetch, the actions — and those are shared by both
+  Flutter targets because both compile the same ClojureDart.
+
+  Assert rather than trust: an entry point that forgets `install!` would
+  otherwise fail somewhere inside `restore-prefs!` with a message about a
+  keyword."
+  []
+  (assert (fio/installed?) "frq.main/start!: no frq.io backend installed")
+  (do
     ;; Ed25519 for the reactions freeq will not take on trust. Verified
     ;; against RFC 8032 test 1 on the device: the same public key and the
     ;; same signature OpenSSL gives on the desktop, so a signature minted
@@ -1283,10 +1329,13 @@
       ;; put a link to.
       :image-path (fn [url] (media/path-when-ready url))
       :wide? wide?
-      ;; True where there is a pointer to hover with. Both Flutter targets
-      ;; compile this file, so it is asked rather than assumed: a window on the
-      ;; desktop has a mouse, Android has a finger.
-      :desktop? (fn [] (not (.-isAndroid dio/Platform)))
+      ;; True where there is a pointer to hover with. Three Flutter targets
+      ;; compile this file now, so it is asked rather than assumed: a window on
+      ;; the desktop has a mouse, Android has a finger, and the web is whichever
+      ;; the browser is running on. `defaultTargetPlatform` for the reason
+      ;; `frq.hiccup/pointer?` uses it — dart:io's `Platform` throws in a
+      ;; browser rather than answering.
+      :desktop? (fn [] (not= fnd/TargetPlatform.android fnd/defaultTargetPlatform))
       :mine? (fn [m] (rooms/mine? m (str @cells/form-nick)))
 
       ;; Rewriting. The old text is the starting point rather than an empty
@@ -1369,6 +1418,17 @@
       (m/Scaffold)
       .body
       m/SafeArea
+      ;; Text you can select, which on the web is not the default: a browser
+      ;; renders Flutter to a canvas, so the ordinary drag-over-text a page
+      ;; gives for free is not there unless something asks for it. One
+      ;; SelectionArea over the whole tree is that ask, and it covers every
+      ;; Text under it rather than needing them changed.
+      ;;
+      ;; Above `render-root` rather than inside `frq.hiccup`, so it is one
+      ;; widget and not one per label — and for all three targets rather than
+      ;; the web alone, because copying a line out of a chat is a thing a
+      ;; desktop window should do too.
+      m/SelectionArea
       (f/widget
        :context ctx
        ;; One watch, not twenty. `lines` is a local atom and not a cell, so it
@@ -1382,3 +1442,11 @@
          ;; beside the screens is floated over them where there is a pointer,
          ;; and drawn where it stands where there is not.
          (h/render-root [screens/app]))))))
+
+(defn ^:async main []
+  (bind!)
+  (host/install! (.-path (await (pp/getApplicationSupportDirectory))))
+  (net-dart/install!)
+  (oauth-dart/install!)
+  (atproto-dart/install!)
+  (await (start!)))

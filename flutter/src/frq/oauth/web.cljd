@@ -1,0 +1,407 @@
+(ns frq.oauth.web
+  "Bluesky sign-in from the browser, as an OAuth client of our own.
+
+  Not freeq's broker. The broker finishes a login by redirecting to
+  `return_to`, and it only redirects to hosts on its own allowlist — its https
+  origins and loopback — so a build served from anywhere else can never
+  complete a sign-in through it, whatever the client does. Asking to be added
+  to that list is somebody else's decision.
+
+  So this does the AT Protocol OAuth itself, and the thing that makes that
+  possible is whose allowlist applies: an authorization server fetches the
+  client's metadata from its `client_id` URL and takes *that document* as the
+  authority on where a code may be sent. We serve it — see `CLIENT_METADATA`
+  in `.modal/flutter-web/serve.py` — so the redirect URI is ours to declare.
+
+  A public client with no secret, which a page in a browser could not keep
+  anyway. What stands in for one is DPoP: every token is bound to a key this
+  client proves it holds, and that is also exactly what freeq's SASL
+  `pds-oauth` method verifies — it takes the token and a proof, calls the
+  PDS's getSession with both, and believes the PDS. So no broker web-token is
+  needed at the end of this either.
+
+  The flow is two halves with a page load between them, as in every browser
+  OAuth: `await-callback!` leaves for the authorization server and does not
+  return, and `resume!` runs on the load that comes back."
+  (:require ["dart:async" :as async]
+            ["dart:html" :as html]
+            [clojure.string :as string]
+            [frq.atproto.core :as acore]
+            ;; `url-encode` is here and `json-str` is in atproto's core; the
+            ;; two cores split by what they describe, not by who calls them.
+            [frq.oauth.core :as core]
+            [frq.atproto.http :as atproto]
+            [frq.cells :as cells]
+            [frq.dpop.web :as dpop]
+            [frq.io :as fio]
+            [frq.oauth.handoff :as handoff]))
+
+(defn- origin
+  "The app's root, which is both the client's identity and where a code comes
+  back.
+
+  The origin and a bare slash — deliberately NOT `location.pathname`. Both
+  values here have to match `client-metadata.json` exactly: the `client_id` is
+  the URL an authorization server fetches that document from, and the
+  `redirect_uri` has to be one it lists. Built from the current path instead,
+  a page opened at `/index.html` asks Bluesky for
+  `/index.htmlclient-metadata.json` and is told, quite correctly, `Not Found`."
+  []
+  (str (.-origin (.-location html/window)) "/"))
+
+(defn- client-id [] (str (origin) "client-metadata.json"))
+
+;; Where the half-finished login is kept while the browser is away at the
+;; authorization server. Through `frq.io` rather than localStorage directly:
+;; the seam is already the answer to "somewhere durable", and on the web it is
+;; localStorage anyway.
+(defn- pending-file [] (str (fio/config-dir) "/oauth-pending"))
+(defn- session-file [] (str (fio/config-dir) "/oauth-session"))
+
+(defn- write-fields!
+  "Save a flat map of strings as lines of `key\tvalue`.
+
+  Lines and tabs rather than EDN: `frq.store` reads EDN with `clojure.edn`,
+  and this is a handful of opaque strings — a verifier, a state, two URLs —
+  where the parser is the only thing that could go wrong."
+  [path m]
+  (fio/write-private-file!
+   path
+   (apply str (for [[k v] m] (str (name k) "\t" (str v) "\n")))))
+
+(defn- read-fields
+  [path]
+  (when (fio/file-exists? path)
+    (when-let [text (fio/slurp path)]
+      (into {}
+            (comp (map (fn [^String line] (.split line "\t")))
+                  (filter #(= 2 (count %)))
+                  (map (fn [parts] [(keyword (str (first parts))) (str (second parts))])))
+            (.split (str text) "\n")))))
+
+(defn ^:async ^:private http!
+  "One request, with the headers OAuth needs and the answer it gives back.
+
+  `html/HttpRequest` by hand for `frq.atproto.web`'s reason — the convenience
+  wrapper wants a Dart `Map<String,String>` — and because this needs two
+  things that wrapper hides: a non-2xx body, and the `DPoP-Nonce` header.
+  Both are load-bearing here. An authorization server answers the first
+  request of a flow with 400 `use_dpop_nonce` and the nonce to use, and that
+  is not an error, it is the handshake."
+  [method url headers body]
+  (let [req (html/HttpRequest.)
+        done (async/Completer.)]
+    (.open req method url)
+    (doseq [[k v] headers]
+      (try (.setRequestHeader req (str k) (str v)) (catch Object _ nil)))
+    (.addEventListener req "load"
+                       (fn [_]
+                         (when-not (.-isCompleted done)
+                           (.complete done
+                                      {:status (.-status req)
+                                       :body (str (.-responseText req))
+                                       :nonce (str (or (.getResponseHeader req "dpop-nonce") ""))}))
+                         nil))
+    (.addEventListener req "error"
+                       (fn [_]
+                         (when-not (.-isCompleted done)
+                           (.completeError
+                            done (Exception. (str "Could not reach " url))))
+                         nil))
+    (if body (.send req (str body)) (.send req))
+    (await (.-future done))))
+
+(defn- first-in-array
+  "The first string of a JSON array field, by scanning.
+
+  `frq.atproto.core` reads strings and numbers out of JSON and has no array
+  reader, and `authorization_servers` is the one array this flow needs — one
+  field, one element, in a document written by the server we are about to
+  trust anyway. A scanner is smaller than a parser and says so."
+  [body key]
+  (let [body (str body)
+        at (.indexOf body (str "\"" key "\""))]
+    (when (<= 0 at)
+      (let [open (.indexOf body "[" at)
+            q1 (.indexOf body "\"" open)
+            q2 (.indexOf body "\"" (inc q1))]
+        (when (and (< at open) (< open q1) (< q1 q2))
+          (.substring body (inc q1) q2))))))
+
+(defn ^:async ^:private auth-server!
+  "Which server authorizes for this PDS.
+
+  Two shapes, and the difference is what a real account runs into. A PDS shard
+  — `puffball.us-east.host.bsky.network` and its siblings — publishes
+  `oauth-protected-resource` naming `https://bsky.social` as its authorization
+  server, and serves no authorization-server metadata of its own. An
+  all-in-one host like bsky.social IS the authorization server and publishes
+  no protected-resource document at all: probing for one there returns an HTML
+  404.
+
+  So ask for the pointer, and fall back to the PDS itself when there is none.
+  Testing against bsky.social alone hid this entirely — the first real handle
+  went to a shard and stopped dead."
+  [base]
+  (let [{:keys [status body]} (await (http! "GET"
+                                            (str base "/.well-known/oauth-protected-resource")
+                                            {} nil))]
+    (or (when (= 200 status) (first-in-array body "authorization_servers"))
+        base)))
+
+(defn ^:async ^:private discover!
+  "The authorization server's endpoints for a PDS."
+  [pds]
+  (let [base (.replaceAll (str pds) (RegExp. "/+$") "")
+        as (.replaceAll (str (await (auth-server! base))) (RegExp. "/+$") "")
+        {:keys [status body]} (await (http! "GET"
+                                            (str as "/.well-known/oauth-authorization-server")
+                                            {} nil))]
+    (when-not (= 200 status)
+      (throw (ex-info (str "No OAuth metadata at " as) {:status status})))
+    {:par (acore/json-str body "pushed_authorization_request_endpoint")
+     :authorize (acore/json-str body "authorization_endpoint")
+     :token (acore/json-str body "token_endpoint")}))
+
+(defn- form
+  "application/x-www-form-urlencoded from pairs, encoded by core's own encoder."
+  [pairs]
+  (string/join
+   "&"
+   (for [[k v] pairs] (str (name k) "=" (core/url-encode (str v))))))
+
+(defn ^:async ^:private send-form!
+  "One form POST carrying a freshly minted proof.
+
+  A named function and not a closure inside `post-form!`: nothing in this repo
+  writes `(fn ^:async ...)`, and the compiler agrees — a namespace with one in
+  it fails with the namespace named and nothing else said, which is an
+  afternoon nobody needs twice."
+  [url body token nonce]
+  (let [p (await (dpop/proof "POST" url nonce (or token "")))]
+    (await (http! "POST" url
+                  {"Content-Type" "application/x-www-form-urlencoded"
+                   "DPoP" p}
+                  body))))
+
+(defn ^:async ^:private post-form!
+  "POST a form with a DPoP proof, retrying once when the server asks for a
+  nonce.
+
+  The retry is the protocol and not a fallback: a client has no way to know
+  the first nonce, so the first request of every flow is answered with 400
+  `use_dpop_nonce` and the nonce to use. `frq.net.web` has the same shape of
+  handshake one layer down."
+  [url body token]
+  (let [first-try (await (send-form! url body token ""))]
+    (if (and (>= (:status first-try) 400)
+             (.contains (str (:body first-try)) "use_dpop_nonce")
+             (seq (:nonce first-try)))
+      (await (send-form! url body token (:nonce first-try)))
+      first-try)))
+
+(defn ^:async ^:private get-with-dpop!
+  "An authenticated GET carrying a proof, retrying once for a nonce.
+
+  The same handshake `post-form!` does, one method over: a PDS answers the
+  first DPoP-authenticated request of a session with 401 and the nonce it
+  wants, and that is the protocol rather than a failure."
+  [url token nonce]
+  (let [p (await (dpop/proof "GET" url nonce token))
+        resp (await (http! "GET" url
+                           {"Authorization" (str "DPoP " token) "DPoP" p}
+                           nil))]
+    (if (and (>= (:status resp) 400)
+             (.contains (str (:body resp)) "use_dpop_nonce")
+             (seq (:nonce resp))
+             (empty? (str nonce)))
+      (await (get-with-dpop! url token (:nonce resp)))
+      resp)))
+
+(defn ^:async ^:private whoami!
+  "Who the token belongs to, asked of the PDS.
+
+  Three things at once, which is why it is worth a round trip. It settles the
+  handle — the token response carries `sub`, a DID, and nothing a person would
+  recognise, and without a handle `frq.main/sign-in!` has no nick to derive
+  and leaves whatever was in the box, which is how an OAuth sign-in arrived on
+  the server calling itself `frq-guest`.
+
+  It proves the DPoP proof is accepted before one is handed to freeq, since
+  this is the very call freeq will make with it.
+
+  And it collects the DPoP nonce the PDS wants, so the proof minted at connect
+  carries one already rather than costing freeq a `DPOP_NONCE:` round trip."
+  [pds token]
+  (let [url (str (.replaceAll (str pds) (RegExp. "/+$") "")
+                 "/xrpc/com.atproto.server.getSession")
+        resp (await (get-with-dpop! url token ""))]
+    (when (= 200 (:status resp))
+      {:handle (acore/json-str (:body resp) "handle")
+       :did (acore/json-str (:body resp) "did")
+       :nonce (:nonce resp)})))
+
+(defn ^:async ^:private begin!
+  "Push the request, then leave for the authorization server.
+
+  PAR and not a plain authorize URL: `require_pushed_authorization_requests`
+  is true at bsky.social, so the parameters go up over the back channel first
+  and the browser carries only the `request_uri` that comes back."
+  [handle on-url]
+  (let [did (await (atproto/resolve-handle handle))
+        pds (await (atproto/pds-endpoint did))
+        {:keys [par authorize token]} (await (discover! pds))
+        verifier (dpop/verifier)
+        challenge (await (dpop/challenge verifier))
+        state (dpop/random 16)
+        body (form [[:client_id (client-id)]
+                    [:redirect_uri (origin)]
+                    [:response_type "code"]
+                    [:scope "atproto transition:generic"]
+                    [:state state]
+                    [:code_challenge challenge]
+                    [:code_challenge_method "S256"]
+                    ;; So the server can skip asking who is signing in. It is
+                    ;; a hint and not an assertion — the reader still chooses
+                    ;; at the authorization page.
+                    [:login_hint handle]])
+        resp (await (post-form! par body nil))]
+    (when-not (= 201 (:status resp))
+      (throw (ex-info (str "Authorization request refused: " (:body resp))
+                      {:status (:status resp)})))
+    (let [request-uri (acore/json-str (:body resp) "request_uri")
+          url (str authorize "?client_id=" (core/url-encode (client-id))
+                   "&request_uri=" (core/url-encode request-uri))]
+      (write-fields! (pending-file)
+                     {:verifier verifier :state state :did did
+                      :handle handle :pds pds :token token})
+      (on-url url)
+      (.assign (.-location html/window) url)
+      ;; The page is leaving. A Future nobody completes is what the caller's
+      ;; `await` holds until it does.
+      (await (.-future (async/Completer.))))))
+
+(defn ^:async ^:private await-callback!
+  "`frq.oauth.handoff`'s shape. `broker` is ignored — there is no broker on
+  this path, and the argument stays so the seam is one signature."
+  [_broker handle on-url]
+  (await (begin! (str handle) on-url)))
+
+(defn ^:async resume!
+  "Finish a sign-in that left this page and came back. True when one did.
+
+  Run before `frq.main/start!`: what it leaves behind is a session in
+  `frq.cells`, which is what `sign-in!` then finds instead of starting the
+  browser leg again.
+
+  The query string is cleared with `replaceState` rather than by assigning to
+  `location`, which would push a history entry and leave a Back button that
+  redeems a spent code."
+  []
+  (let [search (str (.-search (.-location html/window)))
+        ^#/(Map String String)
+        params (Uri.splitQueryString (if (.startsWith search "?")
+                                       (.substring search 1)
+                                       search))
+        ;; `get`, and this is the correction that cost the most: cljd's core
+        ;; DOES extend Dart's Map with ILookup — `(-lookup [m k] (. m "[]" k))`
+        ;; — so `get` reaches it. `aget` does not and never did: it compiles
+        ;; unconditionally to `(x as List)[k as int]`, which on a Map is a
+        ;; TypeError.
+        code (get params "code")
+        state (get params "state")
+        pending (read-fields (pending-file))]
+    (when (and (seq (str (or code ""))) pending)
+      (try
+        (.replaceState (.-history html/window) nil "" (origin))
+        (catch Object _ nil))
+      ;; State is the CSRF binding: a code arriving with a state we did not
+      ;; issue is not ours, and redeeming it would be the attack this exists
+      ;; to prevent.
+      (if-not (= (str state) (:state pending))
+        (do (reset! cells/error "Sign-in failed: state did not match") false)
+        (let [resp (await (post-form!
+                           (:token pending)
+                           (form [[:grant_type "authorization_code"]
+                                  [:code code]
+                                  [:redirect_uri (origin)]
+                                  [:client_id (client-id)]
+                                  [:code_verifier (:verifier pending)]])
+                           nil))]
+          (if-not (= 200 (:status resp))
+            (do (reset! cells/error (str "Sign-in failed: " (:body resp))) false)
+            (let [access (acore/json-str (:body resp) "access_token")
+                  refresh (acore/json-str (:body resp) "refresh_token")
+                  did (or (acore/json-str (:body resp) "sub") (:did pending))
+                  who (await (whoami! (:pds pending) access))
+                  handle (or (:handle who) (:handle pending) "")
+                  session {:kind :pds-oauth
+                           :did (or (:did who) did)
+                           :handle handle
+                           :access-jwt access
+                           :pds (:pds pending)
+                           :dpop-nonce (str (or (:nonce who) ""))
+                           :refresh refresh}]
+              (fio/delete-file! (pending-file))
+              (write-fields! (session-file)
+                             {:did (:did session) :access access
+                              :handle handle
+                              :pds (:pds pending) :refresh (or refresh "")})
+              (reset! cells/session session)
+              (reset! cells/auth-mode :bluesky)
+              ;; The name the connect screen and the nick are drawn from.
+              ;; `frq.main/sign-in!` reads the session for both, but only if
+              ;; the session says who it belongs to.
+              (when (seq handle)
+                (reset! cells/form-handle handle)
+                (reset! cells/form-nick (first (.split ^String handle "."))))
+              true)))))))
+
+(defn restore!
+  "A session from an earlier visit, back into `frq.cells`. True when there was
+  one.
+
+  Separate from `resume!` because they answer different questions: one is
+  \"did we just come back from the authorization server\", the other is \"was
+  there a sign-in before today\". Both end in the same place."
+  []
+  (when-let [m (read-fields (session-file))]
+    (when (seq (str (or (:access m) "")))
+      (reset! cells/session {:kind :pds-oauth
+                             :did (:did m)
+                             :handle (:handle m)
+                             :access-jwt (:access m)
+                             :pds (:pds m)
+                             :refresh (:refresh m)})
+      (reset! cells/auth-mode :bluesky)
+      (when (seq (str (or (:handle m) "")))
+        (reset! cells/form-handle (:handle m))
+        (reset! cells/form-nick (first (.split ^String (str (:handle m)) "."))))
+      true)))
+
+(defn forget!
+  "Drop the saved session and the key that was bound to it."
+  []
+  (fio/delete-file! (session-file))
+  (dpop/forget!)
+  nil)
+
+(defn ^:async ^:private prepare-session!
+  "Mint the DPoP proof freeq will present to the PDS on our behalf.
+
+  For `GET {pds}/xrpc/com.atproto.server.getSession` and bound to the access
+  token, because that is the exact request `verify_pds_oauth` makes with it.
+  Minted per connect: a proof has an `iat` and a single-use `jti`, so one kept
+  from sign-in would be refused by the time a reconnect offered it."
+  [session]
+  (if-not (= :pds-oauth (:kind session))
+    session
+    (let [url (str (.replaceAll (str (:pds session)) (RegExp. "/+$") "")
+                   "/xrpc/com.atproto.server.getSession")
+          p (await (dpop/proof "GET" url (str (or (:dpop-nonce session) ""))
+                               (str (:access-jwt session))))]
+      (assoc session :dpop-proof p))))
+
+(defn install! []
+  (handoff/install! {:await-callback! await-callback!
+                     :prepare-session! prepare-session!}))

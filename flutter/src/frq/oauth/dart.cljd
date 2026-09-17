@@ -18,8 +18,14 @@
   is the one thing Dart cannot do alone — `frq.io/open-url!` answers that."
   (:require ["dart:io" :as io]
             ["dart:async" :as async]
+            ;; For `defaultTargetPlatform` alone: dart:io's `Platform` throws
+            ;; in a browser, and this file compiles for the web target too.
+            ;; foundation and not material, because material re-exports it
+            ;; behind a `show` list that leaves the getter out.
+            ["package:flutter/foundation.dart" :as fnd]
             [frq.io :as host]
-            [frq.oauth.core :as core]))
+            [frq.oauth.core :as core]
+            [frq.oauth.handoff :as handoff]))
 
 (defn- return-url
   "What brings the app back to the front once the browser is done, or nil where
@@ -36,7 +42,7 @@
   button that does nothing. `core/capture-html` takes nil for precisely this
   and says so; this is the caller it was written for."
   []
-  (when (.-isAndroid io/Platform) "frq://auth"))
+  (when (= fnd/TargetPlatform.android fnd/defaultTargetPlatform) "frq://auth"))
 
 (defn ^:async await-callback!
   "Serve the loopback capture until the browser posts the handoff back.
@@ -95,3 +101,9 @@
                    nil)))
       (await (.-future done))
       (finally (await (.close server .force true))))))
+
+(defn install!
+  "Register the loopback handoff. The mirror of `frq.oauth.web/install!`,
+  called from `frq.main` beside the host and the transport."
+  []
+  (handoff/install! {:await-callback! await-callback!}))
