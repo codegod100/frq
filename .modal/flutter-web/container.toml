@@ -1,0 +1,233 @@
+[container]
+name        = "frq-flutter-web"
+description = "the Flutter web build, incremental, in a nix devShell"
+base        = "arch-nix"
+# A Sandbox, not a Function: it runs on a real VM, the command is the
+# sandbox's own process so it dies when the command does, and only a Sandbox
+# can hold open a tunnel -- which is the whole of `serve`.
+runtime     = "sandbox"
+
+[build]
+# The container lives inside the repo it builds, so the copy is rooted two
+# levels up and `.` is the whole tree.
+context = "../.."
+include = ["."]
+# The devShell, baked in rather than entered -- `flutter-dev`'s trick and for
+# its reasons. `print-dev-env` writes the whole environment out as shell and
+# realises its inputs on the way, so the closure becomes an image layer
+# instead of a fetch every container pays for; sourcing it from .bashrc means
+# a shell attached to this container *is* the devShell.
+#
+# `dev` stays for the case where the baked env is stale against a flake edit.
+# The toolchain layer, and what it is allowed to depend on.
+#
+# `warm` is copied before `setup` runs and is deliberately six files: the
+# flake and its lock, plus the four `cljd-deps` actually reads -- it does
+# `cp ${./common/deps.edn}`, `${./flutter/deps.edn}`, `${./flutter/pubspec.yaml}`
+# and `${./flutter/pubspec.lock}` and nothing else. That is the whole of what
+# `nix develop .#flutter-web` needs to evaluate, so this layer moves when a
+# dependency moves and not when a line of ClojureDart does.
+#
+# The point of the split: `[build] commands` run after the full source copy,
+# so editing `flutter/src/frq/net/web.cljd` used to invalidate them and spend
+# minutes re-warming a devShell that had not changed. Here the image is built
+# from the toolchain and the program is built in the sandbox, which is where
+# it was always going to happen anyway.
+warm = [
+  "flake.nix", "flake.lock",
+  "common/deps.edn",
+  "flutter/deps.edn", "flutter/pubspec.yaml", "flutter/pubspec.lock",
+]
+# The devShell, baked in rather than entered. `print-dev-env` writes the whole
+# environment out as shell and realises its inputs on the way, so the closure
+# becomes an image layer instead of a fetch every container pays for; sourcing
+# it from .bashrc means a shell attached to this container *is* the devShell.
+#
+# Best-effort, and the reason is gVisor. An image build is a Function
+# underneath, so it cannot *build* a derivation -- and `print-dev-env` realises
+# the shell's inputs, which here includes `flutter-wrapped-…-sdk-links.drv`,
+# in no binary cache and therefore built. Under gVisor that dies with
+# `unexpected EOF reading a line`, and the ptyshim that papered over it is
+# deprecated. Nothing here is load-bearing: [run] enters `nix develop` itself,
+# on the VM, where a real pty makes the same build work.
+setup = [
+  "nix print-dev-env /app#flutter-web --accept-flake-config --extra-substituters file:///nix-cache > /etc/devshell.sh || rm -f /etc/devshell.sh",
+  "echo '[ -s /etc/devshell.sh ] && . /etc/devshell.sh' >> /root/.bashrc",
+  "printf '#!/bin/sh\\nexec nix develop /app#flutter-web \"$@\"\\n' > /usr/local/bin/dev && chmod +x /usr/local/bin/dev",
+]
+# The build state a local checkout carries, wanted by nothing out here: this
+# container builds into a volume of its own, and the jolt and clojure caches
+# are the laptop's.
+ignore  = [
+    "flutter/build", "flutter/.home", "flutter/.dart_tool",
+    "flutter/.clojuredart", "flutter/.cpcache",
+    ".jolt", ".cpcache", "result", "build", ".git",
+]
+
+# `nix-cache` is the binary cache every container here reads from and writes
+# back to. `devshell` is the working state of a `nix develop` loop, shared by
+# every container that has one -- each gets its own directory under it, named
+# for the devShell it belongs to, so `flutter-web` and `flutter-desktop` never
+# write the same tree even though they share a `.home`-shaped cache layout.
+# Modal Volumes have no locking, so those directory names are the only thing
+# keeping them apart, and two runs of the *same* devshell must not overlap.
+[volumes]
+nix-cache = "/nix-cache"
+devshell  = "/devshell"
+
+[resources]
+cpu     = 8
+memory  = 16384
+timeout = 3600
+
+# The port `just flutter-web serve` listens on, tunnelled out. Nothing is
+# served unless the command asks for it -- a plain build exits and the tunnel
+# closes with the sandbox -- but the port has to be declared at create time,
+# so it is declared once here and `modal run --command` decides whether
+# anything ever binds it.
+[network]
+ports = [8080]
+
+[run]
+workdir = "/app"
+# Nix for the dependencies, the ordinary toolchain for the build -- the
+# `flutter-dev` argument, unchanged: a derivation is all-or-nothing, so any
+# edit under `nix build` is a fresh sandbox and a fresh compile of everything.
+# Here the devShell supplies dart2js and the engine artifacts and `flutter
+# build web` decides what is stale.
+command = """
+set -e
+# This container's own directory on the shared devshell volume, named for the
+# devShell whose state it keeps. `flutter-desktop` has its own beside it.
+SHELL_DIR=/devshell/frq-flutter-web
+mkdir -p "$SHELL_DIR" "$SHELL_DIR/.cache"
+
+# A worktree's `.git` is a *file* naming a gitdir back on the machine that
+# copied it in, and nix believes it and goes looking for a path that is not
+# here. It has to go before any flake reference to /app.
+rm -rf /app/.git
+
+echo "sync: /app -> $SHELL_DIR"
+# `nix shell --command` and not `nix profile install`: a profile install puts
+# rsync in ~/.nix-profile/bin, which is not on the PATH of the shell already
+# running.
+#
+# rsync and not cp, with --checksum and not mtimes: Modal copies the source in
+# with fresh timestamps every run, so a plain copy looks entirely new to
+# Flutter and rebuilds the lot. --checksum compares content and leaves the
+# unchanged files' timestamps alone, which is the whole basis of the
+# incremental build.
+#
+# The excludes are the state we are here to keep -- overwriting them from /app
+# would defeat the volume. `flutter/web/` is NOT on the list: it is committed
+# now, because the OAuth client keeps a script there, so it has to arrive from
+# /app like any other source.
+nix shell nixpkgs#rsync --accept-flake-config \
+    --extra-substituters file:///nix-cache --command \
+  rsync -a --checksum --delete \
+    --exclude 'flutter/.home/' \
+    --exclude 'flutter/.clojuredart/' \
+    --exclude 'flutter/build/' \
+    --exclude 'flutter/.dart_tool/' \
+    --exclude '.git' \
+    /app/ "$SHELL_DIR/"
+
+cd "$SHELL_DIR"
+echo "state carried over:"
+du -sh flutter/.home flutter/.clojuredart flutter/build 2>/dev/null \
+  || echo "  (none yet -- first run)"
+
+# Evaluated from /app and built in the volume, as `flutter-dev` does and for
+# the same two reasons: /app is the pristine copy, so nix stores a source tree
+# of the repo rather than one carrying gigabytes of flutter/build, while the
+# recipe still runs where the state it reuses lives. `just -f` is what puts it
+# there, since the recipe cds to its own justfile's directory.
+# The baked devShell if there is one, and `nix develop` if there is not.
+#
+# This is the difference between a two-minute rebuild and a three-minute one.
+# `nix develop /app#flutter-web` re-copies the whole repo into the nix store
+# and re-evaluates the flake on every run -- the flake's source is the tree,
+# so any edit makes it a new source -- and all of that to arrive at an
+# environment the image already computed with `print-dev-env` and wrote to
+# /etc/devshell.sh. Sourcing it is the same PATH and the same variables with
+# no evaluation at all.
+#
+# The fallback is not decoration: that setup step is best-effort, because
+# realising the devShell under gVisor can fail (see [build] setup), and a
+# container whose bake did not happen still has to build.
+# The devShell environment, computed once and kept on the volume.
+#
+# `nix develop /app#flutter-web` re-copies the whole repo into the nix store
+# and re-evaluates the flake on every run -- the flake's source IS the tree,
+# so any edit makes it a new source -- to arrive at an environment that has
+# not changed. `print-dev-env` writes that environment out as shell, and
+# sourcing it is the same PATH and the same variables with no evaluation.
+#
+# Here and not in [build] setup, which is where it used to be: an image build
+# is a Function under gVisor, where nix cannot realise a derivation, and this
+# devShell's closure contains one no cache can answer for
+# (flutter-wrapped-...-sdk-links). That bake failed every time and was made
+# non-fatal, which meant it silently never happened. On the VM it works, and
+# the volume is what makes it worth doing once.
+#
+# Regenerated when flake.lock's CONTENT changes -- by hash and never by mtime.
+# Modal copies /app in with fresh timestamps on every run, so `-nt` says the
+# lock is newer every single time and the cache never hits. That is the same
+# trap the rsync above documents and works around with --checksum; it catches
+# anything here that asks a file when it changed.
+# Beside the working tree and NOT inside it: the rsync above runs with
+# --delete, so anything under $SHELL_DIR that is not in /app is removed on
+# every run. Kept in there, this cache was deleted moments before it was
+# consulted, which is why it recomputed every time while claiming to be a
+# cache.
+ENV_DIR="$SHELL_DIR.env"
+mkdir -p "$ENV_DIR"
+ENV_SH="$ENV_DIR/devshell.sh"
+STAMP="$ENV_DIR/devshell.lock"
+WANT="$(sha256sum /app/flake.lock | cut -d' ' -f1)"
+if [ ! -s "$ENV_SH" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$WANT" ]; then
+    echo "devshell: computing (first run, or flake.lock changed)"
+    nix print-dev-env /app#flutter-web --accept-flake-config \
+        --extra-substituters file:///nix-cache > "$ENV_SH.tmp"
+    mv "$ENV_SH.tmp" "$ENV_SH"
+    echo "$WANT" > "$STAMP"
+else
+    echo "devshell: reusing the computed env"
+fi
+
+# A subshell, so what the env sets does not leak into the `nix copy` below --
+# that wants the container's own nix, not the shell's. `set +u` because a
+# printed dev env references variables that need not be set.
+( set +u; . "$ENV_SH"; set -u
+  just -f "$SHELL_DIR/justfile" flutter-web )
+
+echo "built:"
+du -sh flutter/build/web
+
+# The devShell's closure is gigabytes of Flutter and Dart, and the store it
+# landed in belongs to the image rather than to a volume -- so without this
+# every run re-fetches it from upstream. Written back, the next run
+# substitutes it from file:///nix-cache instead.
+if [ -f /nix-cache/nix-cache-info ]; then
+    echo "cache: writing the devShell closure back"
+    nix copy --no-check-sigs --all --to file:///nix-cache
+fi
+"""
+# Nix's own cache, on the volume rather than in the container. Without it
+# every Sandbox starts empty and `nix develop` re-clones the flake's git
+# inputs, because flake.lock pins which revision to fetch and not whether it
+# is already on disk. Set here rather than in the command so an interactive
+# shell into this container gets it too.
+env     = { XDG_CACHE_HOME = "/devshell/frq-flutter-web/.cache" }
+
+[nix]
+# Every nix command in the container reads the mounted cache, including one
+# typed by hand in a shell.
+substituters = ["file:///nix-cache"]
+# No devShell warming at image build time: this enters `nix develop` at run
+# time, on the VM, where the cache answers for its closure. The ptyshim that
+# warming would need under gVisor is deprecated and does not come back.
+flake = false
+shim  = false
+
+# [experimental] overrides the sandbox default of vm_runtime = true.

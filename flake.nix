@@ -1041,6 +1041,45 @@
             # by hand.
             FRQ_FLUTTER_DESKTOP = "1";
           };
+
+          # The third frontend, and the first that is not a window: the same
+          # ClojureDart half again, over Flutter's web target. `flutter build
+          # web` compiles the generated Dart with dart2js and writes a
+          # directory of HTML, JS and assets rather than an executable.
+          #
+          # The thinnest of the three shells, because the web target is the
+          # one that needs no host toolchain at all: no JDK and no SDK as the
+          # APK wants, no GTK and no C++ as the desktop one does, and no nixGL
+          # — the GL is the browser's problem and the browser is not ours.
+          # mkShellNoCC says so: nothing here compiles C.
+          #
+          # python3 is not a build input. It is `just flutter-web serve`: the
+          # output is a directory of static files and something has to hand it
+          # over HTTP, and the alternative — `flutter run -d web-server` —
+          # rebuilds rather than serving what was built, which is the wrong
+          # half of the loop when the build already happened in a container.
+          flutter-web = pkgs.mkShellNoCC {
+            name = "frq-flutter-web";
+
+            packages = [
+              pkgs.clojure
+              pkgs.flutter
+              pkgs.just
+              pkgs.git
+              pkgs.python3
+            ];
+
+            # The `flutter` shell's caches, and deliberately the same ones for
+            # the same reason `flutter-desktop` shares them: all three targets
+            # are one `clojure -M:cljd compile` over one deps.edn, and a third
+            # set of caches would be a third answer to what it resolved
+            # against.
+            FRQ_CLJD_DEPS = "${self.packages.${pkgs.stdenv.hostPlatform.system}.cljd-deps}";
+
+            # The recipe's re-entry test, the way FRQ_FLUTTER_DESKTOP is the
+            # desktop one's.
+            FRQ_FLUTTER_WEB = "1";
+          };
         });
 
       apps = forEachSystem (pkgs: {

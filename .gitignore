@@ -22,3 +22,6 @@
 
 # Python bytecode, from the loader the .modal/ containers import.
 __pycache__/
+
+# The mirror `just web-local` keeps of the Modal-built web bundle.
+.web-local/

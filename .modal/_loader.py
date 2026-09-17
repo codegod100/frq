@@ -74,6 +74,16 @@ class Container:
         # directory, a dataset too big to bake in.
         self.volume_spec = dict(spec.get("volumes", {}))
 
+        # Ports to tunnel out of a Sandbox, from [network] ports. Encrypted,
+        # which is Modal's own word for "the tunnel terminates TLS and speaks
+        # plain HTTP to your process" -- so the thing listening inside is an
+        # ordinary http.server and not something holding a certificate.
+        #
+        # Sandbox-only: a Function has no long-lived process to tunnel into,
+        # and `modal run` on one would hand back a URL for a container that
+        # has already exited.
+        self.ports = [int(p) for p in spec.get("network", {}).get("ports", [])]
+
         # Modal re-imports this module inside the container, so everything
         # below runs twice: once here, once out there. Out there the local
         # tree does not exist -- no flake.nix, no ptyshim.c, no repo -- and
@@ -125,6 +135,11 @@ class Container:
                 )
         if self.use_shim and not os.path.exists(PTYSHIM_C):
             raise SpecError(f"[nix] shim = true but {PTYSHIM_C} is missing")
+        if self.ports and self.runtime != "sandbox":
+            raise SpecError(
+                "[network] ports needs [container] runtime = \"sandbox\" --"
+                " a Function has no process to tunnel into"
+            )
         for name, mount in self.volume_spec.items():
             if not isinstance(mount, str) or not mount.startswith("/"):
                 raise SpecError(
@@ -226,6 +241,31 @@ class Container:
         # the container directory -- a container that builds the repo it lives
         # in sets context = "../..", so include = ["."] means the whole repo.
         context = os.path.normpath(os.path.join(self.dir, build.get("context", ".")))
+
+        # Image building and program building, kept apart.
+        #
+        # `[build] commands` run AFTER the source copy, so any edit anywhere in
+        # the tree invalidates them -- and for a container whose commands warm
+        # a devShell, that means minutes of nix on every iteration of a
+        # one-line change. `warm` + `setup` are the same two steps moved in
+        # front of the source: `warm` names only the files the flake actually
+        # evaluates (its own, and whatever the devShell's derivations read),
+        # and `setup` runs against those alone. Editing `flutter/src` then
+        # invalidates nothing above the final copy, and the toolchain layer is
+        # reused until a dependency moves.
+        #
+        # Volumes are mounted here for `commands`' reason: a step that can
+        # reach the binary cache never has to build, which is the one thing
+        # gVisor will not do.
+        for rel in build.get("warm", []):
+            src = os.path.normpath(os.path.join(context, rel))
+            dest = f"{self.workdir}/{rel}"
+            if os.path.isdir(src):
+                image = image.add_local_dir(src, dest, copy=True)
+            else:
+                image = image.add_local_file(src, dest, copy=True)
+        if setup := build.get("setup", []):
+            image = image.run_commands(*setup, volumes=self.volumes)
         # `ignore` is what keeps a build tree out of the image. A checkout that
         # has been built in locally carries its output -- flutter/build and the
         # caches beside it were 395MB of a 441MB repo -- and all of it would be
@@ -341,6 +381,8 @@ class Container:
             kwargs["experimental_options"] = dict(opts)
         if volumes := self.volumes:
             kwargs["volumes"] = volumes
+        if self.ports:
+            kwargs["encrypted_ports"] = list(self.ports)
         return kwargs
 
     def shell_command(self, override: str = "") -> str:
@@ -376,6 +418,7 @@ class Container:
             env={k: str(v) for k, v in self.env.items()},
             **self.sandbox_kwargs,
         )
+        self._print_tunnels(sb)
         sb.wait()
         if sb.returncode != 0:
             raise RuntimeError(
@@ -383,6 +426,19 @@ class Container:
                 f"$ {line}\n{sb.stderr.read()}"
             )
         return ""
+
+    def _print_tunnels(self, sb: "modal.Sandbox") -> None:
+        """Say where a tunnelled port can be reached, once the sandbox is up.
+
+        `tunnels()` blocks until the Sandbox is scheduled, which is why this
+        is called after create and not folded into it. Nothing prints when
+        [network] ports is empty, which is every container but the serving
+        ones.
+        """
+        if not self.ports:
+            return
+        for port, tunnel in sb.tunnels().items():
+            print(f"  :{port} -> {tunnel.url}")
 
     def open_sandbox(self) -> "modal.Sandbox":
         """Start a Sandbox and leave it running, for `scripts/shell`.

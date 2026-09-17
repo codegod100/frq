@@ -1,0 +1,52 @@
+(ns frq.main-web
+  "The web entry point: `frq.main` with the browser's host instead of Dart's.
+
+  A second entry namespace rather than a branch inside `frq.main`, and the
+  reason is the compiler rather than the design. `clojure -M:cljd compile`
+  walks out from one namespace, so what `frq.main` requires is what every
+  target compiles — and `frq.io.web` names `dart:html`, which the Android and
+  Linux targets have no library for. Requiring it from `frq.main` would break
+  the two builds that work in order to fix the one that does not.
+
+  So the split is at the top: `frq.main/bind!` and `frq.main/start!` are the
+  shared halves, `frq.main/main` installs `frq.io.dart` after awaiting
+  path_provider, and this installs `frq.io.web` after awaiting nothing.
+
+  That await is the bug this namespace exists to remove. path_provider ships
+  no web implementation, so `getApplicationSupportDirectory` reaches a
+  platform channel with no handler behind it and throws MissingPluginException
+  — before `host/install!`, before any widget, which is why the page went
+  white with a 3.6MB bundle that had loaded perfectly well.
+
+  Built as `flutter build web -t lib/main_web.dart`; see `just flutter-web`.
+
+  Sign-in here is this client's own OAuth rather than freeq's broker — see
+  `frq.oauth.web` for why the broker cannot answer a build served from an
+  origin it does not know."
+  (:require [frq.main :as app]
+            [frq.io.web :as host]
+            [frq.net.web :as net-web]
+            [frq.oauth.web :as oauth-web]
+            [frq.atproto.web :as atproto-web]))
+
+(defn ^:async main []
+  (app/bind!)
+  (host/install!)
+  ;; The WebSocket transport, where `frq.main` installs the dart:io one. Both
+  ;; go in before `start!`, which asserts only on `frq.io` but connects
+  ;; through `frq.net` the moment a saved session restores.
+  (net-web/install!)
+  (oauth-web/install!)
+  ;; The app-password path: it reaches the reader's own PDS directly. Like
+  ;; the OAuth one above it, and unlike freeq's broker, nothing in it cares
+  ;; which origin this build is served from.
+  (atproto-web/install!)
+  ;; Two questions with one answer: did we just come back from the
+  ;; authorization server, and failing that was there a sign-in before today.
+  ;; Either way what lands is a session in `frq.cells`, which is what
+  ;; `frq.main/sign-in!` finds instead of starting the browser leg again.
+  (let [signed-in? (or (await (oauth-web/resume!)) (oauth-web/restore!))]
+    (await (app/start!))
+    ;; A sign-in that has just completed should not then wait to be told to
+    ;; connect: the reader asked for this before they left for Bluesky.
+    (when signed-in? (app/connect!))))

@@ -420,6 +420,94 @@ flutter-desktop action="build":
         *) echo "usage: just flutter-desktop [build|run]" >&2; exit 1 ;;
     esac
 
+# The third frontend: the same screens again, compiled to JavaScript.
+#
+# `flutter-desktop` with the Linux half taken out. One `clojure -M:cljd
+# compile` over the same flutter/src and common/, then Flutter's web target
+# instead of its Linux one — dart2js instead of CMake and Ninja, and a
+# directory of static files instead of a bundle with an executable in it.
+#
+# Impure for the one reason the other two are and not the other: pub.dev
+# resolution and Flutter's engine artifacts are network. There is no
+# writable-SDK dance and no nixGL, because nothing here writes into the store
+# and nothing here paints — the browser does both.
+#
+# The entry point is `frq.main-web`, not `frq.main`: path_provider has no web
+# implementation, so the `getApplicationSupportDirectory` that `frq.main`
+# awaits throws MissingPluginException before any widget is built. The web
+# entry installs `frq.io.web` — localStorage behind the same seam — and awaits
+# nothing. `frq.net.dart` is still the socket half, so connecting will want a
+# WebSocket before this does more than paint.
+#
+#   just flutter-web                build build/web
+#   just flutter-web serve          build it and serve it on $PORT (8080)
+flutter-web action="build" port="8080":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_FLUTTER_WEB:-}" ]; then
+        exec {{nix}} develop .#flutter-web --max-jobs {{jobs}} \
+            --command just flutter-web "$@"
+    fi
+    cd flutter
+
+    # The same three caches `apk` and `flutter-desktop` seed, in the same
+    # place and out of the same flake output. `.home/` is `apk`'s directory by
+    # name and all three write only this into it: whichever recipe runs first
+    # pays for the copy and the other two find it warm.
+    #
+    # m2 and gitlibs are set here for the reason they are set there — the JVM
+    # reads user.home out of /etc/passwd, so neither follows HOME.
+    export PUB_CACHE="$PWD/.home/.pub-cache"
+    export GITLIBS="$PWD/.home/gitlibs"
+    m2="$PWD/.home/m2"
+
+    seed() {
+        [ -e "$2" ] && return 0
+        mkdir -p "$(dirname "$2")"
+        cp -r "$FRQ_CLJD_DEPS/$1" "$2"
+        chmod -R u+w "$2"
+    }
+    seed m2 "$m2"
+    seed gitlibs "$GITLIBS"
+    seed pub-cache "$PUB_CACHE"
+    seed clojuredart/cache "$PWD/.clojuredart/cache"
+
+    # Resolved here rather than in cljd-deps, which was not allowed to name
+    # the store — see the same loop in `apk`.
+    for helper in .clojuredart/cache/*/cljd_helper; do
+        [ -d "$helper" ] || continue
+        [ -e "$helper/.dart_tool/package_config.json" ] && continue
+        ( cd "$helper" && flutter pub get --offline )
+    done
+
+    # The web target is off in a checkout created for Android and Linux.
+    # `flutter/web/` itself IS committed now, unlike the Android and Linux
+    # runners: the OAuth client needs a script of its own beside the bundle
+    # (see web/frq_dpop.js), and a directory `flutter create` regenerates is
+    # no place to keep one.
+    flutter config --enable-web >/dev/null || true
+
+    # `frq.main-web` and not `frq.main`: the compile walks out from the
+    # namespace it is given, which is what keeps `dart:html` in the web build
+    # and out of the other two. `flutter/lib/main_web.dart` is the one-line
+    # export beside the generated `main.dart` that -t points at.
+    clojure -Sdeps "{:mvn/local-repo \"$m2\"}" -M:cljd compile frq.main-web
+    flutter build web -t lib/main_web.dart
+
+    case "{{action}}" in
+        build) echo "built $PWD/build/web" ;;
+        serve)
+            echo "serving $PWD/build/web on :{{port}}"
+            # --bind 0.0.0.0 and not the default loopback: in the container
+            # this is behind a Modal tunnel, and a server bound to 127.0.0.1
+            # is one the tunnel cannot reach.
+            exec python3 -m http.server {{port}} --bind 0.0.0.0 \
+                --directory build/web
+            ;;
+        *) echo "usage: just flutter-web [build|serve]" >&2; exit 1 ;;
+    esac
+
 # The containers in `.modal/`, run on Modal rather than here. This machine
 # evaluates and Modal builds — see CLAUDE.md, which says so rather more
 # firmly — and these two recipes are the whole interface to that.
@@ -436,6 +524,45 @@ modal container="frq" *args:
     cd "{{justfile_directory()}}"
     shift
     exec modal run ".modal/{{container}}/container.py" "$@"
+
+# The Modal-built web bundle, served from this machine on localhost.
+#
+# Not a local build: `modal volume get` pulls what `just modal flutter-web`
+# already compiled out of the devshell volume, so this needs no Flutter, no
+# Dart and no nix — only python, which the flake shell has and so does the
+# machine.
+#
+# It exists for one reason, and the reason is the auth broker rather than
+# convenience. freeq's broker finishes an OAuth login by redirecting the
+# browser to `return_to`, and it will only redirect to an origin on its
+# allowlist: its own https hosts, and `http://localhost` or `http://127.0.0.1`
+# on ANY port. A build served from anywhere else — the Modal URL included —
+# gets `400 Invalid return_to URL` and can never complete a Bluesky sign-in,
+# no matter what the client does. localhost is the one allowlisted origin we
+# can serve from, so this is how Bluesky sign-in is tested.
+#
+# Guest and app-password sign-in need none of this; they work on the deployed
+# URL, because neither goes near the broker.
+#
+#   just web-local             fetch and serve on :8080
+#   just web-local 3000        another port; any port is allowlisted
+web-local port="8080":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    out="{{justfile_directory()}}/.web-local"
+    mkdir -p "$out"
+    echo "fetching the Modal-built bundle…"
+    # --force: this is a mirror of the volume, and a stale file left behind
+    # would be served in preference to the one just built.
+    modal volume get --force devshell frq-flutter-web/flutter/build/web "$out"
+    echo
+    echo "  http://localhost:{{port}}"
+    echo
+    echo "Bluesky sign-in works here and not on the Modal URL: the broker"
+    echo "allowlists localhost on any port. Put wss://irc.freeq.at/irc in the"
+    echo "Server field — a browser has no TCP."
+    exec python3 -m http.server {{port}} --bind 127.0.0.1 --directory "$out/web"
 
 # A sandbox left running with the container's own image, volumes and
 # environment, and the command to get into it. `modal shell --image` cannot
