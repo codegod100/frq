@@ -1,0 +1,137 @@
+(ns frq.net.web
+  "An IRC connection over a browser WebSocket.
+
+  The transport freeq already speaks: `freeq-server/src/web.rs` routes `/irc`
+  to a WebSocket upgrade and bridges it to the same IRC handler a TCP client
+  reaches, so `wss://irc.freeq.at/irc` is the same server as
+  `irc.freeq.at:6697` and not a second one.
+
+  Simpler than `frq.net.dart`, and the framing is why. That backend buffers
+  chunks because a TCP boundary falls wherever TCP puts it, which is never
+  where IRC put its lines. The bridge does that work on the far side: it
+  splits the IRC stream on CRLF and sends one line per text frame, and appends
+  CRLF to every frame it receives. So a frame *is* a line, in both directions,
+  and there is no buffer here at all.
+
+  The one thing that follows from it: `send-line!` sends the line bare. The
+  bridge appends CRLF to a text frame unconditionally — it only tests for one
+  on the binary path — so a line sent with its own CRLF arrives as a line
+  followed by an empty one."
+  (:require ["dart:async" :as async]
+            ["dart:html" :as html]
+            [frq.debug :as debug]
+            [frq.irc.parse :as parse]
+            [frq.net :as net]))
+
+;; `frq.net.dart`'s flag and its reasoning, kept separate rather than shared:
+;; that namespace names dart:io and cannot be required from here.
+(defonce wire-log? (atom true))
+
+(defn- wire! [direction line]
+  (when @wire-log?
+    ;; `print` and not `dart:developer`'s log: on the web `print` lands in the
+    ;; browser console, which is the place someone debugging this actually
+    ;; looks, where `dev/log` goes to the VM service and nowhere visible.
+    ;; Redacted here rather than only in the file sink, for that reason —
+    ;; `frq.debug` answers nil on the web, since there is no file to name, so
+    ;; the console is the only sink there is.
+    (print (str "frq.wire " direction " "
+                (if (.startsWith (str line) "AUTHENTICATE ")
+                  "AUTHENTICATE <redacted>"
+                  line)))
+    (when (debug/on?)
+      (debug/jot! direction " " line))))
+
+(defn- ws-url
+  "The URL to open, from whatever the Server field holds.
+
+  A `ws://` or `wss://` URL is taken as given — that is the form the connect
+  screen now asks for, and someone who wrote a path meant it. Anything else is
+  a bare host from the days when this field was dialled over TCP, and the best
+  guess is freeq's own route: `/irc` on that host, TLS unless it was unticked.
+
+  The port is not carried over on the guessed form. 6697 is where the IRC
+  listener is and the WebSocket bridge is not there; it is on the ordinary
+  https port, which is what leaving it off means."
+  [host tls?]
+  (let [h (.trim (str host))]
+    (cond
+      (or (.startsWith h "ws://") (.startsWith h "wss://")) h
+      (.startsWith h "http://") (str "ws://" (.substring h 7))
+      (.startsWith h "https://") (str "wss://" (.substring h 8))
+      :else (str (if tls? "wss://" "ws://")
+                 (first (.split h ":"))
+                 "/irc"))))
+
+(defn ^:async connect!
+  "Open the WebSocket and start reading it. Returns once the socket is open,
+  or throws with what went wrong.
+
+  A Completer rather than the Future `WebSocket` does not give: the browser
+  API is events, and `open` and `error` are the two that decide whether this
+  call succeeded. After that first decision the same `error` handler means
+  something else — a connection that has dropped — so it is routed by whether
+  the completer has already fired."
+  [{:keys [host tls? on-msg on-close]}]
+  (let [url (ws-url host tls?)
+        sock (html/WebSocket. url)
+        opened (async/Completer.)]
+    (.addEventListener
+     sock "open"
+     (fn [_]
+       (wire! "*" (str "open " url))
+       (when-not (.-isCompleted opened) (.complete opened sock))
+       nil))
+    (.addEventListener
+     sock "message"
+     (fn [^html/MessageEvent e]
+       ;; One frame is one line, by the bridge's contract. Split anyway: it
+       ;; costs nothing on a single line and it is the difference between a
+       ;; wrong assumption showing up as a dropped message and not at all.
+       (doseq [raw (.split (str (.-data e)) "\n")]
+         (let [line (.trim (str raw))]
+           (when (and on-msg (pos? (count line)))
+             (wire! "<" line)
+             (let [m (parse/parse-line line)]
+               ;; Answered here rather than upstairs, exactly as
+               ;; `frq.net.dart` does: nothing about a PONG is a decision, and
+               ;; a client that queues it behind the reducer is one queue away
+               ;; from a timeout.
+               (when (= "PING" (:command m))
+                 (let [pong (str "PONG :" (first (:params m)))]
+                   (wire! ">" pong)
+                   (.send sock pong)))
+               (on-msg m)))))
+       nil))
+    (.addEventListener
+     sock "close"
+     (fn [_]
+       (if (.-isCompleted opened)
+         (when on-close (on-close nil))
+         ;; Closed before it ever opened: the handshake was refused, and the
+         ;; browser deliberately does not say why. Saying so plainly beats
+         ;; reporting it as a connection that dropped.
+         (.completeError opened
+                         (Exception. (str "WebSocket refused by " url))))
+       nil))
+    (.addEventListener
+     sock "error"
+     (fn [_]
+       (when (.-isCompleted opened)
+         (when on-close (on-close "WebSocket error")))
+       nil))
+    (await (.-future opened))))
+
+(defn send-line! [^html/WebSocket sock line]
+  (wire! ">" line)
+  ;; Bare, with no CRLF: the bridge appends one to every text frame.
+  (.send sock (str line)))
+
+(defn close! [^html/WebSocket sock]
+  (try (.close sock) (catch Object _ nil)))
+
+(defn install! []
+  (net/install!
+   {:connect!   connect!
+    :send-line! send-line!
+    :close!     close!}))

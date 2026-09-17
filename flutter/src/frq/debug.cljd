@@ -28,8 +28,21 @@
 (defonce ^:private sink
   ;; Read once. An env var does not change under a running app, and this is
   ;; called from inside build and post-frame callbacks.
-  (delay (let [p (get (.-environment io/Platform) "FRQ_JOT")]
-           (when (and p (seq p)) p))))
+  ;; try/catch and not a platform test: a browser has no environment at all,
+  ;; and `Platform.environment` throws there rather than answering with an
+  ;; empty map. Nothing is listening on the web, which is the honest answer --
+  ;; and a diagnostic that took the app down with it would be the worst of the
+  ;; three targets' outcomes.
+  ;;
+  ;; `Object` and not `Exception`, which is the whole of why this needed a
+  ;; second go: what dart:io throws off-platform is `UnsupportedError`, and in
+  ;; Dart an Error is not an Exception -- `on Exception catch` does not see it.
+  ;; It escaped from the WebSocket's open handler, took the handler with it,
+  ;; and left the connect screen spinning at "Connecting…" forever.
+  (delay (try
+           (let [p (get (.-environment io/Platform) "FRQ_JOT")]
+             (when (and p (seq p)) p))
+           (catch Object _ nil))))
 
 (defn on?
   "Whether anything is listening, for a caller with expensive diagnostics to

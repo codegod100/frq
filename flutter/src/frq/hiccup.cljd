@@ -26,6 +26,10 @@
   read it — fine at this size, and the thing to revisit if a message list ever
   feels it."
   (:require ["dart:io" :as io]
+            ;; `defaultTargetPlatform` lives here and is NOT re-exported by
+            ;; material: widgets.dart re-exports foundation behind a `show`
+            ;; list that carries `TargetPlatform` and not the getter beside it.
+            ["package:flutter/foundation.dart" :as fnd]
             ["package:flutter/gestures.dart" :as g]
             ["package:flutter/material.dart" :as m]
             [cljd.flutter :as f]
@@ -54,9 +58,18 @@
 
   `frq.screens.*` asks the host the same question as `actions/desktop?`, and
   gets its answer from the same place; this is the renderer's side of it, for
-  the parts of a hover that never reach the shared screens at all."
+  the parts of a hover that never reach the shared screens at all.
+
+  `defaultTargetPlatform` and not `Platform.isAndroid`, since the web target
+  arrived: `dart:io`'s `Platform` throws `Unsupported operation:
+  Platform._operatingSystem` in a browser, and it threw here — inside build,
+  where what it leaves is the grey of an app that got as far as its first
+  frame and no further. Flutter's own answer works on all three targets and
+  is the better question anyway: on the web it reports the machine the browser
+  is running on, so a phone browser gets a finger and a desktop one a mouse,
+  which is what this is actually asking."
   []
-  (not (.-isAndroid io/Platform)))
+  (not= fnd/TargetPlatform.android fnd/defaultTargetPlatform))
 
 (defn- hovered
   "`w`, told when the pointer arrives and when it leaves.

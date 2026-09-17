@@ -18,7 +18,8 @@
             ["dart:developer" :as dev]
             ["dart:io" :as io]
             [frq.debug :as debug]
-            [frq.irc.parse :as parse]))
+            [frq.irc.parse :as parse]
+            [frq.net :as net]))
 
 ;; Whether to log every line in and out, under the name `frq.wire`.
 ;;
@@ -117,3 +118,13 @@
 
 (defn close! [^io/Socket sock]
   (try (.destroy sock) (catch Exception _ nil)))
+
+(defn install!
+  "Register this as the transport. The mirror of `frq.net.web/install!`, and
+  called from `frq.main` the way `frq.io.dart/install!` is — the entry point
+  says which host and which socket in the same breath."
+  []
+  (net/install!
+   {:connect!   connect!
+    :send-line! send-line!
+    :close!     close!}))
