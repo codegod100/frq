@@ -155,11 +155,20 @@
               (let [c (m/TextEditingController .text (or text ""))]
                 (swap! controllers assoc k c)
                 c))]
-    ;; Only when it differs, and never while it would move the caret: the cell
-    ;; is the authority for what the entry says, but the person typing is the
-    ;; authority for where they are in it.
+    ;; Only when it differs: the cell is the authority for what the entry
+    ;; says, but the person typing is the authority for where they are in it,
+    ;; and every keystroke would otherwise be written back over itself.
+    ;;
+    ;; The whole value and not just `.text`, which is the bug Tab completion
+    ;; found. Assigning `.text` leaves the selection at offset -1, and Flutter
+    ;; draws that as the entire field selected — so completing a nick handed
+    ;; back `nandi.uk: ` highlighted, and the next character typed would have
+    ;; replaced it. The caret belongs after what was just put there.
     (when (and text (not= text (.-text c)))
-      (set! (.-text c) text))
+      (set! (.-value c)
+            (m/TextEditingValue
+             .text text
+             .selection (m/TextSelection.collapsed .offset (count text)))))
     c))
 
 ;; ------------------------------------------------------------------ props
