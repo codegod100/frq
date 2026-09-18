@@ -46,6 +46,33 @@ PORT = 8080
 # pasted images under /api/v1/media, and those are `:image` in the same chat.
 PROXY_HOSTS = ("cdn.bsky.app", "irc.freeq.at", "video.bsky.app")
 
+# Files whose name is stable but whose *content* changes with every build, so a
+# browser must ask before reusing one. Everything else -- `main.dart.js`, the
+# canvaskit wasm, the assets -- gets a bounded max-age below: an hour of
+# staleness in exchange for a repeat visit that costs no round trips.
+#
+# Why an hour and not `immutable`: Flutter web does not hash its filenames, so
+# there is no URL that is safe to cache forever. The bound is the honest answer.
+REVALIDATE = (
+    "index.html",
+    "flutter_bootstrap.js",
+    "flutter_service_worker.js",
+    "version.json",
+    "client-metadata.json",
+)
+
+MAX_AGE = 3600
+
+# Content types worth compressing. gzip on a PNG spends CPU to add bytes; gzip
+# on dart2js output and on wasm is the single biggest win this server has.
+COMPRESSIBLE = (
+    "text/",
+    "application/javascript",
+    "application/json",
+    "application/wasm",
+    "image/svg+xml",
+)
+
 # This app's own origin, and the one thing here that is not derivable: an
 # OAuth client_id in AT Protocol *is* the URL its metadata is served from, so
 # the document has to name the origin it will be fetched from. Modal's
@@ -110,22 +137,53 @@ def web():
     # not baked into the build, because it names the deployed origin, which is
     # a property of this Function and not of the ClojureDart.
     #
-    # The volume is shared and durable, so this also survives for the next
-    # cold start; rewriting it every time is what keeps ORIGIN and the file in
-    # step when one of them changes.
-    with open(f"{WEB_ROOT}/client-metadata.json", "w") as f:
-        json.dump(CLIENT_METADATA, f, indent=2)
-    DEVSHELL.commit()
+    # The volume is shared and durable, so this survives for the next cold
+    # start -- which is why writing it every time was waste. A `Volume.commit`
+    # is a network round trip, and this one sat on the cold-start path of every
+    # request that arrived after a scaledown, for a 540-byte file that changes
+    # only when ORIGIN does. So: compare first, and write only on a difference.
+    wanted = json.dumps(CLIENT_METADATA, indent=2)
+    meta = f"{WEB_ROOT}/client-metadata.json"
+    try:
+        current = open(meta).read()
+    except OSError:
+        current = None
+    if current != wanted:
+        with open(meta, "w") as f:
+            f.write(wanted)
+        DEVSHELL.commit()
 
     # `http.server` with one route bolted on, rather than `-m http.server`:
     # static files are still all the app wants on first load, but images need
     # somewhere same-origin to come from. Written out and run as a file
     # because `@modal.web_server` wants a process, not a handler object.
-    server = f"""
-import http.server, os, socketserver, urllib.parse, urllib.request
+    # Config injected as a prelude rather than interpolated through the source
+    # below: an f-string would need every literal brace in the program doubled,
+    # and the program has grown past the point where that is safe to edit.
+    prelude = (
+        f"ROOT = {WEB_ROOT!r}\n"
+        f"HOSTS = {PROXY_HOSTS!r}\n"
+        f"PORT = {PORT}\n"
+        f"REVALIDATE = {REVALIDATE!r}\n"
+        f"MAX_AGE = {MAX_AGE}\n"
+        f"COMPRESSIBLE = {COMPRESSIBLE!r}\n"
+    )
 
-ROOT = {WEB_ROOT!r}
-HOSTS = {PROXY_HOSTS!r}
+    # `http.server` with three things bolted on, rather than `-m http.server`:
+    # a same-origin route for images, gzip, and cache headers. Written out and
+    # run as a file because `@modal.web_server` wants a process, not a handler
+    # object.
+    server = prelude + '''
+import gzip, http.server, os, posixpath, socketserver, urllib.parse, urllib.request
+
+# path -> (mtime, content-type, gzipped bytes). Filled on first request for a
+# file and reused for the life of the container, which does two things at once:
+# it stops re-compressing the 3.6MB `main.dart.js` per request, and it stops
+# re-reading it off the Volume mount, which is a network filesystem and not a
+# local disk. A container serves one build, so mtime is all the invalidation
+# this needs.
+CACHE = {}
+
 
 class H(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
@@ -140,9 +198,81 @@ class H(http.server.SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.end_headers()
 
+    def cache_control(self, path):
+        if os.path.basename(path) in REVALIDATE:
+            return "no-cache"
+        return f"public, max-age={MAX_AGE}"
+
+    def entry(self, path):
+        """(content-type, gzipped body) for a file, compressed at most once."""
+        mtime = os.path.getmtime(path)
+        hit = CACHE.get(path)
+        if hit and hit[0] == mtime:
+            return hit[1], hit[2]
+        ctype = self.guess_type(path)
+        with open(path, "rb") as f:
+            body = f.read()
+        # mtime=0 so the same input gives the same bytes; the gzip header's
+        # timestamp is noise no client reads.
+        body = gzip.compress(body, compresslevel=6, mtime=0)
+        CACHE[path] = (mtime, ctype, body)
+        return ctype, body
+
     def do_GET(self):
-        if not self.path.startswith("/proxy?"):
+        if self.path.startswith("/proxy?"):
+            return self.proxy()
+
+        path = self.translate_path(self.path)
+        if os.path.isdir(path):
+            path = os.path.join(path, "index.html")
+
+        # Anything we cannot compress -- a missing file, an image, a client
+        # that did not ask for gzip -- falls back to the stock handler, which
+        # already does ranges, 304s and 404s correctly.
+        ctype = self.guess_type(path) if os.path.isfile(path) else ""
+        if (
+            not os.path.isfile(path)
+            or "gzip" not in self.headers.get("Accept-Encoding", "")
+            or not ctype.startswith(COMPRESSIBLE)
+        ):
+            return self.stock_get(path)
+
+        try:
+            ctype, body = self.entry(path)
+        except OSError:
+            return self.stock_get(path)
+
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Cache-Control", self.cache_control(path))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def stock_get(self, path):
+        """SimpleHTTPRequestHandler's own GET, with our Cache-Control added."""
+        # Only a real file gets a Cache-Control; a 404 must not be cached for
+        # an hour just because it went through here.
+        self._cc = self.cache_control(path) if os.path.isfile(path) else None
+        try:
             return super().do_GET()
+        finally:
+            self._cc = None
+
+    def send_header(self, key, value):
+        super().send_header(key, value)
+        # The stock handler ends its headers itself, so there is no seam to add
+        # one -- except here, riding along with the header it always sends.
+        # `Content-type`, lowercase t: that is the spelling the stock handler
+        # uses, and matching it case-sensitively is how this silently did
+        # nothing the first time.
+        if key.lower() == "content-type" and getattr(self, "_cc", None):
+            cc, self._cc = self._cc, None
+            super().send_header("Cache-Control", cc)
+
+    def proxy(self):
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         target = (q.get("url") or [""])[0]
         parts = urllib.parse.urlparse(target)
@@ -152,12 +282,12 @@ class H(http.server.SimpleHTTPRequestHandler):
             self.send_error(403, "host not proxied")
             return
         try:
-            req = urllib.request.Request(target, headers={{"user-agent": "frq"}})
+            req = urllib.request.Request(target, headers={"user-agent": "frq"})
             with urllib.request.urlopen(req, timeout=30) as up:
                 body = up.read()
                 ctype = up.headers.get("content-type", "application/octet-stream")
         except Exception as e:
-            self.send_error(502, f"upstream: {{e}}")
+            self.send_error(502, f"upstream: {e}")
             return
         self.send_response(200)
         self.send_header("Content-Type", ctype)
@@ -168,14 +298,16 @@ class H(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+
 class S(socketserver.ThreadingTCPServer):
     # Threaded, because a proxied fetch blocks: one slow avatar must not stop
     # the page loading. daemon_threads so the process can still exit.
     allow_reuse_address = True
     daemon_threads = True
 
-S(("", {PORT}), H).serve_forever()
-"""
+
+S(("", PORT), H).serve_forever()
+'''
     with open("/tmp/frq_serve.py", "w") as f:
         f.write(server)
 
