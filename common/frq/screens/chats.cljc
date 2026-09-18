@@ -180,8 +180,12 @@
         ;; at every width, in the frame the drag happens rather than the one
         ;; after the window is next measured.
         [:hbox {:spacing 8 :align :end}
+         ;; Standard and not suggested. The accent fill is what this client
+         ;; uses to say a thing is *on* — the mode tabs, the chat you are in —
+         ;; and Join is neither on nor off: it does something and goes back to
+         ;; sitting there. Wearing the accent it read as a state that was
+         ;; somehow always true.
          [:button {:label (if (str/starts-with? @cells/join-input "@") "Message" "Join")
-                   :kind :primary
                    :on-click #(do (actions/join! @cells/join-input) (reset! cells/join-input ""))}]
          ;; Both kinds of conversation through one box: `#room` joins a
          ;; channel, `@nick` opens a message to a person.

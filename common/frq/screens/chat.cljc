@@ -1494,5 +1494,8 @@
                :on-change #(reset! cells/draft %)
                :on-paste-empty actions/paste-image!
                :on-activate actions/send-draft!}]
-      [:button {:label "Send" :kind :primary :valign :center
+      ;; Standard, for the reason the Join button beside the room box is:
+      ;; the accent says a thing is on, and Send is an action rather than a
+      ;; state. Nothing about the composer is truer while it wears it.
+      [:button {:label "Send" :valign :center
                 :on-click actions/send-draft!}]]]))

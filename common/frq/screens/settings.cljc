@@ -40,8 +40,9 @@
        [:card {:key name}
         [:title-2 {:label name}]
         [:dim-label {:label blurb}]
+        ;; Standard, like the other Join: an action, not a state. `Open` is
+        ;; the same button with the other word on it and is no more stateful.
         [:button {:label (if joined? "Open" "Join")
-                  :kind :primary
                   :on-click #(if joined? (actions/open-channel! name) (actions/join! name))}]]))))
 
 (defn settings-screen []
