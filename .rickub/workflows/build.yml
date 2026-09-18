@@ -1,0 +1,90 @@
+# The build, on rickub. GitLab CI next door reads source and no more —
+# check-common on every push, the flake.lock nightly — and deliberately builds
+# nothing. This is the other half: the AppImage, actually realised, on a
+# machine that can hold libjoltcosmic's dependency tree.
+#
+# It does not realise it *here*. rickub runners are Linux x86-64 containers,
+# and `nix build .#appimage` on one is the same laptop-shaped death CLAUDE.md
+# warns about — so this job is a client. It hands the build to Modal, exactly
+# as a person at a terminal would, and the Sandbox on its real VM does the
+# work against the nix-cache volume. What a runner contributes is a checkout,
+# a python, and somewhere to put the result afterwards.
+#
+# Lives in .rickub/workflows/ rather than .github/workflows/ because rickub
+# reads one or the other and never both: with this directory present, a
+# .github/workflows/ added later would be silently ignored. There is none
+# today, so nothing is being shadowed — see
+# https://rickub.com/docs/actions and https://rickub.com/docs/migrating-from-github
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  # The same read-only check GitLab runs, for the same reason: common/ compiles
+  # twice and only the jolt half is on the way to anything anyone runs, so a
+  # JVM call in shared code breaks the phone at a namespace nobody touched.
+  # Seconds, no toolchain. Worth having on both hosts rather than depending on
+  # which one a given push reaches.
+  check-common:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/check-common.py common
+
+  appimage:
+    runs-on: ubuntu-latest
+    needs: check-common
+    # The Modal side is an hour at its worst (a cold libjoltcosmic); this side
+    # is waiting on it, plus the upload of the tree.
+    timeout-minutes: 90
+    steps:
+      # The container copies `.` — the whole working tree, uncommitted edits
+      # included. On a runner that is whatever the checkout left, so it wants
+      # to be the commit and not a shallow surprise.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --disable-pip-version-check modal
+
+      # Two secrets, set under Settings -> Secrets and variables. A Modal
+      # token is the whole of this job's configuration: no nix, no builder,
+      # no cache of its own.
+      - name: nix build .#appimage, on Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        # Unpiped on purpose. The image build streams to this client and
+        # nowhere else, and `modal app logs` cannot reach an ephemeral run —
+        # so this terminal is the only place the build is visible. tee, not
+        # tail: a run killed mid-pipe through tail takes its output with it.
+        run: modal run .modal/frq/container.py 2>&1 | tee /tmp/frq-build.log
+
+      # The Sandbox leaves the AppImage in the nix-cache volume rather than
+      # anywhere a runner can see, so fetch it back out. Same one file the
+      # build copied there — a squashed closure, not a store path needing an
+      # import on the other end.
+      - name: Fetch the AppImage out of the volume
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal volume get --force nix-cache artifacts/frq.AppImage frq.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frq-AppImage-${{ github.sha }}
+          path: frq.AppImage
+          if-no-files-found: error
+
+      # Kept whether or not the build succeeded: a failed run's log is the
+      # one most worth reading, and it is gone with the runner otherwise.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: /tmp/frq-build.log
+          if-no-files-found: ignore
