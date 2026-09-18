@@ -1203,7 +1203,13 @@
             :fill-height true
             :reserve (below-messages) :spacing 8}
      [:title-2 {:label (str "People " (count people))}]
+     ;; Air between the names. Each one is a button — a filled surface with
+     ;; its own corners — and stacked with no spacing at all they met edge to
+     ;; edge and read as one block of chips rather than a list of people.
+     ;; Six is what the row beside the backlog already uses between the mode
+     ;; slot and the name, so the list is spaced the way its own rows are.
      [:scroll {:scroll-key (str "users-" name)
+               :spacing 6
                :orientation :vertical}
       (if (seq people)
         ;; Keyed, for the reason the conversation list is: this list reorders
