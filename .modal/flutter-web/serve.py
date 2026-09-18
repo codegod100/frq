@@ -46,20 +46,32 @@ PORT = 8080
 # pasted images under /api/v1/media, and those are `:image` in the same chat.
 PROXY_HOSTS = ("cdn.bsky.app", "irc.freeq.at", "video.bsky.app")
 
-# Files whose name is stable but whose *content* changes with every build, so a
-# browser must ask before reusing one. Everything else -- `main.dart.js`, the
-# canvaskit wasm, the assets -- gets a bounded max-age below: an hour of
-# staleness in exchange for a repeat visit that costs no round trips.
+# Files a browser must ask about before reusing. `main.dart.js` is on this list
+# the hard way: it was given `max-age=3600` on the theory that an hour of
+# staleness was a fair price for a repeat visit with no round trips, and the
+# next three deploys were then tested against a bundle the browser had pinned
+# in cache. `index.html` revalidated and said nothing had changed, because
+# nothing in *it* had; the JS it pulls in was an hour old. Two debugging
+# sessions went into code that was never running.
 #
-# Why an hour and not `immutable`: Flutter web does not hash its filenames, so
-# there is no URL that is safe to cache forever. The bound is the honest answer.
+# Flutter web does not hash its filenames, so there is no URL here whose
+# content is fixed, and `no-cache` -- revalidate every time, 304 with no body
+# when it matches -- is the only honest header for a file that changes on
+# every build. Only `canvaskit/` keeps a max-age: it changes with the Flutter
+# SDK and not with this app, and it is the largest thing on the page.
 REVALIDATE = (
     "index.html",
+    "main.dart.js",
+    "flutter.js",
     "flutter_bootstrap.js",
     "flutter_service_worker.js",
+    "manifest.json",
     "version.json",
     "client-metadata.json",
 )
+
+# Prefixes that keep the bounded max-age, by published path.
+LONG_CACHE = ("canvaskit/",)
 
 MAX_AGE = 3600
 
@@ -165,6 +177,7 @@ def web():
         f"HOSTS = {PROXY_HOSTS!r}\n"
         f"PORT = {PORT}\n"
         f"REVALIDATE = {REVALIDATE!r}\n"
+        f"LONG_CACHE = {LONG_CACHE!r}\n"
         f"MAX_AGE = {MAX_AGE}\n"
         f"COMPRESSIBLE = {COMPRESSIBLE!r}\n"
     )
@@ -201,7 +214,13 @@ class H(http.server.SimpleHTTPRequestHandler):
     def cache_control(self, path):
         if os.path.basename(path) in REVALIDATE:
             return "no-cache"
-        return f"public, max-age={MAX_AGE}"
+        rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
+        if rel.startswith(LONG_CACHE):
+            return f"public, max-age={MAX_AGE}"
+        # Everything unrecognised revalidates too. Being wrong in this
+        # direction costs a round trip; being wrong the other way costs an
+        # hour of serving code that no longer exists.
+        return "no-cache"
 
     def entry(self, path):
         """(content-type, gzipped body) for a file, compressed at most once."""
