@@ -31,6 +31,9 @@
             ;; list that carries `TargetPlatform` and not the getter beside it.
             ["package:flutter/foundation.dart" :as fnd]
             ["package:flutter/gestures.dart" :as g]
+            ;; `LogicalKeyboardKey` and the key events, for the one key the
+            ;; composer wants before Flutter's focus traversal gets it.
+            ["package:flutter/services.dart" :as sv]
             ["package:flutter/material.dart" :as m]
             [cljd.flutter :as f]
             [frq.theme :as t]))
@@ -1097,6 +1100,7 @@
        :entry
        (let [on-change (:on-change p)
              on-activate (:on-activate p)
+             on-tab (:on-tab p)
              rows (:rows p)
              w (width-of p)
              field (m/TextField
@@ -1126,14 +1130,37 @@
                                        .borderRadius (m/BorderRadius.circular t/radius-s)
                                        .borderSide (m/BorderSide .color t/accent
                                                                  .width 1.0))))]
-         ;; No Expanded when there is no width: Expanded in a Column expands
-         ;; along the main axis, which is vertical, and an entry in a card
-         ;; would grow to fill the card. A bare field is right there — a
-         ;; Column hands its children bounded width — and a row wants the
-         ;; width-request the caller already writes.
-         (if w
-           (m/SizedBox .width w .child field)
-           field))
+         ;; Tab, claimed before Flutter's focus traversal has it. A
+         ;; TextField does not see Tab at all — the framework reads it as
+         ;; "move to the next widget" and moves — so completing a nick with it
+         ;; means catching the key one level up and saying it was handled.
+         ;;
+         ;; `KeyDownEvent` and not every event: a key that is held down
+         ;; repeats, and each repeat would complete again against the word the
+         ;; last one just finished.
+         ;;
+         ;; Only where something asked. An entry with no `:on-tab` returns
+         ;; `ignored` and Tab still moves the focus, which is what every other
+         ;; box on every screen should keep doing.
+         (let [field (if-not on-tab
+                       field
+                       (m/Focus
+                        .onKeyEvent
+                        (fn [_ ^sv/KeyEvent event]
+                          (if (and (dart/is? event sv/KeyDownEvent)
+                                   (= (.-logicalKey event)
+                                      sv/LogicalKeyboardKey.tab))
+                            (do (on-tab) m/KeyEventResult.handled)
+                            m/KeyEventResult.ignored))
+                        .child field))]
+           ;; No Expanded when there is no width: Expanded in a Column expands
+           ;; along the main axis, which is vertical, and an entry in a card
+           ;; would grow to fill the card. A bare field is right there — a
+           ;; Column hands its children bounded width — and a row wants the
+           ;; width-request the caller already writes.
+           (if w
+             (m/SizedBox .width w .child field)
+             field)))
 
        :emoji
        (m/Text (str (:emoji p "")) .style (t/emoji-style (dbl (:size p) 16.0)))

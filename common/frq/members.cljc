@@ -121,3 +121,52 @@
 
 (defn member-count [m channel]
   (count (get-in m [channel :users])))
+
+(defn- common-prefix
+  "The longest string every one of `ss` starts with."
+  [ss]
+  (reduce (fn [a b]
+            (let [n (min (count a) (count b))]
+              (loop [i 0]
+                (if (and (< i n)
+                         (= (str/lower-case (subs a i (inc i)))
+                            (str/lower-case (subs b i (inc i)))))
+                  (recur (inc i))
+                  (subs a 0 i)))))
+          ss))
+
+(defn complete-nick
+  "`text` with its last word completed against `nicks`, and where the caret
+  should end up. Nil when there is nothing to complete.
+
+  What Tab does in every IRC client, and the rules are theirs. One match is
+  taken whole. Several are taken as far as they agree — the reader types
+  another letter and asks again, rather than being given somebody at random.
+  None leaves the draft alone.
+
+  A name at the start of a line is addressed, so it gets `nick: `; anywhere
+  else it is mentioned mid-sentence and gets a plain space. That is the
+  convention freeq's own messages already follow — `eve: watch pubtoons.com`
+  reads as talking TO eve.
+
+  Case is ignored when matching and the nick's own case is what lands: people
+  type `nan<tab>` and mean `nandi.uk`."
+  [text nicks]
+  (let [text (str text)
+        cut (inc (max (.lastIndexOf text " ") (.lastIndexOf text "\n")))
+        word (subs text cut)]
+    (when (seq word)
+      (let [lower (str/lower-case word)
+            matches (->> nicks
+                         (map str)
+                         (filter #(str/starts-with? (str/lower-case %) lower))
+                         sort
+                         vec)]
+        (when (seq matches)
+          (let [done (if (= 1 (count matches))
+                       (str (first matches) (if (zero? cut) ": " " "))
+                       (common-prefix matches))]
+            ;; Nothing to add is not worth a redraw: several names that agree
+            ;; only as far as what was already typed.
+            (when (> (count done) (count word))
+              (str (subs text 0 cut) done))))))))

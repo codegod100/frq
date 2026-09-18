@@ -17,6 +17,7 @@
             [frq.clock :as clock]
             [frq.emoji :as emoji]
             [frq.glyphs :as glyphs]
+            [frq.members :as members]
             [frq.metrics :refer [chrome-row chrome-scale terminal? terminal-face?]]
             [frq.rooms :as rooms]
             [frq.screens.chats :refer [preview-line tab-bar]]
@@ -1493,6 +1494,16 @@
                :placeholder "Message"
                :on-change #(reset! cells/draft %)
                :on-paste-empty actions/paste-image!
+               ;; Tab completes the name being typed, the way every IRC client
+               ;; does. The rule is `frq.members/complete-nick`'s; all this
+               ;; knows is who is in the room and that the draft is the
+               ;; authority for what the box says.
+               :on-tab (fn []
+                         (when-let [done (members/complete-nick
+                                          @cells/draft
+                                          (map :nick (actions/member-list
+                                                      (str @cells/current))))]
+                           (reset! cells/draft done)))
                :on-activate actions/send-draft!}]
       ;; Standard, for the reason the Join button beside the room box is:
       ;; the accent says a thing is on, and Send is an action rather than a
