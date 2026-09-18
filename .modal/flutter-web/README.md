@@ -4,14 +4,38 @@
     just modal flutter-web
 
 Defined by `container.toml`; see `../spec.md` for the keys.
-Built on the published `arch-nix` image.
+Built on `debian:13-slim`.
 
-`flutter-dev` with the Linux target swapped for the web one: the same
-`clojure -M:cljd compile` over the same `flutter/src` and `common/`,
-then dart2js instead of CMake and Ninja. Same incremental shape --
-the working tree and Flutter's caches live on the `devshell` volume,
-under `frq-flutter-web/` so the desktop container's directory beside
-it is untouched.
+No nix, and that is the point of this container rather than an
+incidental fact about it. The build is `tools/build-web.sh`, which
+gets its Flutter, its JDK and its Clojure CLI from
+`tools/toolchain.sh` -- three tarballs pinned by sha256 and unpacked
+into a directory. So the image build is one `apt-get install` of
+curl, git, rsync, tar and the two unarchivers, and everything that
+used to happen before a line of Dart was compiled -- warming a
+devShell, printing its environment, caching that against flake.lock,
+copying a nix closure back to a volume afterwards -- does not happen
+at all. The toolchain lands on the volume and the second run finds
+it there.
+
+The other two Flutter targets keep their devShells: `apk` needs the
+Android SDK and `flutter-desktop` needs GTK and a C++ toolchain, and
+a host toolchain is what nix is better at than a tarball. The web
+target needs a Dart and a JVM, which is what a tarball is for.
+
+Same incremental shape as before -- the working tree, the generated
+Dart under `flutter/lib/cljd-out` and Flutter's caches live on the
+`devshell` volume, under `frq-flutter-web/` so the desktop
+container's directory beside it is untouched. None of them is copied
+in from the laptop: a checkout's copy of the compiler's output is
+not this container's, and overwriting the volume's with it is how an
+incremental build stops being one.
+
+One build mode, not two. A `fast` mode (dart2js -O1, no icon
+tree-shaking, no service worker) measured 52.5s against the release
+build's 49.8s on the same source change, so what it bought was a
+bigger bundle. `--no-wasm-dry-run` is the flag that did pay, and it
+is in the one build there is.
 
 Runs as a Sandbox on a real VM (kernel 6.x, not gVisor). The command
 is the sandbox's own process, so it dies when the command exits.
@@ -21,7 +45,7 @@ ports` tunnels 8080 out, and the URL is printed once the sandbox is
 scheduled:
 
     modal run .modal/flutter-web/container.py \
-      --command 'cd /devshell/frq-flutter-web && nix develop /app#flutter-web --command just -f /devshell/frq-flutter-web/justfile flutter-web serve'
+      --command 'cd /devshell/frq-flutter-web && tools/build-web.sh serve 8080'
 
 That blocks until you Ctrl-C it, and it bills until you do.
 

@@ -427,10 +427,17 @@ flutter-desktop action="build":
 # instead of its Linux one — dart2js instead of CMake and Ninja, and a
 # directory of static files instead of a bundle with an executable in it.
 #
-# Impure for the one reason the other two are and not the other: pub.dev
-# resolution and Flutter's engine artifacts are network. There is no
-# writable-SDK dance and no nixGL, because nothing here writes into the store
-# and nothing here paints — the browser does both.
+# And the one target with no nix in it. The other two need the host: a JDK
+# and the Android SDK for `apk`, GTK and a C++ toolchain and nixGL for
+# `flutter-desktop`. This one needs a Dart, a JVM and a browser, and the
+# browser is not ours — so `tools/toolchain.sh` fetches the first two as
+# pinned tarballs into `.toolchain/` and there is nothing left for a devShell
+# to supply. That is what lets the container in `.modal/flutter-web/` drop
+# its image build too: same script, same three pins, no store to populate.
+#
+# Impure for the reason the other two are: pub.dev resolution and Flutter's
+# engine artifacts are network, and now the toolchain is as well — pinned by
+# sha256, which is the reproducibility that was worth having out of the store.
 #
 # The entry point is `frq.main-web`, not `frq.main`: path_provider has no web
 # implementation, so the `getApplicationSupportDirectory` that `frq.main`
@@ -439,74 +446,21 @@ flutter-desktop action="build":
 # nothing. `frq.net.dart` is still the socket half, so connecting will want a
 # WebSocket before this does more than paint.
 #
+# One build and no `--debug` variant, because there is nothing to gain from
+# one: dart2js at -O1 measured 52.5s against the release build's 49.8s on the
+# same source change here, so a second, larger bundle would buy noise. See
+# `tools/build-web.sh`, which writes the numbers down.
+#
 #   just flutter-web                build build/web
 #   just flutter-web serve          build it and serve it on $PORT (8080)
+#   just flutter-web serve 3000     ...on another port
 flutter-web action="build" port="8080":
     #!/usr/bin/env bash
     set -euo pipefail
-    cd "{{justfile_directory()}}"
-    if [ -z "${FRQ_FLUTTER_WEB:-}" ]; then
-        exec {{nix}} develop .#flutter-web --max-jobs {{jobs}} \
-            --command just flutter-web "$@"
-    fi
-    cd flutter
-
-    # The same three caches `apk` and `flutter-desktop` seed, in the same
-    # place and out of the same flake output. `.home/` is `apk`'s directory by
-    # name and all three write only this into it: whichever recipe runs first
-    # pays for the copy and the other two find it warm.
-    #
-    # m2 and gitlibs are set here for the reason they are set there — the JVM
-    # reads user.home out of /etc/passwd, so neither follows HOME.
-    export PUB_CACHE="$PWD/.home/.pub-cache"
-    export GITLIBS="$PWD/.home/gitlibs"
-    m2="$PWD/.home/m2"
-
-    seed() {
-        [ -e "$2" ] && return 0
-        mkdir -p "$(dirname "$2")"
-        cp -r "$FRQ_CLJD_DEPS/$1" "$2"
-        chmod -R u+w "$2"
-    }
-    seed m2 "$m2"
-    seed gitlibs "$GITLIBS"
-    seed pub-cache "$PUB_CACHE"
-    seed clojuredart/cache "$PWD/.clojuredart/cache"
-
-    # Resolved here rather than in cljd-deps, which was not allowed to name
-    # the store — see the same loop in `apk`.
-    for helper in .clojuredart/cache/*/cljd_helper; do
-        [ -d "$helper" ] || continue
-        [ -e "$helper/.dart_tool/package_config.json" ] && continue
-        ( cd "$helper" && flutter pub get --offline )
-    done
-
-    # The web target is off in a checkout created for Android and Linux.
-    # `flutter/web/` itself IS committed now, unlike the Android and Linux
-    # runners: the OAuth client needs a script of its own beside the bundle
-    # (see web/frq_dpop.js), and a directory `flutter create` regenerates is
-    # no place to keep one.
-    flutter config --enable-web >/dev/null || true
-
-    # `frq.main-web` and not `frq.main`: the compile walks out from the
-    # namespace it is given, which is what keeps `dart:html` in the web build
-    # and out of the other two. `flutter/lib/main_web.dart` is the one-line
-    # export beside the generated `main.dart` that -t points at.
-    clojure -Sdeps "{:mvn/local-repo \"$m2\"}" -M:cljd compile frq.main-web
-    flutter build web -t lib/main_web.dart
-
-    case "{{action}}" in
-        build) echo "built $PWD/build/web" ;;
-        serve)
-            echo "serving $PWD/build/web on :{{port}}"
-            # --bind 0.0.0.0 and not the default loopback: in the container
-            # this is behind a Modal tunnel, and a server bound to 127.0.0.1
-            # is one the tunnel cannot reach.
-            exec python3 -m http.server {{port}} --bind 0.0.0.0 \
-                --directory build/web
-            ;;
-        *) echo "usage: just flutter-web [build|serve]" >&2; exit 1 ;;
-    esac
+    # A wrapper and nothing else. The build is a shell script because the
+    # container runs it too, and a container that had to install `just` to
+    # start would be one dependency away from the point.
+    exec "{{justfile_directory()}}/tools/build-web.sh" {{action}} {{port}}
 
 # The containers in `.modal/`, run on Modal rather than here. This machine
 # evaluates and Modal builds — see CLAUDE.md, which says so rather more

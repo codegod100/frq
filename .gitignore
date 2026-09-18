@@ -1,6 +1,11 @@
 # The native libraries `just lib` links out of the DotSlash cache.
 /build/
 
+# The pinned Flutter/JDK/Clojure tarballs `tools/toolchain.sh` fetches, plus
+# the pub cache, gitlibs and maven repo it keeps beside them. A gigabyte of
+# SDK, reproducible from the hashes in that script.
+/.toolchain/
+
 # Tool caches.
 /.cpcache/
 /.jolt/
