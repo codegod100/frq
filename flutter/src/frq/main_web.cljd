@@ -29,7 +29,8 @@
             [frq.oauth.web :as oauth-web]
             [frq.atproto.web :as atproto-web]
             ["dart:html" :as html]
-            [frq.hiccup :as hiccup]))
+            [frq.hiccup :as hiccup]
+            [frq.pictures.web :as pictures-web]))
 
 (defn ^:async main []
   (app/bind!)
@@ -63,6 +64,11 @@
   ;; authorization server, and failing that was there a sign-in before today.
   ;; Either way what lands is a session in `frq.cells`, which is what
   ;; `frq.main/sign-in!` finds instead of starting the browser leg again.
+  (pictures-web/install!)
+  ;; Ctrl-V. The other two targets have no clipboard to listen to, and this is
+  ;; the same attachment the chooser makes — `attach!` cannot tell which it
+  ;; was handed.
+  (pictures-web/listen-for-paste! (fn [picture] (app/attach! picture) nil))
   (let [signed-in? (or (await (oauth-web/resume!)) (oauth-web/restore!))]
     (await (app/start!))
     ;; A sign-in that has just completed should not then wait to be told to

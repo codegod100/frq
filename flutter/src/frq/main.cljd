@@ -58,8 +58,10 @@
             [frq.replies :as replies]
             [frq.profile :as profile]
             [frq.avatars.dart :as avatars]
-            ["package:image_picker/image_picker.dart" :as picker]
-            [frq.upload.dart :as upload]
+            [frq.pictures :as pictures]
+            ;; The dart:io chooser and upload this entry point installs;
+            ;; `frq.main-web` installs the browser's.
+            [frq.pictures.dart :as pictures-dart]
             [frq.irc.mutate :as mutate]
             [frq.oauth.core :as oauth]
             [frq.oauth.handoff :as handoff]
@@ -993,22 +995,27 @@
     (discard! (:path a))))
 
 (defn ^:async attach!
-  "Hold the picture already copied to `path` against the next line, and start
-  its upload.
+  "Hold `picture` against the next line, and start its upload.
+
+  What `frq.pictures/pick!` answers with, or what a paste handed over: a map
+  carrying `:path` where there is a filesystem, `:bytes` where there is not,
+  and a name either way. `:path` is the key the attachment is tracked by even
+  when it names nowhere.
 
   The upload starts at once rather than at send, so by the time a line is
   written the picture is usually already up. A failure lands in `error` like
   any other and takes the attachment with it — there is nothing to send and
   nothing to show."
-  [path filename]
+  [picture]
   (let [did (:did @cells/session)
         host-name (str @cells/form-host)
-        channel (str @cells/current)]
+        channel (str @cells/current)
+        path (:path picture)]
     (reset! cells/error nil)
     (clear-attachment!)
     (reset! cells/attachment {:path path :status :uploading})
     (try
-      (let [url (await (upload/upload! host-name did channel path filename))]
+      (let [url (await (pictures/upload! host-name did channel picture))]
         ;; Only if this is still the picture on screen: a reader who attached
         ;; another, or cleared it, has said what they want, and an upload
         ;; landing afterwards does not get to undo that.
@@ -1036,13 +1043,8 @@
   to be ours — not the reader's own picture, sitting in their gallery."
   []
   (try
-    (let [chosen (await (.pickImage (picker/ImagePicker)
-                                    .source picker/ImageSource.gallery))]
-      (when chosen
-        (let [copy (str (outgoing-dir) "/" (.-millisecondsSinceEpoch (DateTime/now))
-                        ".png")]
-          (await (.copy (dio/File. (.-path chosen)) copy))
-          (await (attach! copy "picture.png")))))
+    (when-let [picture (await (pictures/pick! (outgoing-dir)))]
+      (await (attach! picture)))
     (catch Object e
       (reset! cells/error (str "Could not read that picture: " (or (ex-message e) e))))))
 
@@ -1359,7 +1361,10 @@
       ;; difference is what is behind them: a face is a CDN URL the network
       ;; will serve again, a picture in a message is whatever host a stranger
       ;; put a link to.
-      :image-path (fn [url] (media/path-when-ready url))
+      ;; Through the seam: a path on the targets that cache to disk, and the
+      ;; URL itself in a browser, which has its own image cache and nowhere to
+      ;; put a file. See `frq.pictures/preview-url`.
+      :image-path (fn [url] (pictures/preview-url url))
       :wide? wide?
       ;; True where there is a pointer to hover with. Three Flutter targets
       ;; compile this file now, so it is asked rather than assumed: a window on
@@ -1481,4 +1486,5 @@
   (net-dart/install!)
   (oauth-dart/install!)
   (atproto-dart/install!)
+  (pictures-dart/install!)
   (await (start!)))

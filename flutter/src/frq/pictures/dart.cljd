@@ -1,0 +1,31 @@
+(ns frq.pictures.dart
+  "Pictures over dart:io: the system chooser, a copy, and `frq.upload.dart`.
+
+  What was in `frq.main` until the web needed the other half. Unchanged in
+  substance — the chooser hands back a grant for the one picture chosen, and
+  it is copied into our own storage because the send drops the file when it is
+  done with it, and what it drops has to be ours."
+  (:require ["dart:io" :as dio]
+            ["package:image_picker/image_picker.dart" :as picker]
+            [frq.media.dart :as media]
+            [frq.pictures :as pictures]
+            [frq.upload.dart :as upload]))
+
+(defn ^:async ^:private pick! [dir]
+  (let [chosen (await (.pickImage (picker/ImagePicker)
+                                  .source picker/ImageSource.gallery))]
+    (when chosen
+      (let [copy (str dir "/" (.-millisecondsSinceEpoch (DateTime/now)) ".png")]
+        (await (.copy (dio/File. (.-path chosen)) copy))
+        {:path copy :filename "picture.png"}))))
+
+(defn ^:async ^:private upload! [host did channel picture]
+  (await (upload/upload! host did channel (:path picture)
+                         (or (:filename picture) "picture.png"))))
+
+(defn install! []
+  (pictures/install! {:pick! pick!
+                      :upload! upload!
+                      ;; The cache does the work; this is only where the
+                      ;; screens ask whether it has finished.
+                      :preview-url media/path-when-ready}))
