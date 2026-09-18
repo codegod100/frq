@@ -827,6 +827,17 @@
                    ;; The check is not just the prop: a sentence with a button
                    ;; in it is not a sentence, and a caller that asks for one
                    ;; anyway gets the Wrap it would have got before.
+                   ;; `Text.rich` with the runs' own recognizers. Two things
+                   ;; were tried above this line and both swallowed the tap:
+                   ;; the app-wide `SelectionArea` takes it before a
+                   ;; `TextSpan.recognizer` sees it, and `SelectableText.rich`
+                   ;; does not dispatch to span recognizers at all. Verified by
+                   ;; clicking a real link in #test with the console open --
+                   ;; `open-url!` logged nothing in either case, which is what
+                   ;; a gesture that never arrives looks like.
+                   ;;
+                   ;; So the recognizer stays and the SelectionArea goes; see
+                   ;; `frq.main`.
                    (and (true? (:inline p)) (inline? (body node)))
                    (m/Text.rich (m/TextSpan .children (inline-spans ctx (body node)))
                                 .softWrap true)

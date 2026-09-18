@@ -175,10 +175,44 @@
     ;; simply another tab here. Popup blockers can refuse it, which is why the
     ;; seam lets this answer false — the OAuth screen shows the URL to open by
     ;; hand.
+    ;; An anchor the page clicks for itself, and NOT `window.open`.
+    ;;
+    ;; `(.open html/window u "_blank")` compiled to nothing: dart2js emitted a
+    ;; folded constant where the call should have been, so `window.open(`
+    ;; appears zero times in `main.dart.js` and this function logged success
+    ;; and returned true without opening anything. That is also why the
+    ;; `some?` check around it could not help -- with the call gone it was
+    ;; always true. Verified by grepping the built bundle, which is the only
+    ;; honest test available for an interop call that silently disappears.
+    ;;
+    ;; An anchor is what `url_launcher_web` builds for the same job, and it
+    ;; survives compilation because `createElement`/`click` are ordinary
+    ;; dart:html members of the kind already used all over this file.
+    ;; `noopener` because a tab opened with a handle back to us is the one
+    ;; thing a link in someone else's message should not get.
     :open-url!            (fn [url]
-                            (try
-                              (some? (.open html/window (str url) "_blank"))
-                              (catch Object _ false)))
+                            (let [u (str url)
+                                  log (.-console html/window)]
+                              (.log log (str "open-url! " u))
+                              (try
+                                (let [doc (.-document html/window)
+                                      a (.createElement doc "a")]
+                                  (.setAttribute a "href" u)
+                                  (.setAttribute a "target" "_blank")
+                                  (.setAttribute a "rel" "noopener noreferrer")
+                                  (.append (.-body doc) a)
+                                  (.click a)
+                                  (.remove a)
+                                  (.log log "open-url! clicked an anchor")
+                                  true)
+                                (catch Object e
+                                  ;; Whatever went wrong, opening the link at
+                                  ;; all beats a link that does nothing, so
+                                  ;; this tab goes there. The session is in
+                                  ;; localStorage and survives the trip.
+                                  (.log log (str "open-url! anchor failed " e "; same tab"))
+                                  (try (.assign (.-location html/window) u) true
+                                       (catch Object _ false))))))
     :config-dir           (fn [] root)
     :file-exists?         (fn [p] (some? (slurp* p)))
     ;; A directory exists here exactly when something is under it. There is no

@@ -1455,17 +1455,22 @@
       (m/Scaffold)
       .body
       m/SafeArea
-      ;; Text you can select, which on the web is not the default: a browser
-      ;; renders Flutter to a canvas, so the ordinary drag-over-text a page
-      ;; gives for free is not there unless something asks for it. One
-      ;; SelectionArea over the whole tree is that ask, and it covers every
-      ;; Text under it rather than needing them changed.
+      ;; No SelectionArea here, and that is a trade rather than an oversight.
       ;;
-      ;; Above `render-root` rather than inside `frq.hiccup`, so it is one
-      ;; widget and not one per label — and for all three targets rather than
-      ;; the web alone, because copying a line out of a chat is a thing a
-      ;; desktop window should do too.
-      m/SelectionArea
+      ;; It used to wrap the whole tree so text could be dragged over and
+      ;; copied, which a canvas does not give a browser for free. But a
+      ;; SelectionArea takes the tap before a `TextSpan.recognizer` under it
+      ;; ever sees one, and since links in a message became spans rather than
+      ;; InkWells — so that a URL breaks inside a sentence instead of taking a
+      ;; line of its own — that meant every link in every message was dead on
+      ;; all three targets. `SelectableText.rich` was tried in its place and is
+      ;; worse: it does not dispatch to span recognizers either, and it is not
+      ;; one widget for the tree but one per paragraph.
+      ;;
+      ;; A link you can follow beats a line you can copy, so the selection is
+      ;; what goes. Getting both back means a paragraph that hit-tests its own
+      ;; runs — a tap mapped to a `TextPosition` and looked up — which is real
+      ;; work in `frq.hiccup` and not a widget you wrap the tree in.
       (f/widget
        :context ctx
        ;; One watch, not twenty. `lines` is a local atom and not a cell, so it
