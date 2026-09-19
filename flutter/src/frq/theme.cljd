@@ -1,18 +1,12 @@
 (ns frq.theme
-  "COSMIC's design tokens, as Flutter values.
+  "The design tokens, as Flutter values.
 
-  The colours, radii and spacing are the user's own, read out of cosmic-config
-  by tools/cosmic2cljd.py into `frq.theme.cosmic` — so the phone is painted in
-  whatever accent and surfaces COSMIC Settings is set to, rather than in a
-  guess at what COSMIC looks like. `just theme` moves them.
-
-  What is not in cosmic-config is the typography scale: libcosmic carries
-  title1..title4, heading, body and caption as code rather than as
-  configuration. Those numbers are here, and the mapping from glimmer's tags
-  to them is `crates/jolt-cosmic`'s — `:title` is title3, `:title-2` is title4,
+  The colours, radii and spacing are in `frq.theme.tokens`; the typography
+  scale is here, because it never came from configuration. The tag names are
+  the ones the screens use — `:title` is title3, `:title-2` is title4,
   `:label` is body, `:dim-label` is caption."
   (:require ["package:flutter/material.dart" :as m]
-            [frq.theme.cosmic :as c]))
+            [frq.theme.tokens :as c]))
 
 ;; ------------------------------------------------------------------ scale
 

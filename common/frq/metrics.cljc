@@ -7,15 +7,12 @@
   strip under the list actually needs — which costs a message a row, and a
   conversation is measured in how many of those fit.
 
-  So the counts stay where the reasoning is and a backend whose rows are a
-  different height says so here. `frq.tui` sets `chrome-row` before its first
-  paint; a window and a phone leave it alone.
+  So the counts stay where the reasoning is. `chrome-row` is a cell rather
+  than a constant because a terminal frontend used to set it before its first
+  paint; nothing writes it now, and a window and a phone read the default.
 
   Shared because the screens that count against it are shared: `below-list` in
-  `frq.screens.chats` is the first, and the chat screen's reserves will be next.
-  `frq.app` re-defs all three, so `frq.tui` still writes `app/chrome-row`."
-  (:require #?@(:cljd []
-                :jolt [[glimmer.ratom :refer [atom]]])))
+  `frq.screens.chats` is the first, and the chat screen's reserves will be next.")
 
 (def window-row 34)
 (defonce chrome-row (atom window-row))

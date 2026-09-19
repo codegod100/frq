@@ -1,19 +1,12 @@
 # The build, on rickub. GitLab CI next door reads source and no more —
-# check-common on every push, the flake.lock nightly — and deliberately builds
-# nothing. This is the other half: the desktop bundle, actually assembled.
+# check-common on every push — and deliberately builds nothing. This is the
+# other half: the web bundle, actually compiled.
 #
-# It is not assembled *here*, though it nearly could be now. The job hands the
-# work to Modal exactly as a person at a terminal would, and the Sandbox does
-# it against the `devshell` volume. What a runner contributes is a checkout, a
-# python, and somewhere to put the result afterwards.
-#
-# It used to be `nix build .#appimage`, which a rickub runner could not have
-# done at all — a container against libjoltcosmic's dependency tree is the
-# laptop-shaped death CLAUDE.md warns about. That is no longer what the
-# container runs: jolt, the backends and libmoq_ffi all arrive pinned and
-# prebuilt, so the Modal side fetches and copies rather than compiling. The
-# reason it still goes to Modal is the volume the toolchain is cached on, not
-# the size of the build.
+# It is not compiled *here*. The job hands the work to Modal exactly as a
+# person at a terminal would, and the Sandbox does it against the `devshell`
+# volume. What a runner contributes is a checkout, a python, and somewhere to
+# put the result afterwards. The reason it goes to Modal is the volume the
+# toolchain is cached on, not the size of the build.
 #
 # Lives in .rickub/workflows/ rather than .github/workflows/ because rickub
 # reads one or the other and never both: with this directory present, a
@@ -28,22 +21,30 @@ on:
 
 jobs:
   # The same read-only check GitLab runs, for the same reason: common/ compiles
-  # twice and only the jolt half is on the way to anything anyone runs, so a
-  # JVM call in shared code breaks the phone at a namespace nobody touched.
-  # Seconds, no toolchain. Worth having on both hosts rather than depending on
-  # which one a given push reaches.
+  # for two targets, so a host-specific call in shared code breaks one of them
+  # at a namespace nobody touched. Seconds, no toolchain. Worth having on both
+  # hosts rather than depending on which one a given push reaches.
   check-common:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: python3 tools/check-common.py common
 
-  desktop:
+  # The Nim core's tests. No Flutter, no Dart, no Android SDK — which is the
+  # reason the logic is moving there: a rule about the IRC wire format gets
+  # checked in seconds rather than behind a toolchain.
+  nim-test:
     runs-on: ubuntu-latest
-    needs: check-common
-    # Minutes now, not an hour. The Modal side compiles one .c file; what it
-    # spends its time on is fetching the pinned pieces on a cold toolchain and
-    # the upload of the tree from here.
+    container: nimlang/nim:2.2.0-alpine
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd nim && for t in tests/t*.nim; do nim c -r --hints:off --path:src "$t"; done
+
+  web:
+    runs-on: ubuntu-latest
+    needs: [check-common, nim-test]
+    # What it spends its time on is the ClojureDart compile and, on a cold
+    # toolchain, fetching the pinned Flutter/JDK/Clojure tarballs.
     timeout-minutes: 30
     steps:
       # The container copies `.` — the whole working tree, uncommitted edits
@@ -60,7 +61,7 @@ jobs:
       # Two secrets, set under Settings -> Secrets and variables. A Modal
       # token is the whole of this job's configuration: no nix, no builder,
       # no cache of its own.
-      - name: Assemble the desktop bundle, on Modal
+      - name: Build the web bundle, on Modal
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -68,25 +69,22 @@ jobs:
         # nowhere else, and `modal app logs` cannot reach an ephemeral run —
         # so this terminal is the only place the build is visible. tee, not
         # tail: a run killed mid-pipe through tail takes its output with it.
-        run: modal run .modal/frq/container.py 2>&1 | tee /tmp/frq-build.log
+        run: modal run .modal/flutter-web/container.py 2>&1 | tee /tmp/frq-build.log
 
-      # The Sandbox leaves the tarball on the devshell volume rather than
-      # anywhere a runner can see, so fetch it back out. One file, already a
-      # squashed tree — nothing to import on the other end, and nothing to
-      # unpack before it can be uploaded.
+      # The Sandbox leaves the bundle on the devshell volume rather than
+      # anywhere a runner can see, so fetch it back out.
       - name: Fetch the bundle out of the volume
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           modal volume get --force devshell \
-            artifacts/frq-desktop-x86_64-linux.tar.gz \
-            frq-desktop-x86_64-linux.tar.gz
+            frq-flutter-web/flutter/build/web web
 
       - uses: actions/upload-artifact@v4
         with:
-          name: frq-desktop-${{ github.sha }}
-          path: frq-desktop-x86_64-linux.tar.gz
+          name: frq-web-${{ github.sha }}
+          path: web
           if-no-files-found: error
 
       # Kept whether or not the build succeeded: a failed run's log is the

@@ -1,16 +1,14 @@
 (ns frq.io.dart
   "Flutter's answers to `frq.io`, over dart:io.
 
-  The mirror of `frq.io.jolt`, and the reason the seam exists at all: every
-  line here is something the desktop gets from libc through jolt.ffi and the
-  APK could not get at all. `dart:io` has TLS, sockets and a filesystem in the
-  runtime, so the Android half of frq stops being the half where login does not
-  work.
+  `dart:io` has TLS, sockets and a filesystem in the runtime, which is the
+  reason the seam exists at all: this used to be the half of frq where login
+  did not work, because the runtime under it reached OpenSSL through the
+  dynamic loader and Android has no public libssl.
 
-  Unlike its jolt counterpart this one cannot install itself at load time: the
-  app's storage directory arrives from path_provider as a Future, so the
-  Flutter entry point awaits it and calls `install!` with the answer before it
-  runs anything else.
+  This cannot install itself at load time: the app's storage directory arrives
+  from path_provider as a Future, so the Flutter entry point awaits it and
+  calls `install!` with the answer before it runs anything else.
 
   Two Flutter targets share this file, not one: `just apk` and
   `just flutter-desktop` compile the same ClojureDart, so \"the phone\" is no

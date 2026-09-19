@@ -78,11 +78,9 @@
     [:dim-label {:label "Hides other people arriving, leaving and quitting. The people panel still follows who is here."}]]
    [:card {}
     [:title-2 {:label "frq"}]
-    ;; What this is, which is not the same sentence on both: the components
-    ;; are the same file either way, and what paints them is not. Vidya and
-    ;; egui were what it said, and both have been gone a while.
-    [:dim-label {:label #?(:cljd "freeq client — the same glimmer components as the desktop, compiled by ClojureDart and painted by Flutter."
-                           :jolt "freeq client in jolt — glimmer components, painted by libcosmic.")}]
+    ;; What this is. It used to be a different sentence per frontend, back
+    ;; when there was more than one; there is Flutter now, on three targets.
+    [:dim-label {:label "freeq client — ClojureDart over Flutter, on Android, Linux and the web."}]
     ;; No Quit where there is nothing to quit: closing an app is a window's
     ;; idea, and Android has its own way of leaving one.
     (when (actions/desktop?)

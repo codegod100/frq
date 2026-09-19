@@ -11,9 +11,10 @@ runtime     = "sandbox"
 # levels up and `.` is the whole tree.
 context = "../.."
 include = ["."]
-# `dev` is the shell you actually want. Bare `nix develop` here resolves to the
-# flake's default shell -- libcosmic, jolt-native, a thousand crates of Rust --
-# which is the wrong tree and an expensive way to find out.
+# `dev` is the shell you actually want. There is no default shell in this
+# flake any more -- the one that used to be there belonged to the retired
+# libcosmic frontend -- so a bare `nix develop` here fails rather than
+# resolving to the wrong tree.
 # The devShell, baked in rather than entered. `print-dev-env` writes the whole
 # environment out as shell -- PATH, the compiler, every variable mkShell sets
 # -- and realises its inputs on the way, so the closure becomes an image layer
@@ -29,11 +30,11 @@ commands = [
 ]
 # The build state a local checkout carries: 395MB of a 441MB repo, uploaded on
 # every start and wanted by nothing out there. Flutter builds into a volume of
-# its own, and the jolt and clojure caches are this machine's.
+# its own, and the clojure caches are this machine's.
 ignore  = [
     "flutter/build", "flutter/.home", "flutter/.dart_tool",
     "flutter/.clojuredart", "flutter/.cpcache",
-    ".jolt", ".cpcache", "result", "build", ".git",
+    ".cpcache", "result", "build", ".git",
 ]
 
 # Two volumes doing two different jobs. `nix-cache` is the binary cache every
@@ -139,7 +140,7 @@ fi
 """
 # Nix's own cache, on the volume rather than in the container. Without it
 # every Sandbox starts empty and `nix develop` re-clones the flake's git
-# inputs -- jolt-src, jolt-native, glimmer, nixgl and their transitives --
+# inputs -- nixgl and its transitives --
 # because flake.lock pins which revision to fetch, not whether it is already
 # on disk. Set here rather than in the command so an interactive shell into
 # this container gets it too.

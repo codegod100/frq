@@ -3,18 +3,17 @@
 # That indirection bought one thing worth having, a shared way to reach nix on
 # a host that keeps it in a container, and `nix` below is the whole of it.
 #
-# Every recipe that runs frq has the same shape: outside the dev shell, re-enter
-# it and come back to this same recipe; inside, hand jolt the deps overrides and
-# the library path the shell exported. The re-entry test is JOLT_NATIVE_LIB,
-# which only the shell sets — no flag to forget, and no second code path for
-# someone who runs `nix develop --command just cosmic run` by hand.
+# Every recipe that builds has the same shape: outside the dev shell, re-enter
+# it and come back to this same recipe; inside, do the work. The re-entry test
+# is an environment variable only the shell sets — no flag to forget, and no
+# second code path for someone who runs `nix develop --command just ...` by
+# hand.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 # Every recipe below is a `#!` script and passes its arguments on with "$@".
 # Without this that is empty in one — just interpolates into a shebang recipe
-# rather than handing it argv — and `just tui --headless` silently ran the
-# terminal instead.
+# rather than handing it argv — and a recipe silently ignored its flags.
 set positional-arguments
 
 # nix is not on every host this runs on: on the machine these recipes were
@@ -24,29 +23,13 @@ nix := `command -v nix >/dev/null 2>&1 && echo nix || echo "distrobox enter arch
 
 # --max-jobs 0 is what sends the work to the `builders` entry rather than
 # compiling it here. Left to the default, nix prefers the local machine, and a
-# cold jolt-native is egui, openh264 and quinn on a laptop — for a derivation a
+# cold Flutter toolchain is a lot of compiling on a laptop — for a derivation a
 # remote builder has likely built already. FRQ_MAX_JOBS=auto is the way out on
 # a machine with no builder configured.
 jobs := env("FRQ_MAX_JOBS", "0")
 
 default:
     @just --list
-
-# Re-read the COSMIC theme into the APK.
-#
-# libcosmic asks cosmic-config for the accent and the surfaces at run time, so
-# `just cosmic run` already follows COSMIC Settings as it changes. A phone has
-# no cosmic-config, so the APK carries them instead — read here, on the machine
-# that has them, and compiled in. That is the one real difference between the
-# two, and it is why the generated file is in git rather than gitignored: a
-# checkout on a machine with no COSMIC still builds.
-#
-# Run it after changing the theme in COSMIC Settings, then `just apk`.
-theme:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{justfile_directory()}}"
-    python3 tools/cosmic2cljd.py flutter/src/frq/theme/cosmic.cljd
 
 # The APK: ClojureDart compiled to Dart, then Flutter's Gradle build.
 #
@@ -162,183 +145,18 @@ apk action="build":
         *)       echo "usage: just apk [build|install|run|log]" >&2; exit 1 ;;
     esac
 
-# Two halves, and the split is the point. The frq source is the files on disk,
-# uncommitted edits and all. Everything under it — jolt, glimmer, glimmer-cosmic
-# and the native objects — is the flake's, built rather than fetched.
-#
-# Deliberately not `nix run .#frq`. That builds the flake's own copy of the
-# source, which is the tree as git has it — so an edit that has not been
-# committed, or committed on a branch the command was not pointed at, runs as
-# whatever was there before, silently. A run meant to answer "does my change
-# work" has to be the files on disk.
-#
-# libcosmic paints through wgpu, so this needs nixGL off NixOS for the same
-# reason the window always did: the real driver is the host's.
-#
-# There is no jvui and no vidya here any more — both were experiments. The
-# window is libcosmic and the terminal is libjolttui, and those are the two.
-#
-# The app: this tree's source on the flake's everything-else, in the dev shell.
-#
-# Named for the backend rather than for the verb, the way `flutter-desktop`
-# is: two desktop GUIs, neither of them the default one.
-#
-#   just cosmic run [args...]       open the window
-cosmic action="run" *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{justfile_directory()}}"
-    if [ "{{action}}" != "run" ]; then
-        echo "usage: just cosmic run [args...]" >&2
-        exit 1
-    fi
-    shift
-    if [ -z "${JOLT_NATIVE_LIB:-}" ]; then
-        exec {{nix}} develop . --max-jobs {{jobs}} --command just cosmic run "$@"
-    fi
-
-    deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-cosmic {:local/root \"$GLIMMER_COSMIC_SRC\"}}}"
-
-    export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-    runner=()
-    [ -e /run/current-system ] || runner=("$NIXGL")
-
-    exec "${runner[@]}" jolt -Sdeps "$deps" -m frq.cosmic "$@"
-
-# `cosmic` with the other backend under it. Only libjolttui: `frq.app` names no
-# backend at all any more, and `frq.tui` requires glimmer-tui so the one
-# installed is the terminal.
-#
-# No nixGL here, unlike `cosmic`: a terminal wants nothing from the host's GL
-# driver, which is the reason this output exists on machines that have none.
-#
-# What may appear in common/, checked — the half of the tree both backends
-# compile. Needs nothing built: it reads the source, so it is the one check
-# that runs anywhere, and CI runs exactly this.
+# What may appear in common/, checked. Needs nothing built: it reads the
+# source, so it is the one check that runs anywhere, and CI runs exactly this.
 check-common:
     #!/usr/bin/env bash
     python3 tools/check-common.py common
 
-# The same screens in a terminal. `just tui --headless` prints one screenshot.
-tui *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{justfile_directory()}}"
-    if [ -z "${JOLT_NATIVE_LIB:-}" ]; then
-        exec {{nix}} develop . --max-jobs {{jobs}} --command just tui "$@"
-    fi
-
-    deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-tui {:local/root \"$GLIMMER_TUI_SRC\"}}}"
-
-    export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-    exec jolt -Sdeps "$deps" -m frq.tui "$@"
-
-# The same classpath as `tui`, with an nREPL on it instead of a `-main`: a
-# session that can require `frq.tui` and then redefine a component while it is
-# on screen, which is a second and not the minute a rebuild costs.
+# The desktop GUI: the same screens the APK paints, on Flutter's Linux target.
 #
-#     just nrepl                      then, from an editor or a client on 7888:
-#     (require (quote frq.tui))       both backends, terminal installed last
-#     (frq.tui/-main "--headless" "--demo")
-#     (glimmer.core/reload!)          re-mount after redefining a component
-#
-# `just repl nrepl-server` is the window's half of this — the same thing minus
-# glimmer-tui. Port is nrepl-server's own positional: `just nrepl 7889`.
-nrepl *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{justfile_directory()}}"
-    if [ -z "${JOLT_NATIVE_LIB:-}" ]; then
-        exec {{nix}} develop . --max-jobs {{jobs}} --command just nrepl "$@"
-    fi
-
-    deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-tui {:local/root \"$GLIMMER_TUI_SRC\"}}}"
-
-    export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-    exec jolt -Sdeps "$deps" nrepl-server "$@"
-
-# `jolt` in the repo root does not work on its own: deps.edn carries
-# :jolt/native, so every invocation here loads libvidya and libjoltmoq before it
-# reads a line, and dies naming the library if the loader cannot find them. So
-# this is `cosmic` without the app — and `cosmic` is this with a window's
-# worth of
-# extra care about the GL driver.
-#
-# A jolt with the native libraries under it: a REPL, or `just repl nrepl-server`.
-repl *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd "{{justfile_directory()}}"
-    if [ -z "${JOLT_NATIVE_LIB:-}" ]; then
-        exec {{nix}} develop . --max-jobs {{jobs}} --command just repl "$@"
-    fi
-
-    deps="{:deps {jolt-lang/glimmer {:local/root \"$GLIMMER_SRC\"}"
-    deps="$deps nandi/glimmer-cosmic {:local/root \"$GLIMMER_COSMIC_SRC\"}}}"
-
-    export LD_LIBRARY_PATH="$JOLT_NATIVE_LIB:$FRQ_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-    exec jolt -Sdeps "$deps" "$@"
-
-# Regenerate src/frq/moq/raw.clj from the libmoq_ffi we actually load.
-#
-# UniFFI embeds its interface metadata in the object, so `uniffi-bindgen
-# --library` reads the truth out of the .so rather than a header shipped
-# beside it. Those differ at one version number: the published Linux and
-# Android objects are built without moq-ffi's `audio` and `video` features
-# (206 functions, no codecs), while the shipped C header describes the Apple
-# build (230). The object is the only source this recipe will accept.
-#
-# The bindgen must match the uniffi that built the object — 0.32 for moq-ffi
-# 0.3.17 — and it is built once into the scratch dir rather than pinned into
-# the flake: nothing in a normal build needs it, and a regeneration is a thing
-# done when the moq-ffi pin moves, by hand, on purpose.
-#
-#   just gen-moq                     # the loaded library
-#   just gen-moq path/to/libmoq_ffi.so
-#
-# Regenerate the libmoq_ffi bindings from the object's own embedded metadata.
-gen-moq lib="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    lib="${1:-${JOLT_NATIVE_LIB:-}/libmoq_ffi.so}"
-    [ -f "$lib" ] || { echo "no libmoq_ffi.so at $lib — pass one: just gen-moq <path>" >&2; exit 1; }
-    work="${TMPDIR:-/tmp}/frq-gen-moq"
-    mkdir -p "$work/ubg/src"
-    cat > "$work/ubg/Cargo.toml" <<'TOML'
-    [package]
-    name = "ubg"
-    version = "0.1.0"
-    edition = "2021"
-    [[bin]]
-    name = "uniffi-bindgen"
-    path = "src/main.rs"
-    [dependencies]
-    uniffi = { version = "0.32", features = ["cli"] }
-    TOML
-    echo 'fn main() { uniffi::uniffi_bindgen_main() }' > "$work/ubg/src/main.rs"
-    ( cd "$work/ubg" && cargo build --release -q )
-    ( cd "$work/ubg" && ./target/release/uniffi-bindgen generate \
-        --library "$lib" --language python --out-dir "$work/py" --no-format )
-    python3 tools/py2jolt.py "$work"/py/*.py > "$work/body.clj"
-    { sed -n '1,/^  (:require \[jolt.ffi :as ffi\]))$/p' src/frq/moq/raw.clj; echo; cat "$work/body.clj"; } > "$work/raw.clj"
-    mv "$work/raw.clj" src/frq/moq/raw.clj
-    echo "wrote src/frq/moq/raw.clj ($(grep -c '^(ffi/defcfn' src/frq/moq/raw.clj) entry points)"
-
-# The other desktop GUI: the same screens, painted by Flutter instead of
-# libcosmic.
-#
-# `just cosmic run` and this one are two frontends over one tree, and the
-# split is the same one the APK already draws. Everything under `common/` — the
-# screens, the cells, `frq.io` — is shared; what differs is who paints it and
-# who answers the host. So this recipe is `just apk` with the Android half
-# taken out: the same `clojure -M:cljd compile` over the same flutter/src,
+# This recipe and `just apk` are two targets over one tree, and the split is
+# the one the APK already draws. Everything under `common/` — the screens, the
+# cells, `frq.io` — is shared; what differs is who answers the host. So this
+# is `just apk` with the Android half taken out: the same `clojure -M:cljd compile` over the same flutter/src,
 # then Flutter's Linux target rather than its Android one. CMake and Ninja
 # instead of Gradle, `flutter/linux/` as the runner, no SDK and no JDK.
 #
@@ -347,8 +165,8 @@ gen-moq lib="":
 # writable-ANDROID_HOME dance — nothing here writes into the store — so there
 # is no `flutter/.home` on this path.
 #
-# nixGL for the reason `cosmic` needs it and `tui` does not: Flutter paints
-# through GL, and off NixOS the driver is the host's.
+# nixGL because Flutter paints through GL, and off NixOS the driver is the
+# host's.
 #
 #   just flutter-desktop            build the debug bundle
 #   just flutter-desktop run        build it and open the window
@@ -462,46 +280,19 @@ flutter-web action="build" port="8080":
     # start would be one dependency away from the point.
     exec "{{justfile_directory()}}/tools/build-web.sh" {{action}} {{port}}
 
-# The cosmic GUI as a directory anyone can unpack, with no nix on either end.
-#
-# `just cosmic run` is the edit loop — a devShell, this tree's source, a store
-# path per dependency. This is the other end of the same program: a jolt
-# binary, the backends out of jolt-native's portable tarball, libmoq_ffi off
-# its release, glimmer and glimmer-cosmic at pinned revs, and one .c file
-# compiled on the spot. `tools/desktop-toolchain.sh` fetches; nothing is
-# built from source that somebody else has already published.
-#
-# It replaces `nix build .#appimage`, and what it drops with it is the reason
-# that output existed. nix-appimage squashed a closure into one file so a
-# machine without nix could run it, and the heaviest thing in that closure was
-# a Mesa — carried so that nixGL had something to put the host driver in front
-# of. There is no Mesa here, so there is no nixGL: the GL driver is the
-# host's, the way it is for everything else on the machine.
-#
-#   just desktop            assemble build/desktop
-#   just desktop tar        ...and tar it up for another machine
-#   just desktop run        ...and start it
-desktop action="build":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # A wrapper and nothing else, for the reason `flutter-web` is one: the
-    # container runs the same script, and a container that had to install
-    # `just` first would be one dependency away from the point.
-    exec "{{justfile_directory()}}/tools/build-desktop.sh" {{action}}
-
 # The containers in `.modal/`, run on Modal rather than here. This machine
 # evaluates and Modal builds — see CLAUDE.md, which says so rather more
 # firmly — and these two recipes are the whole interface to that.
 #
-# Named for where the work happens, the way `cosmic` and `flutter-desktop`
-# are named for what paints: there is no re-entry test here because nothing
+# Named for where the work happens, the way `flutter-desktop` is named for
+# what paints: there is no re-entry test here because nothing
 # re-enters. There is no `nix` variable either, and that used to be because
-# nix ran out there — now it is because two of these three containers have no
-# nix in them at all.
+# nix ran out there — now it is because neither of these containers has any
+# nix in it at all.
 #
-#   just modal frq                 assemble the desktop bundle on Modal
 #   just modal flutter-dev         the incremental Flutter loop
-modal container="frq" *args:
+#   just modal flutter-web         the web bundle
+modal container="flutter-dev" *args:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{justfile_directory()}}"
@@ -557,9 +348,59 @@ web-local port="8080":
 # the sandbox bills until you do.
 #
 #   just modal-shell               flutter-dev, the usual one
-#   just modal-shell frq           the desktop bundle container
+#   just modal-shell flutter-web   the web bundle container
 modal-shell container="flutter-dev":
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{justfile_directory()}}"
     exec modal run ".modal/{{container}}/container.py" --shell
+
+# The Nim core's test suite.
+#
+# It needs no Flutter, no Dart and no Android SDK — which is the point of
+# having the logic here rather than under `common/`: a rule about the IRC wire
+# format can be checked in a second, on any machine, without a toolchain that
+# takes minutes to enter.
+#
+#   just nim-test               the whole suite
+#   just nim-test tircparse     one file
+nim-test file="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_NIM:-}" ]; then
+        exec {{nix}} develop .#nim --max-jobs {{jobs}} --command just nim-test "$@"
+    fi
+    cd nim
+    if [ -n "{{file}}" ]; then
+        exec nim c -r --hints:off --path:src "tests/{{file}}.nim"
+    fi
+    for t in tests/t*.nim; do
+        echo "== $t"
+        nim c -r --hints:off --path:src "$t"
+    done
+
+# The Nim core as a shared library, into build/nim.
+#
+# `--mm:orc` rather than the default: this is a library loaded by a Dart
+# process that owns its own lifetime, so reference counting with a cycle
+# collector is the memory model that does not need a GC thread of its own or a
+# stack it can scan.
+#
+# `-d:release` and not `-d:danger`: the bounds checks are what turn a
+# malformed line off a socket into an exception instead of a read past the end
+# of a buffer, and this parses exactly that.
+nim-lib:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_NIM:-}" ]; then
+        exec {{nix}} develop .#nim --max-jobs {{jobs}} --command just nim-lib
+    fi
+    out="{{justfile_directory()}}/build/nim"
+    mkdir -p "$out"
+    cd nim
+    nim c --app:lib --mm:orc -d:release --hints:off \
+        --path:src --out:"$out/libfrqcore.so" src/frq_core.nim
+    echo "built $out/libfrqcore.so"
+    nm -D --defined-only "$out/libfrqcore.so" | grep ' T frq_' || true

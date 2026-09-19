@@ -30,7 +30,7 @@ setup = [
   "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git rsync tar unzip xz-utils && rm -rf /var/lib/apt/lists/*",
 ]
 # The build state a local checkout carries, wanted by nothing out here: this
-# container builds into a volume of its own, and the jolt and clojure caches
+# container builds into a volume of its own, and the clojure caches
 # are the laptop's.
 ignore  = [
     "flutter/build", "flutter/.home", "flutter/.dart_tool",
@@ -47,7 +47,7 @@ ignore  = [
     # The toolchain, which is a gigabyte of Flutter SDK and lives on the
     # volume out here.
     ".toolchain",
-    ".jolt", ".cpcache", "result", "build", ".git",
+    ".cpcache", "result", "build", ".git",
     # An editor's linter rewrites this while the upload is reading it, and
     # Modal fails the whole run with "was modified during build process".
     # Nothing out here reads it.

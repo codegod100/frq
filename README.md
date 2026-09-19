@@ -1,48 +1,58 @@
 # frq
 
 A **[freeq](https://github.com/codegod100/freeq)** client written in
-**[jolt](https://github.com/jolt-lang/jolt)**, as
-[glimmer](https://github.com/jolt-lang/glimmer) components painted by
-**libcosmic** on the desktop — and, on the phone, by Flutter through
-[ClojureDart](https://github.com/tensegritics/ClojureDart) over the same
-shared namespaces. See [flutter/README.md](flutter/README.md).
+**[ClojureDart](https://github.com/tensegritics/ClojureDart)**, painted by
+Flutter — one set of screens on Android, on the Linux desktop and in a browser.
+See [flutter/README.md](flutter/README.md).
 
 It is a proof of concept port of [sleek](../sleek), which is the same client in
 Rust against egui directly. The screens are sleek's — connect, chats, chat,
-discover, settings, under a tab bar — but each is hiccup over glimmer's widget
-tags rather than immediate-mode drawing code, and state lives in ratoms instead
-of an `AppState` struct.
+discover, settings, under a tab bar — but each is hiccup over the widget tags
+`frq.hiccup` translates into Flutter, and state lives in atoms instead of an
+`AppState` struct.
 
-Source lives in three trees, and the file extension is the boundary:
-
-```
-common/  .cljc  compiled by both jolt and ClojureDart — no jolt, no glimmer
-src/     .clj   the jolt half: glimmer, jolt.ffi, cosmic + tui backends
-flutter/ .cljd  the ClojureDart half: Flutter, dart:io — see flutter/README.md
-```
-
-ClojureDart reads `.cljd` and `.cljc` and never `.clj`, so a namespace that
-reaches for `jolt.host` cannot end up in a Flutter build by accident. What the
-two halves share, they ask of `common/frq/io.cljc` — the host's job named once,
-answered by `frq.io.jolt` on one side and `frq.io.dart` on the other.
+Source lives in three trees:
 
 ```
-common/frq/io.cljc      the seam: filesystem, environment, config dir, clock
-common/frq/clock.cljc   IRCv3 time tags → the reader's own zone
-common/frq/store.cljc   the saved sign-in, mode 600 in the config directory
-common/frq/emoji.cljc   the picker's catalog: every drawable emoji and its name
-src/frq/io/jolt.clj     the desktop's answers to the seam
-src/frq/atproto.clj     handle → DID → PDS → session, and the SASL payloads
-src/frq/oauth.clj       the broker flow: login URL, loopback capture, /session
-src/frq/avatars.clj     profile pictures, by DID or handle
-src/frq/profile.clj     who someone is: the Bluesky profile behind a nick
-src/frq/media.clj       image links: spot them, fetch them once, cache on disk
-src/frq/upload.clj      a pasted picture to freeq's media endpoint, as multipart
-src/frq/av.clj          calls: the signaling, and a handle on the media plane
-src/frq/irc.clj         IRC over TLS or TCP: parser, reader thread, SASL, PRIVMSG
-src/frq/state.clj       the ratoms every screen reads, and `apply-msg!`
-src/frq/app.clj         the screens
+common/  .cljc  portable: the screens, the state, the protocol — no dart:
+flutter/ .cljd  the Flutter half, and the host's answers — flutter/README.md
+nim/     .nim   the portable logic as a native library — nim/README.md
 ```
+
+The first two are the client as it runs today; `nim/` is where the logic under
+the screens is moving, a module at a time, behind a C ABI the Dart side calls
+through FFI. One module has made the trip so far. See `nim/README.md` for
+what is wired up and what is not.
+
+What `common/` needs of the host it asks `common/frq/io.cljc` for — the seam,
+named once and answered per target: `frq.io.dart` on Android and the desktop,
+`frq.io.web` in a browser.
+
+```
+common/frq/io.cljc            the seam: filesystem, environment, config dir, clock
+common/frq/clock.cljc         IRCv3 time tags → the reader's own zone
+common/frq/store.cljc         the saved sign-in, mode 600 in the config directory
+common/frq/emoji.cljc         the picker's catalog: every emoji and its name
+common/frq/rooms.cljc         the rooms this client has been in, and their order
+common/frq/cells.cljc         the atoms every screen reads
+common/frq/screens/           connect, chats, chat, discover, settings
+common/frq/irc/parse.cljc     the IRC line parser, tags and all
+common/frq/irc/handshake.cljc SASL, driven from shared code
+common/frq/atproto/core.cljc  handle → DID → PDS → session, and the SASL payloads
+common/frq/oauth/core.cljc    the broker flow, as far as it is portable
+common/frq/msgsig.cljc        message signatures
+flutter/src/frq/main.cljd     the entry point: installs the host, then starts
+flutter/src/frq/hiccup.cljd   the widget tags, as Flutter
+flutter/src/frq/net/          sockets: dart:io on native, WebSocket on the web
+flutter/src/frq/io/           the host's answers to the seam
+```
+
+There used to be a third tree, `src/`, and another runtime under it: jolt, with
+[glimmer](https://github.com/jolt-lang/glimmer) components painted by
+**libcosmic** in a desktop window and by `libjolttui` in a terminal, plus an
+AV media plane over MoQ. It is gone. Flutter is the only frontend now, which is
+why `common/` no longer carries `#?(:jolt ...)` reader conditionals and why the
+calls, terminal and `nix run .#frq` sections that used to be here are not.
 
 ## Tracing
 
@@ -51,94 +61,35 @@ Android is logcat.
 
 ## Running
 
-The app:
-
 ```bash
-just cosmic run
+just flutter-desktop run     # the Linux window
+just apk run                 # onto a connected Android device
+just flutter-web serve       # a browser, on :8080
 ```
 
-Every recipe lives in the `justfile` itself. Each one that runs frq re-enters
-`nix develop` and comes back to the same recipe, so `just cosmic run` and
-`nix develop --command just cosmic run` are one code path rather than two.
-Nothing has to be installed for that but Nix.
+Every recipe lives in the `justfile` itself. The two that need a toolchain from
+Nix re-enter `nix develop` and come back to the same recipe, so `just
+flutter-desktop` and `nix develop .#flutter-desktop --command just
+flutter-desktop` are one code path rather than two. `just flutter-web` needs no
+Nix at all: `tools/toolchain.sh` fetches Flutter, a JDK and the Clojure CLI by
+sha256, which is what lets `.modal/flutter-web/` run the same script on a plain
+Debian image.
 
-`just cosmic run` is `jolt -m frq.cosmic` inside `nix develop`, with
-`LD_LIBRARY_PATH` pointed at the shell's `JOLT_NATIVE_LIB` — the flake's build
-of [jolt-native](https://gitlab.com/nandithebull/jolt-native), which carries
-the shared objects this client loads: `libjoltcosmic`, the retained-tree ABI
-glimmer paints the window through, and `libjolttui`, the same ABI over a grid
-of cells. The source frq runs is the working tree; everything under it is built
-rather than fetched, at the revs `flake.lock` names. Nothing has to be
-installed but Nix, and no jolt-native checkout beside this one.
-
-There is no jvui and no Vidya any more. Both were experiments: the window is
-libcosmic and the terminal is libjolttui, and those are the two backends there
-are.
-
-`jolt` on its own does not work in this tree: `deps.edn` names both libraries
-under `:jolt/native`, so every invocation loads them before it reads a line and
-dies if the loader cannot find them. `just repl` is that jolt with the shell
-under it — a REPL, or `just repl nrepl-server` for an editor.
+All three are one `clojure -M:cljd compile` over `flutter/src` and `common/`,
+and differ only in which Flutter target runs afterwards.
 
 frq connects to `irc.freeq.at:6697` over TLS and joins `#test`. Untick TLS on
-the connect screen (or point it at `127.0.0.1`) for a local server's
-plain listener:
+the connect screen (or point it at `127.0.0.1`) for a local server's plain
+listener:
 
 ```bash
 cargo run --release --bin freeq-server        # in the freeq checkout
 ```
 
-## In a terminal
-
-The screens are hiccup over glimmer's reconciler, and the reconciler does not
-know what is under it — so the same tree paints into a terminal through
-jolt-native's `libjolttui`, which exports the same retained-tree ABI over a
-grid of cells instead of a GPU window.
-
-It is the client, not a preview of it. `frq.app/start!` is what a launch does —
-the saved settings, the rooms this client has been in, the sign-in that
-connects itself — and `src/frq/tui.clj` hands it the terminal's timers instead
-of the window's. Nothing in `frq.app` changed.
-
-```bash
-nix run .#tui                             # or: just tui
-just tui --headless --cols=90 --rows=60   # one screenshot on stdout
-just tui --headless --demo                # a buffer of its own, no server
-just tui --headless --wait=9000           # long enough to have connected
-just tui --headless --dump                # and the tree the library holds
-```
-
-The headless one is `tui_headless` — the same layout and the same painting with
-the writer taken off the end — which is what a screenshot in a bug report or a
-CI check should be. It paints once and prints, so `--wait=` is how long the
-client is given first: the default is a picture of the connect screen, because
-that is where a client is a moment after launch, and `--demo` fills a `#tui`
-buffer for a screenshot that is not waiting on a server at all.
-
-Logs go to stderr, which in a terminal session is the screen frq is painting.
-Send them somewhere: `nix run .#tui 2>/tmp/frq.log`.
-
-What a terminal has not got, frq does without: pictures, avatars and the
-lightbox draw nothing, and calls are off — the media plane paints frames into
-a texture, and there is no texture here.
-
-The spacing is written in points, for a window, and a cell is about eight of
-them across and sixteen down — so the backend is handed both numbers and each
-prop is divided by the axis it measures. A gap of half a cell rounds to
-nothing, which is what `:spacing 8` against a 16-point row is: thirteen
-messages fit where rounding it up left room for two.
-
-The two reserves in `src/frq/app.clj` are the one thing a scale cannot
-answer, because they are counted in rows of chrome rather than in lengths: a
-window's row is 34 points and a terminal's is one cell. `chrome-row` is where
-that is said, and `frq.tui` sets it.
-
-`just tui` is `just cosmic run`'s two halves with the other backend under
-them: this tree's source on the flake's everything-else, in the dev shell.
-jolt-native
-carries both native libraries and both Jolt sides — glimmer-cosmic for the
-window, glimmer-tui for the terminal — so one input answers for either, and
-nothing here needs a checkout beside the tree.
+A browser has no TCP, so the web build wants a WebSocket URL in the Server
+field — `wss://irc.freeq.at/irc`. And Bluesky sign-in only completes on
+`localhost`, because that is the one origin freeq's auth broker will redirect
+back to: `just web-local` is what serves the Modal-built bundle there.
 
 ## Signing in
 
@@ -172,32 +123,26 @@ server's nonce echoed back so the token cannot be replayed elsewhere.
 
 A refused sign-in is reported and the connection carries on as a guest.
 
-## Android
+## Targets
 
-The APK is **ClojureDart and Flutter**, not jolt — see
-[flutter/README.md](flutter/README.md). Nothing here builds it yet.
+Three, from one compile, and what separates them is the host half rather than
+the screens.
 
-There was a jolt APK: `libvidya.so` painting through a NativeActivity, with frq
-compiled to an arm64 Chez boot image beside it. It is gone, and so are
-`nix/android.nix`, the `.#apk` outputs and the `just apk` recipe. The reason is
-not the build, which worked — it is that every backend it could paint with is
-retired. Vidya and jvui were experiments, and libcosmic is Wayland, X11 and
-wgpu, so it does not cross to a phone at all.
+**Android** and **the Linux desktop** are both `dart:io` underneath:
+`frq.io.dart` answers the seam, `frq.net.dart` opens a real TCP or TLS socket.
+`frq.io.dart/write-private-file!` is the one place that asks which of the two it
+is on (`Platform.isAndroid`), because assuming cost a token its file mode.
 
-What the phone gains by the move is most of what it never had. TLS was the
-worst of it: jolt reaches OpenSSL through the dynamic loader and Android has no
-public `libssl`, so sign-in was desktop-only and the connect screen fell back to
-the plain `:6667` listener on its own. `dart:io` carries TLS in the runtime.
-The same goes for the media plane — V4L2 and ALSA are not there either, and
-Flutter has camera and audio plugins that are.
+**The web** is not: a browser has no TCP and no filesystem, so `frq.net.web`
+carries an IRC WebSocket and `frq.io.web` keeps the seam's files in local
+storage. Bluesky sign-in works there only on `localhost` — see Running.
 
-What carries over untouched is `common/` — see the three trees at the top.
-`frq.clock`, `frq.store` and the rest are compiled by both jolt and
-ClojureDart, and what they need from the host they ask `frq.io` for.
+What carries over untouched is `common/` — the screens, the state, the parser,
+the protocol. See the two trees at the top.
 
 ## What the PoC covers
 
-* TLS (`:6697`, via jolt.mvn-http's OpenSSL bindings) or plain TCP (`:6667`)
+* TLS (`:6697`, out of `dart:io`) or plain TCP (`:6667`); a WebSocket on the web
 * Guest connect (`NICK`/`USER`), `001` welcome, `PING`/`PONG` keepalive
 * Auto-joins `#test` on `irc.freeq.at`
 * Join channels, channel buffers with unread counts, send and receive `PRIVMSG`
@@ -226,62 +171,23 @@ ClojureDart, and what they need from the host they ask `frq.io` for.
 * Conversations listed most recently opened first
 * Bluesky avatars beside the sender, resolved from the DID freeq tags each
   message with
-* Calls: a Call button opens one in a channel, a banner offers Join where
-  somebody already has, and in one there is mute, deafen, video and leave. Mute
-  and deafen are separate — a deafened microphone still carries your voice.
-  Whoever turns a camera on appears as a tile; the self-view is labelled You
-  and sits last, where it cannot push a face you are talking to off the row
-
-## Calls
-
-Signaling is IRC and lives here: `+freeq.at/av-start`, `av-join` and `av-leave`
-go out as TAGMSGs and the server broadcasts `+freeq.at/av-state` back, which is
-what actually moves this client's state — a press is optimistic, and the server
-settles it. Losing a race to open a call (`start-collision`) is answered by
-joining the call that won rather than by reporting an error, since the person
-asked to be in a call in that room and there is one.
-
-Media is not IRC and is not here. Audio and video ride MoQ — Media over QUIC —
-through freeq's SFU, and that is `libjoltmoq`: Opus, H.264, capture and
-transport, lifted out of sleek rather than written a second time in jolt.
-`src/frq/av.clj` is the whole of what frq says to it, and two of its rules
-shape this side:
-
-* **Nothing calls back.** Status and video are polled, drained by a timer that
-  glimmer runs on the loop thread — the only thread allowed to touch a node.
-* **A frame is borrowed.** The decoder's own buffer is handed to the backend as
-  a pointer and painted by an `:image` with a `:feed`. The pixels never become a
-  jolt value and are never copied on this side, which is the only way thirty
-  frames a second is affordable here.
-
-The SFU is dialled once the server has minted a token, not when we ask to join:
-a remote SFU refuses a connection without one, and the MoQ client then retries
-in a loop that looks exactly like a hang.
 
 ## Limits
 
 * **TLS and plain TCP only** — no WebSocket, no iroh. On Android, plain only.
-* **No `did:key` signing, no credential gates, no E2EE.** Sign-in of either
-  kind needs TLS, so it is desktop-only — the Android build connects as a
-  guest.
+* **No `did:key` signing, no credential gates, no E2EE.**
 * **Only the broker token is persisted**, and only for OAuth. An app-password
   sign-in is not remembered.
-* **Previews are PNG only** — the tree backend's decoder reads no other
-  format, and a fetch needs TLS, so the phone shows links. The link is left in
-  place either way.
+* **Previews are PNG only.** The link is left in place either way.
 * **Nothing evicts the media cache.**
-* **Calls are desktop-only.** The media plane is V4L2 and ALSA, which Android
-  does not have — and libcosmic, which paints the frames, does not run there
-  either. Flutter's camera and audio plugins are the way in on the phone, and
-  that is its own project.
-* **One call at a time**, which is the media plane's rule and the microphone's.
-* **No call is offered in a DM** — freeq's AV signaling is a channel's.
-* **Pasting a picture needs a sign-in and a desktop.** The upload is filed
-  under the DID of a live session, so a guest cannot make one; and it is read
-  off the clipboard through the backend's `clipboard-image-png!`, which
-  libcosmic backs on the desktop and nothing backs in a terminal. It also shares
-  nothing to your PDS and posts nothing to Bluesky — those fields are opt-in
-  and this client does not send them.
+* **No calls.** The AV signaling is still in the screens, but the media plane
+  it drove was `libjoltmoq` under the retired jolt half — Opus, H.264, V4L2 and
+  ALSA, none of which crosses to Flutter. The Call controls are wired to
+  actions no target installs. Flutter's camera and audio plugins are the way
+  back in, and that is its own project.
+* **Attaching a picture needs a sign-in.** The upload is filed under the DID
+  of a live session, so a guest cannot make one. It also shares nothing to your
+  PDS and posts nothing to Bluesky — those fields are opt-in and this client
+  does not send them.
 * **No scrollback trimming or threads.**
-* A sent line waits up to 200ms for the reader thread to flush it.
-* Message lists are keyed vboxes; glimmer-cosmic has no `:listbox` yet.
+* A sent line waits up to 200ms for the reader to flush it.

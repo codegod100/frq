@@ -4,81 +4,76 @@ This is the boundary, drawn before the port rather than after it, so that the
 question "can this file go on the phone?" has a filesystem answer. It builds:
 see "Building it" below.
 
-## The three trees
+## The two trees
 
 ```
-common/   .cljc   both compilers. No jolt, no glimmer, no dart.
-src/      .clj    jolt: glimmer, jolt.ffi, the cosmic and tui backends.
-flutter/  .cljd   ClojureDart: Flutter widgets, dart:io, dart:ffi.
+common/   .cljc   portable. No dart: library, no host call except through frq.io.
+flutter/  .cljd   Flutter widgets, dart:io, dart:ffi, and the host's answers.
 ```
 
-The extension is the boundary and the compilers enforce it. ClojureDart reads
-`.cljd` and `.cljc` and never `.clj`, so a namespace that reaches for
-`jolt.host` cannot accidentally end up in the APK — it is a `.clj` and the Dart
-compiler cannot see it. jolt reads all three, which is why `common/` works at
-all: one copy of `frq.clock`, compiled twice.
+The extension is the boundary and the compiler enforces half of it: ClojureDart
+reads `.cljd` and `.cljc` and never `.clj`. `tools/check-common.py` enforces the
+rest, on every push — a `dart:` library named under `common/` is a namespace
+that compiles for one target and not the others.
 
-Where both need a namespace but the answer differs, `.cljd` wins over `.cljc`
-in ClojureDart's own resolution, so a file here shadows a shared one without
-either side knowing. Reader conditionals work too, with one trap from
+Where a shared namespace needs a different answer per target, `.cljd` wins over
+`.cljc` in ClojureDart's own resolution, so a file here shadows a shared one
+without either side knowing. Reader conditionals work too, with one trap from
 ClojureDart's FAQ: the `:clj` feature is always on under cljd, so `:clj` goes
 **last** in a conditional, and macro code that wants the Clojure path during
 host evaluation asks for `:cljd/clj-host`.
 
-## What has crossed
+## The seam
 
-`frq.io` is the seam — the host's job named once, with `frq.io.jolt` answering
-it on the desktop and `frq.io.dart` here. It carries the filesystem, the
-environment, the config directory and the clock.
+`frq.io` is the host's job named once. `frq.io.dart` answers it on Android and
+the Linux desktop; `frq.io.web` answers it in a browser. It carries the
+filesystem, the environment, the config directory and the clock.
 
-Moved to `common/` and running under jolt today:
+`frq.clock` is the shape the rest follows. It used to open with four guesses at
+the reader's zone — `TZ`, the target of `/etc/localtime`, the file itself by
+path, then Android's `persist.sys.timezone` — and then convert days to a date
+by printing one and taking a `subs` of the result. Both are gone: the guessing
+is a libc question and lives behind `local-offset-seconds`, which Dart answers
+in one call; the conversion is eleven lines of Hinnant's algorithm, checked
+against `java.time.LocalDate` for every day from 1901 to 2052.
 
-| namespace     | lines | note                                            |
-|---------------|-------|-------------------------------------------------|
-| `frq.emoji`   | 1,914 | data; nothing to port                           |
-| `frq.glyphs`  |    84 | data                                            |
-| `frq.av.dial` |   117 | already touched neither jolt nor glimmer        |
-| `frq.clock`   |    93 | zone-hunting moved into the backends            |
-| `frq.store`   |   122 | `install -m 600` became `write-private-file!`   |
+Adding a host call means adding it to `common/frq/io.cljc` and to every
+implementation. Name it for the result rather than the mechanism — the seam has
+`write-private-file!` and not a chmod, because Dart has no chmod.
 
-`frq.clock` is the shape the rest should follow. It used to open with four
-guesses at the reader's zone — `TZ`, the target of `/etc/localtime`, the file
-itself by path, then Android's `persist.sys.timezone` — and then convert days
-to a date by printing one with `jolt.time.local` and taking a `subs` of the
-result. Both are gone: the guessing is a libc question and lives in
-`frq.io.jolt`, where Dart answers it in one call instead; the conversion is
-eleven lines of Hinnant's algorithm, checked against `java.time.LocalDate` for
-every day from 1901 to 2052.
+## The port, as it finished
 
-## What has not
+This tree began as the phone half of a client whose desktop was jolt: glimmer
+components painted by libcosmic, with `src/` holding the half that could not
+cross. That half is gone now, and what was a migration plan is the whole
+program. The namespaces that made the trip:
 
-Roughly 4,000 lines are portable in substance and still `.clj` because the seam
-does not reach far enough yet. In the order worth doing them:
+| namespace          | note                                                  |
+|--------------------|-------------------------------------------------------|
+| `frq.emoji`        | data; nothing to port                                 |
+| `frq.glyphs`       | data                                                  |
+| `frq.clock`        | zone-hunting moved behind the seam                    |
+| `frq.store`        | `install -m 600` became `write-private-file!`         |
+| `frq.irc.parse`    | the parser was always pure                            |
+| `frq.irc.handshake`| SASL, driven from shared code                         |
+| `frq.msgsig`       | needed a crypto seam beside the io one                |
+| `frq.atproto.core` | hand-rolled HTTPS became `dart:io`, which has TLS     |
+| `frq.oauth.core`   | the broker flow, as far as it is portable             |
+| `frq.rooms`, `frq.cells`, `frq.screens/*` | rewritten against `cljd.flutter` |
 
-1. **`frq.wire`, `frq.msgsig`** — need a crypto seam beside the io one.
-2. **`frq.irc`** (433) — the parser is pure; the reader is a blocking thread in
-   a `future`, and Dart has no threads. It becomes a `Stream` over
-   `SecureSocket`, which is also what makes TLS work on the phone at all.
-3. **`frq.atproto`** (209), **`frq.oauth`** (182) — hand-rolled HTTPS over
-   `jolt.mvn-http`'s OpenSSL bindings, which is why sign-in is desktop-only
-   today. `dart:io` has TLS in the runtime; this is the single biggest thing
-   the port buys.
-4. **`frq.state`** (1,930) — mostly portable logic, but its ratoms are
-   glimmer's. Needs the reactive layer decided first.
-5. **`frq.app`** (1,834) — not a port. Flutter brings its own reconciler, so
-   the screens are rewritten against `cljd.flutter`.
-
-Not coming: `frq.tui` (no terminal Flutter), `frq.cosmic` (libcosmic is
-desktop-only), and the media plane — `moq/`, `codec/`, `capture/`, `av/`, about
-3,800 lines of FFI against C libraries that do not exist on Android either way.
-`dart:ffi` does not conjure V4L2; that half wants Flutter's camera and audio
-plugins and is its own project.
+What did not come: the terminal frontend (there is no terminal Flutter), the
+libcosmic one (it is Wayland, X11 and wgpu, and does not cross to a phone), and
+the media plane — `moq/`, `codec/`, `capture/`, `av/`, about 3,800 lines of FFI
+against C libraries Android does not have either way. `dart:ffi` does not
+conjure V4L2; that half wants Flutter's camera and audio plugins and is its own
+project. The Call controls in `frq.screens.chat` are still wired to actions no
+target installs, which is the visible edge of that.
 
 ## Building it
 
-Two targets out of one tree. The ClojureDart compile is the same command for
-both — `clojure -M:cljd compile` over `src/` and `../common` — and what differs
-is only what Flutter is asked to wrap it in.
+Three targets out of one tree. The ClojureDart compile is the same command for
+all of them — `clojure -M:cljd compile` over `src/` and `../common` — and what
+differs is only what Flutter is asked to wrap it in.
 
 ```bash
 just apk                 # the debug APK
@@ -88,31 +83,32 @@ just apk log             # logcat
 
 just flutter-desktop     # the debug Linux bundle
 just flutter-desktop run # and the window
+
+just flutter-web         # the web bundle
+just flutter-web serve   # and served on :8080
 ```
 
 ### The desktop one
 
-There are two desktop GUIs now, and they are not a fallback for each other:
-`just cosmic run` is libcosmic under jolt, and `just flutter-desktop` is this
-tree under Flutter's Linux target. Same screens out of `common/frq/screens/`, two
-renderers — `glimmer-cosmic` walks the hiccup on one side and `frq.hiccup`
-emits Flutter widgets on the other.
+`just flutter-desktop` is this tree under Flutter's Linux target — the same
+screens out of `common/frq/screens/` as the APK, with `frq.hiccup` emitting
+Flutter widgets. There used to be a second desktop GUI beside it, libcosmic
+under jolt, walking the same hiccup through a different renderer; it is gone.
 
 Its toolchain is `devShells.flutter-desktop`, which is the APK shell with the
 Android half swapped out: clojure and Flutter are the same two packages at the
 same pinned rev, and CMake, Ninja, pkg-config and GTK stand where the JDK and
 the SDK do. Kept separate rather than merged into one shell because the halves
 are disjoint — a desktop build has no use for a few hundred megabytes of
-Android SDK, which is the same argument that keeps Flutter out of the default
-shell.
+Android SDK.
 
 Still impure, for one of the two reasons the APK is: pub.dev resolution and
 Flutter's engine artifacts are network. What it does *not* need is the
 writable-`ANDROID_HOME` dance, since nothing here writes into the store — so
 there is no `flutter/.home` on this path.
 
-nixGL off NixOS, for the reason `just cosmic run` needs it and `just tui` does
-not: Flutter paints through GL and the driver that can do that is the host's.
+nixGL off NixOS: Flutter paints through GL and the driver that can do that is
+the host's.
 
 `linux/` is the Flutter template's GTK runner, renamed — `frq` rather than
 `cljd_flutter`, and `uk.nandi.frq` rather than `com.example.cljd_flutter`, so
@@ -125,9 +121,9 @@ Two things the desktop target changed in the Dart, both of them cases where
 * `frq.io.dart/write-private-file!` was a plain write, on the grounds that
   Android storage is already private to the app. On a Linux desktop it is not:
   the file lands under the XDG data directory with the process umask, and it
-  holds a broker token. The desktop branch now does what `frq.io.jolt` does —
-  create, chmod, then write — and Dart having no chmod is why that is a
-  process.
+  holds a broker token. The desktop branch creates the file, restricts it, then
+  writes — and Dart having no chmod is why that is a three-step process rather
+  than a mode argument.
 * `frq.oauth.dart` handed the capture page `frq://auth` unconditionally, to
   raise the app from behind Chrome. Nothing on a desktop claims that scheme, so
   it is now nil there — which `core/capture-html` already documented as the
@@ -169,52 +165,35 @@ targets.
 It is signed with `~/.android/debug.keystore`, through the template's
 `signingConfig = signingConfigs.getByName("debug")` — which release builds also
 use, so `flutter build apk --release` is not shippable until a real
-`signingConfigs.release` is wired up. The jolt APK's key was generated inside
-its own nix derivation and never written anywhere, which is why the first
-install over it needed an uninstall: Android will not update a package across a
-signature change.
+`signingConfigs.release` is wired up.
 
 ## The screens are not rewritten
 
-`frq.hiccup` is a glimmer backend, the same way glimmer-cosmic and glimmer-tui
-are. It walks the hiccup `frq.app` already produces and emits Flutter widgets,
-so the screens are shared rather than forked.
+`frq.hiccup` is an interpreter, not a port. It walks the hiccup the screens
+already produce — `[:vbox {:spacing 6} ...]` over about twenty tags, naming no
+toolkit — and emits Flutter widgets, so `common/frq/screens/` is shared across
+all three targets rather than forked per target.
 
 This is worth being precise about, because the first read of the port said
-otherwise. Measured against the source:
+otherwise. The screens were data all along; what genuinely had to be written
+was the other end — the namespaces that touch the host. Which is what `frq.io`
+is for, and where `dart:io` paid for the whole exercise.
 
-* `frq.state` is 1,930 lines and makes **zero** glimmer calls. Its whole
-  dependency on glimmer is `:refer [atom]` — it shadows core's `atom` with a
-  ratom, and everything after that is `swap!`, `reset!` and `deref`.
-* `frq.app` is 1,834 lines and makes **one**: `r/reaction`. The rest is data —
-  `[:vbox {:spacing 6} ...]` over about twenty tags, naming no toolkit.
-
-So what a Flutter port needs is an interpreter for that data, not a rewrite of
-it. What genuinely has to be ported is the other end: `frq.irc`, `frq.atproto`,
-`frq.oauth`, `frq.avatars`, `frq.media`, `frq.profile`, `frq.platform` — the
-namespaces that touch the host. Which is what `frq.io` is for, and where
-`dart:io` pays for the whole exercise.
-
-What `frq.hiccup` does not do is glimmer's reconciliation: Flutter rebuilds
+What `frq.hiccup` does not do is reconciliation of its own: Flutter rebuilds
 from the top and diffs its own element tree, so a cell firing rebuilds the
 screen rather than the subtree that read it. Fine at this size.
 
-`frq.main` paints `frq.app`'s own connect screen, out of
-`common/frq/screens/connect.cljc` — the same file the desktop renders. What it
-reads is `frq.cells` and what it calls is `frq.actions`, and each platform
-fills those in: `frq.state`'s reducers on the desktop, dart:io here.
-
 ## Every screen shared, and the root that picks between them
 
-All of them are in `common/frq/screens/` now — `connect`, `chats`, `chat`,
-`settings` (with Discover and the tab frame) and `app`, which carries the
-split view, the three dialogs and the decision about which screen is showing.
-The phone renders `[screens/app]` and nothing else; it was switching by hand
-until that moved. With the cells under them in `frq.cells`, with the cells under them in `frq.cells`, the derivations in
-`frq.rooms`, the backend metrics in `frq.metrics` and everything a screen
-cannot do itself behind `frq.actions`. `frq.app` is 226 lines and was 1,744. What is left in it is the part that
-cannot move: `derived` and the two asset lookups, which are a glimmer reaction
-over a fetch-and-cache, the metrics aliases `frq.tui` writes, and `start!`.
+All of them are in `common/frq/screens/` — `connect`, `chats`, `chat`,
+`settings` (with Discover and the tab frame) and `app`, which carries the split
+view, the three dialogs and the decision about which screen is showing. Each
+entry point renders `[screens/app]` and nothing else.
+
+Under them: the cells in `frq.cells`, the derivations in `frq.rooms`, the
+chrome metrics in `frq.metrics`, and everything a screen cannot do itself
+behind `frq.actions` — which each target fills in for itself, the way it fills
+in `frq.io`.
 
 What `Length::Fill` means took four goes to get right, and the rule it ended
 at is worth stating once: a child that fills is Flutter's `Expanded`, the
@@ -258,43 +237,26 @@ red error box does not appear, and the log stays empty. `FlutterError.onError`
 is where they go, and installing that handler in `frq.main` should have been
 the first move rather than the tenth.
 
-## The order to do the rest in
+## What is still open
 
-1. ~~**`frq.irc`**~~ — started. The parser is `common/frq/irc/parse.cljc` now,
-   shared, with `frq.irc` re-exporting it so the twenty-three `irc/tag-value`
-   and `irc/nick-of` call sites in `frq.state` and `frq.av` did not move. The
-   transport is `frq.net.dart`: `SecureSocket`, a `Stream`, no thread and no
-   outbox. **TLS reaches irc.freeq.at:6697 from the phone** — registration and
-   MOTD, which is the thing the jolt APK could never do. What is left of this
-   one is the protocol half: CAP, SASL and the idle-ping logic still live in
-   `src/frq/irc.clj` and want `frq.msgsig` and `frq.atproto` under them first.
-2. ~~**`frq.atproto`**~~ — done. `common/frq/atproto/core.cljc` is the JSON,
-   the base64url, the SASL payloads, and a `-req`/`-parse` pair per step of the
-   flow; `frq.atproto` and `frq.atproto.dart` supply the middle. **handle → DID
-   → PDS resolves on the phone**, over `HttpClient`.
+The port is finished in the sense that matters — there is no other tree left to
+move from. What remains is work the port never covered:
 
-   **`frq.oauth`** — half done. `common/frq/oauth/core.cljc` has the URL, the
-   handoff payload and the session refresh. What has no Android answer yet is
-   the capture: the desktop binds a loopback socket and serves a page the
-   browser redirects to, and an Android app cannot listen on localhost for a
-   browser it does not own. That wants an app link or a custom scheme, an
-   intent filter, and a redirect URI the broker will accept — a decision about
-   freeq's broker, not a porting problem.
-3. ~~**`frq.msgsig`**~~ — done. The signing is shared; the four primitives
-   under it are `frq.crypto`, which the desktop answers with the same OpenSSL
-   it loads for TLS and the phone with `package:ed25519_edwards` and
-   `package:crypto`, both pure Dart and both synchronous — a signature is
-   minted in the middle of sending a reaction and there is nothing to await
-   on. Verified on both against RFC 8032 test 1: same public key, same
-   signature, byte for byte.
-
-   **`frq.wire`** (81) still wants the seam extended.
-4. **`frq.avatars`**, **`frq.media`**, **`frq.profile`**, **`frq.platform`** —
-   small, and mostly fetch-and-cache.
-5. **`frq.state`** moves to `common/` as `.cljc`, with `atom` resolved per
-   platform by reader conditional.
-6. **`frq.app`** follows it, and the tags it uses that `frq.hiccup` does not
-   cover yet paint as an orange `?tag` until they do.
+1. **The OAuth capture on Android.** `common/frq/oauth/core.cljc` has the URL,
+   the handoff payload and the session refresh. What has no Android answer is
+   the capture itself: the flow was written for a client that binds a loopback
+   socket and serves a page the browser redirects to, and an Android app cannot
+   listen on localhost for a browser it does not own. That wants an app link or
+   a custom scheme, an intent filter, and a redirect URI the broker will accept
+   — a decision about freeq's broker, not a porting problem. The web build has
+   its own answer in `frq.oauth.web`, and `just web-local` is why it only
+   completes on localhost.
+2. **Calls.** The signaling is IRC and is still in the screens; the media plane
+   it drove was `libjoltmoq` — Opus, H.264, V4L2, ALSA, MoQ over QUIC — under
+   the retired jolt half, and none of it crosses. The Call controls are wired
+   to actions no target installs, so they are dead buttons today. Flutter's
+   camera and audio plugins are the way back in, and that is its own project:
+   either remove the controls or build behind them.
 
 ## What a missing tag property looks like
 

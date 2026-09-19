@@ -1,7 +1,0 @@
-[frq]
-  jolt_native = /var/home/nandi/code/jolt-native
-  android_home = /var/home/nandi/.local/share/android-sdk
-  chez_android = /var/home/nandi/.cache/vidya-chez-android
-  openssl_android = /var/home/nandi/.cache/frq-openssl-android/lib
-  libvidya = checkout
-  boot_stamp = 99766f8764e29cdb652b6841cd8949f8815d17e836f4949d17991a67e0e38096

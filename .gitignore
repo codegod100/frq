@@ -1,5 +1,11 @@
-# The native libraries `just lib` links out of the DotSlash cache.
+# Build output — `just nim-lib` writes build/nim, the Flutter targets the rest.
 /build/
+
+# Nim's own object/cache tree, and the test binaries `nim c -r` leaves beside
+# the sources — one per tests/t*.nim, named without an extension.
+/nim/nimcache/
+/nim/tests/t*
+!/nim/tests/t*.nim
 
 # The pinned Flutter/JDK/Clojure tarballs `tools/toolchain.sh` fetches, plus
 # the pub cache, gitlibs and maven repo it keeps beside them. A gigabyte of
@@ -8,19 +14,12 @@
 
 # Tool caches.
 /.cpcache/
-/.jolt/
 /.lsp/
 /.clj-kondo/
 
 # Nix build symlinks.
 /result
 /result-*
-
-# buck2 output tree.
-/buck-out/
-
-# nrepl-server drops this next to the deps file for editors to find.
-.nrepl-port
 
 # samizdat writes its journal into whatever project it is pointed at.
 .samizdat/

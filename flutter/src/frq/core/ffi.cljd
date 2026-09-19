@@ -1,0 +1,76 @@
+(ns frq.core.ffi
+  "Loading `libfrqcore.so`, and the two rules for talking to it.
+
+  **NOT YET COMPILED.** Nothing requires this namespace, so no build has
+  type-checked a line of it. The Nim side it calls is tested and its ABI is
+  proven from C (`nim/`, and `just nim-test`); this half is the shape the
+  binding should take and not a working one. Before trusting it: add `ffi` to
+  `flutter/pubspec.yaml`, require this from a native entry point, and build
+  `just flutter-desktop` — `.lookupFunction` needs native and Dart type
+  arguments, and how ClojureDart spells those is the first thing to find out.
+
+  The Nim core is the portable logic — see `nim/README.md` for why it is
+  there rather than under `common/`. This namespace is the whole of what knows
+  it is a native library: everything above it calls ordinary functions.
+
+  **Not required by `frq.main`.** `dart:ffi` has no web implementation, and
+  `clojure -M:cljd compile` walks out from one namespace, so requiring this
+  from the shared entry point would break the web build to serve the native
+  ones — the same trap `frq.main-web` exists to avoid. A caller reaches for
+  `frq.core.irc`, which decides.
+
+  The two rules, both of them wrapped here so no call site repeats them:
+
+  * `frq_init` runs once before anything else, setting Nim's runtime up.
+    `library` does it on the way out, so holding the handle means it is done.
+  * Every string the core returns is **ours to free**, with `frq_free`.
+    `take-string!` is that: read the bytes, hand the pointer back, and do it
+    in a `finally` so a throw between the two does not leak. Nim's allocator
+    is not Dart's, so `calloc.free` on one of these pointers is undefined
+    rather than merely wrong."
+  (:require ["dart:ffi" :as ffi]
+            ["dart:io" :as io]
+            ["package:ffi/ffi.dart" :as pffi]))
+
+;; The name the loader is given, per platform. Android resolves a bare soname
+;; out of the APK's lib/<abi>/ directory; a desktop build has no such rule, so
+;; it is looked for beside the executable and then on the usual path.
+(def ^:private lib-name "libfrqcore.so")
+
+(defn- open-library []
+  (if (.-isAndroid io/Platform)
+    (ffi/DynamicLibrary.open lib-name)
+    (try
+      (ffi/DynamicLibrary.open lib-name)
+      (catch Object _
+        ;; The development path: `just nim-lib` writes into build/nim, which
+        ;; is not anywhere a loader looks. Named explicitly rather than by
+        ;; setting LD_LIBRARY_PATH, because a variable set in a launcher is a
+        ;; thing that works until someone starts the binary another way.
+        (ffi/DynamicLibrary.open "build/nim/libfrqcore.so")))))
+
+(defonce ^{:doc "The handle, opened once and initialised on the way out."}
+  library
+  (delay
+    (let [lib (open-library)
+          init (.lookupFunction lib "frq_init")]
+      (init)
+      lib)))
+
+(defn free!
+  "Hand a pointer the core returned back to it."
+  [^ffi/Pointer p]
+  (when-not (.-isNull (.-address p))
+    ((.lookupFunction @library "frq_free") p)))
+
+(defn take-string!
+  "The string at `p`, with `p` freed afterwards — nil for a null pointer.
+
+  The `finally` is the point: `toDartString` decodes UTF-8 and can throw on
+  bytes that are not, and a throw between the read and the free is a leak
+  that only shows up under the malformed input this core exists to survive."
+  [^ffi/Pointer p]
+  (when (not= 0 (.-address p))
+    (try
+      (.toDartString (.cast p))
+      (finally (free! p)))))

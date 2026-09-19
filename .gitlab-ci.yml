@@ -1,70 +1,29 @@
-# Two jobs: one that checks what common/ is allowed to contain on every push,
-# and one that re-resolves the jolt-native input on a schedule.
+# One job: a check on what common/ is allowed to contain, on every push.
 #
-# jolt-native publishes its Android objects under a "latest" alias on every
-# default-branch build, and frq takes them as a flake input. A flake input is
-# locked once and then stays put, so "latest" only means latest when something
-# re-resolves it. The `apk` recipe does that for the machine building an APK;
-# this does it for the repository, so main's flake.lock names a recent build
-# rather than whichever one it was first locked against.
-#
-# Nothing is built by either. The update job resolves one input, and if that
-# moved, commits the lock file — whether the new objects actually work is what
-# an APK build answers, and that is deliberately not this job's business. The
-# check reads source and no more. So this file needs no toolchain at all, which
-# is what keeps it honest about running on every push.
-stages: [check, update]
+# Nothing is built here. The check reads source and no more, so this file needs
+# no toolchain at all, which is what keeps it honest about running on every
+# push. There used to be a second, scheduled job that re-resolved the
+# jolt-native flake input; there is no jolt half any more and no input to
+# follow, so there is nothing for a schedule to do.
+stages: [check]
 
-# common/ is compiled by jolt AND by ClojureDart, and only the jolt half is on
-# the way to anything anyone runs day to day. So shared code reaching for the
-# JVM breaks nothing the author can see, and the phone stops compiling at a
-# namespace nobody touched — `Math/ceil` in the compose bar was the third time.
-# Reading the source is enough to catch it, which is why this needs no toolchain
-# and no builder: python and a checkout, a few seconds, on every push.
+# common/ is compiled by ClojureDart for two targets — the APK and the Linux
+# desktop — and shared code reaching for the JVM or a `dart:` library breaks
+# one of them at a namespace nobody touched. `Math/ceil` in the compose bar was
+# the third time. Reading the source is enough to catch it, which is why this
+# needs no toolchain and no builder: python and a checkout, a few seconds, on
+# every push.
 check-common:
   stage: check
   image: python:3-alpine
-  rules:
-    - if: $CI_PIPELINE_SOURCE != "schedule"
   script:
     - python3 tools/check-common.py common
 
-update-jolt-native:
-  stage: update
-  image: nixos/nix:latest
-  # Schedules only: on a push this would race whoever pushed, and on a merge
-  # request it would commit to a branch nobody asked it to touch.
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-  variables:
-    # Committing reads the previous lock, so the checkout needs the git tree
-    # rather than a shallow single commit.
-    GIT_DEPTH: "0"
-  before_script:
-    - echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+# The Nim core's tests. A second job rather than a step in the first, because
+# it wants a compiler where check-common wants nothing: one can fail without
+# hiding the other, and the pair of them is still seconds.
+nim-test:
+  stage: check
+  image: nimlang/nim:2.2.0-alpine
   script:
-    - |
-      set -eu
-      nix flake update jolt-native-android
-      if git diff --quiet -- flake.lock; then
-        echo "already on the newest build; nothing to commit."
-        exit 0
-      fi
-      # The alias moves whenever jolt-native builds, so name *which* build this
-      # landed on rather than saying "update flake.lock". lastModified is the
-      # only readable identity a tarball input carries — the jolt-native commit
-      # that produced it is not in the archive's metadata.
-      epoch=$(nix eval --raw --impure --expr \
-        "builtins.toString (builtins.fromJSON (builtins.readFile ./flake.lock)
-           ).nodes.jolt-native-android.locked.lastModified")
-      stamp=$(date -u -d "@$epoch" +%Y-%m-%dT%H:%MZ)
-      git config user.email "$GITLAB_USER_EMAIL"
-      git config user.name "nightly"
-      git add flake.lock
-      # [skip ci] because this pushes to the default branch, and the only job
-      # in this file is the one already running.
-      git commit -m "Follow jolt-native to its $stamp build [skip ci]"
-      # CI_JOB_TOKEN cannot push. FRQ_PUSH_TOKEN is a project access token with
-      # write_repository, which is the one thing this job needs configured.
-      git push "https://oauth2:$FRQ_PUSH_TOKEN@$CI_SERVER_HOST/$CI_PROJECT_PATH.git" \
-        "HEAD:$CI_DEFAULT_BRANCH"
+    - cd nim && for t in tests/t*.nim; do nim c -r --hints:off --path:src "$t"; done

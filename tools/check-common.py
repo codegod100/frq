@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """What may appear in common/, checked.
 
-common/ is compiled twice — by jolt and by ClojureDart — and only one of those
-happens on the way to a desktop build. So the way this breaks is always the
-same: shared code reaches for something only the JVM has, everything the
-author ran still works, and the phone stops compiling at a namespace nobody
-touched. `Math/ceil` in the compose bar was the third time.
+common/ is compiled for three targets — Android, the Linux desktop and the web
+— and one of those has no dart:io and no filesystem. So the way this breaks is
+always the same: shared code reaches for something only one host has,
+everything the author ran still works, and another target stops compiling at a
+namespace nobody touched. `Math/ceil` in the compose bar was the third time.
 
-The rule being enforced is CLAUDE.md's, unchanged: code under common/ may not
-require jolt.*, glimmer* or a dart: library, and if it needs the host it asks
-frq.io. This only sees the first half of that — a host call has to be named to
-be caught, and the list below is the ones that have actually turned up.
+The rule being enforced is CLAUDE.md's: code under common/ may not name a
+dart: library, and if it needs the host it asks frq.io. This only sees the
+first half of that — a host call has to be named to be caught, and the list
+below is the ones that have actually turned up. The JVM patterns are kept
+because the code was written when jolt compiled this tree too, and they still
+catch the shape of the mistake: a class ClojureDart does not have.
 
 Two things are stripped before anything is matched, and both are the
 difference between a check people keep and one they route around.
@@ -19,11 +21,11 @@ Comments and strings, because the two namespaces that got this right explain
 themselves by naming the very thing they avoid — a checker that fires on
 `frq.clock`'s docstring teaches people to stop reading it.
 
-And the reader-conditional branches ClojureDart does not read. A
-`#?(:jolt [glimmer.ratom ...])` is not a violation, it is the sanctioned way
-to say "desktop only": the cljd compiler never sees inside it. So this reads
-the conditionals the way the compiler does — first branch whose feature is on,
-with :cljd, :clj and :default on — and looks only at what is left.
+And the reader-conditional branches ClojureDart does not read: the cljd
+compiler never sees inside a branch whose feature is off, so neither does this.
+It reads the conditionals the way the compiler does — first branch whose
+feature is on, with :cljd, :clj and :default on — and looks only at what is
+left.
 """
 import re
 import sys
@@ -43,7 +45,9 @@ CTOR = re.compile(r"\((?:[A-Z]\w*\.)(?=[\s)])")
 JAVA_PKG = re.compile(r"(?<![\w.-])java\.[\w.]+")
 # .getBytes and friends: methods on a JVM object, by name.
 METHODS = re.compile(r"(?<![\w.-])\.(?:getBytes|toUpperCase|toLowerCase|intValue|longValue|doubleValue|charAt)(?![\w-])")
-# The requires CLAUDE.md rules out by name.
+# The requires CLAUDE.md rules out by name. jolt.* and glimmer* are kept
+# alongside dart: so that a namespace revived from the retired tree is caught
+# rather than compiled.
 BAD_REQUIRE = re.compile(r"(?<![\w.-])(?:jolt\.[\w.]+|glimmer[\w.]*|\"dart:[\w.]+\")")
 
 CHECKS = [
@@ -51,7 +55,7 @@ CHECKS = [
     (CTOR, "Java constructor interop"),
     (JAVA_PKG, "a java.* package"),
     (METHODS, "a method only a JVM object has"),
-    (BAD_REQUIRE, "a backend common/ may not name"),
+    (BAD_REQUIRE, "a library common/ may not name"),
 ]
 
 
@@ -256,7 +260,7 @@ def main():
             file=sys.stderr,
         )
         return 1
-    print(f"{root}/ is clean: nothing here that only one backend has.")
+    print(f"{root}/ is clean: nothing here that only one target has.")
     return 0
 
 

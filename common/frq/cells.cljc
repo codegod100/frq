@@ -1,22 +1,12 @@
 (ns frq.cells
   "The cells the connect screen reads, and the constants beside them.
 
-  Moved out of `frq.state` so a screen can be shared: `frq.state` is 1,930
-  lines that reach `frq.irc` and `frq.av` and will not compile under
-  ClojureDart for a long time yet, but the cells themselves are atoms and
-  atoms are portable. `frq.state` re-defs every name here, so its own thousand
-  lines did not move and neither did anything reading `s/form-handle`.
-
-  The reader conditional is the whole trick. On jolt these are glimmer ratoms
-  — a component that derefs one re-renders when it changes, which is what the
-  desktop's reconciler is built on. Under ClojureDart they are ordinary atoms,
-  and `cljd.flutter`'s `:watch` does the same job from the other end. Neither
-  compiler sees the other's require.
-
-  jolt answers to `:jolt` and ClojureDart to `:cljd`; ClojureDart also has
-  `:clj` always on, which is why neither branch is spelled that way."
-  (:require #?@(:cljd []
-                :jolt [[glimmer.ratom :refer [atom reaction]]])))
+  These were split out of a `frq.state` that could not be shared, back when
+  the desktop was a second compiler; the cells themselves are atoms, and atoms
+  were portable when little else was. They are ordinary atoms now, and
+  `cljd.flutter`'s `:watch` is what makes a widget rebuild when one changes —
+  they used to be glimmer ratoms under the libcosmic frontend, behind a reader
+  conditional, and that frontend is gone.")
 
 (def default-host "irc.freeq.at")
 (def default-port "6697")
@@ -199,16 +189,12 @@
   reaction is recomputed on each such change, which is a comparison, but it
   wakes the rows that read it only when its answer changes.
 
-  None of which applies under ClojureDart, where Flutter rebuilds the screen
-  and diffs its own element tree: there is no subtree to wake, so the question
-  is simply asked. That is the whole of the difference, and it is why this is
-  a value rather than a cell — `@(derived k f)` could not be written once."
-  [k f]
-  #?(:cljd (f)
-     :jolt (deref (or (get @derived-cells k)
-                      (let [cell (reaction (f))]
-                        (swap! derived-cells assoc k cell)
-                        cell)))))
+  None of which applies under Flutter, which rebuilds the screen and diffs
+  its own element tree: there is no subtree to wake, so the question is simply
+  asked. This stays a function rather than a cell because it was one on both
+  halves — `@(derived k f)` could not have been written once."
+  [_k f]
+  (f))
 
 ;; The pill the pointer is resting on, or nil — `{:id msgid :emoji glyph}`.
 ;; One at a time, and named by the message as well as the glyph: the same emoji

@@ -1443,32 +1443,22 @@
       ;; something else on it".
       ;; And the same picture chosen rather than pasted, for a phone — which has
       ;; no Ctrl+V, and no clipboard of pictures to read if it had.
-      ;; The same picture on both halves: a Delight 2 tile (src/frq/icons, on
-      ;; the geometry delight-icons generates its tiles with) — grey frame,
-      ;; dark square, cream glyph, where the emoji was a colour photo that
-      ;; matched nothing else in the bar. Only where the tile can be found,
-      ;; which is not the same place twice. jolt reads it out of the working
-      ;; directory, which is the source tree under `just run` and `just
-      ;; cosmic` and the store copy under the flake's launcher. ClojureDart is
-      ;; launched from `flutter/` and bundles no src/, on the phone and the
-      ;; desktop target alike, so it asks for the copy in `flutter/assets/`
-      ;; that `pubspec.yaml` bundles — hence `asset:` rather than a path.
-      ;; A terminal has no pixels to put a picture in and keeps the glyph.
-      (if #?(:jolt (and (actions/desktop?) (not @terminal?)) :cljd true)
-        [:image {:src #?(:jolt "src/frq/icons/insert-image.png"
-                         :cljd "asset:assets/insert-image.png")
-                 :size [36 36]
-                 ;; On the middle of the field rather than the top of it: the
-                 ;; box grows downwards as a message is typed, and a button
-                 ;; pinned to its first row drifts away from the thing it acts
-                 ;; on. Read by the terminal, where the row can be several
-                 ;; cells tall; a window's backends ignore it.
-                 :valign :center
-                 ;; for a backend that sizes a picture by its bounds instead
-                 :max-width 36
-                 :max-height 36
-                 :on-click actions/open-image-picker!}]
-        [:button {:label "🖼" :valign :center :on-click actions/open-image-picker!}])
+      ;; A Delight 2 tile — grey frame, dark square, cream glyph, where the
+      ;; emoji was a colour photo that matched nothing else in the bar.
+      ;; ClojureDart is launched from `flutter/`, on every target, so it asks
+      ;; for the copy in `flutter/assets/` that `pubspec.yaml` bundles —
+      ;; hence `asset:` rather than a path.
+      [:image {:src "asset:assets/insert-image.png"
+               :size [36 36]
+               ;; On the middle of the field rather than the top of it: the
+               ;; box grows downwards as a message is typed, and a button
+               ;; pinned to its first row drifts away from the thing it acts
+               ;; on.
+               :valign :center
+               ;; for a backend that sizes a picture by its bounds instead
+               :max-width 36
+               :max-height 36
+               :on-click actions/open-image-picker!}]
       ;; In a terminal the row is the width of the screen, so the field takes
       ;; the surplus rather than scrolling one line sideways — and it is as
       ;; tall as what has been typed into it. Three rows were kept for it

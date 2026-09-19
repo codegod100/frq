@@ -26,8 +26,7 @@
 
   Sign-in itself is no longer one of those differences: `frq.irc.handshake`
   drives SASL from common/, so both halves sign in the same way."
-  #?(:cljd "TLS comes from dart:io, so :6697 works here; untick it for a plain :6667 listener."
-     :jolt "TLS rides jolt's OpenSSL bindings; untick it for a plain :6667 listener. Sign-in needs TLS, so it is desktop-only."))
+  "TLS comes from dart:io, so :6697 works here; untick it for a plain :6667 listener.")
 
 (defn error-note
   "Always a node, never nil.

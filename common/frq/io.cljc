@@ -1,40 +1,40 @@
 (ns frq.io
-  "What the host does, named once so both compilers can answer it.
+  "What the host does, named once so every target can answer it.
 
-  `src/` is jolt: jolt.host, jolt.socket, jolt.ffi, a Chez runtime and glimmer
-  under the screens. `android/src/` is ClojureDart: dart:io, dart:ffi and
-  Flutter. Everything in `common/` is compiled by both, so it cannot mention
-  either — a `(:require [jolt.host])` at the top of a namespace is what keeps
-  it out of the Android build, not anything about what the code does.
+  `flutter/src/` is ClojureDart: dart:io, dart:ffi and Flutter on Android and
+  the Linux desktop, dart:html in a browser. Everything in `common/` is
+  compiled for all three, so it cannot mention any of them — a require of a
+  `dart:` library at the top of a namespace is what keeps it out of the web
+  build, not anything about what the code does.
 
-  So this is the seam. Nothing here has an implementation; the backend installs
-  one before anything else runs — `frq.io.jolt` on the desktop side,
-  `frq.io.dart` on the phone. A namespace under `common/` requires this and
+  So this is the seam. Nothing here has an implementation; the host installs
+  one before anything else runs — `frq.io.dart` on Android and the desktop,
+  `frq.io.web` in a browser. A namespace under `common/` requires this and
   stays portable.
 
-  The functions are chosen by *intent* rather than by what either platform
+  The functions are chosen by *intent* rather than by what any one platform
   happens to call it. `write-private-file!` rather than a chmod, because Dart
-  has no chmod and jolt has no `File.setPermissions`; `local-offset-seconds`
-  rather than a zone name, because finding the zone is four platform-specific
-  guesses on Linux and one property read on Android. Anywhere the seam names a
-  mechanism instead of a result, one of the two sides ends up faking it."
+  has no chmod; `local-offset-seconds` rather than a zone name, because finding
+  the zone is four platform-specific guesses on Linux and one property read on
+  Android. Anywhere the seam names a mechanism instead of a result, one of the
+  sides ends up faking it."
   (:refer-clojure :exclude [slurp spit]))
 
 (defonce ^:private impl
-  ;; Keyword → fn. Empty until a backend installs into it, which is a load-time
-  ;; effect of requiring `frq.io.jolt` or `frq.io.dart`.
+  ;; Keyword → fn. Empty until a host installs into it, which is a load-time
+  ;; effect of requiring `frq.io.dart` or `frq.io.web`.
   (atom {}))
 
 (defn install!
-  "Register the host's answers. Called once, by the backend, before `-main`
-  does anything — see the require list of `frq.app` and of the Flutter entry
-  point. Merges, so a backend may install in pieces."
+  "Register the host's answers. Called once, by the host, before `-main` does
+  anything — see the require list of the Flutter entry point. Merges, so a host
+  may install in pieces."
   [m]
   (swap! impl merge m)
   nil)
 
 (defn installed?
-  "Whether a backend has answered yet. For the entry points to assert on; the
+  "Whether a host has answered yet. For the entry points to assert on; the
   wrappers below throw on their own."
   []
   (boolean (seq @impl)))
@@ -44,7 +44,7 @@
   (if-let [f (get @impl k)]
     (apply f args)
     (throw (ex-info (str "frq.io: no host installed for " k
-                         " — require frq.io.jolt (desktop) or frq.io.dart (android) first")
+                         " — require frq.io.dart (native) or frq.io.web (browser) first")
                     {:op k}))))
 
 ;; ------------------------------------------------------------ environment
@@ -69,8 +69,7 @@
 (defn delete-file! [path] (call :delete-file! [path]))
 
 (defn slurp
-  "The file as a string, or nil where it cannot be read. Shadows core's, which
-  wants a JVM reader."
+  "The file as a string, or nil where it cannot be read. Shadows core's."
   [path]
   (call :slurp [path]))
 
@@ -86,7 +85,7 @@
   Named for the result, like the rest of the seam, because \"where downloads
   go\" is a different question on each of the three targets this has to answer
   on: an XDG directory on a Linux desktop, the shared Download store on
-  Android, the app's own storage where neither of those is there. The caller
+  Android, a browser download where neither of those is there. The caller
   has a picture out of the media cache and wants it kept somewhere a file
   manager will find it; which directory that is is the host's business.
 
@@ -108,9 +107,9 @@
 (defn utf8-bytes
   "A string as a sequence of byte values, 0-255.
 
-  In the seam because there is no portable way to say it: jolt has
-  `.getBytes`, which is Java, and ClojureDart has `dart:convert`. `frq.atproto`
-  needs it for base64url — SASL is bytes, and a handle with a non-ASCII
+  In the seam because there is no portable way to say it: `dart:convert` is a
+  host library, and `common/` may not name one. `frq.atproto` needs it for
+  base64url — SASL is bytes, and a handle with a non-ASCII
   character in it encodes to more of them than it has characters."
   [s]
   (call :utf8-bytes [s]))
@@ -126,9 +125,10 @@
   "Hand `url` to whatever shows web pages here, and say whether that worked.
 
   Named for the result and not the mechanism, like the rest of this seam: the
-  desktop shells out to the portal and the phone asks Android to pick an
-  activity, and neither is the other's business. A false answer is not fatal —
-  the OAuth screen shows the URL so it can be opened by hand."
+  desktop shells out to the portal, the phone asks Android to pick an activity
+  and the browser opens a tab, and none is the others' business. A false
+  answer is not fatal — the OAuth screen shows the URL so it can be opened by
+  hand."
   [url]
   (boolean (call :open-url! [url])))
 
@@ -136,16 +136,16 @@
   "Ask `url` for its body, as text, and hand it to `on-done` — nil where the
   request could not be made or the server refused.
 
-  Off whatever thread the caller is on: the desktop drops it on a future and
-  Dart awaits it, so neither blocks a frame. The callback is the only answer;
-  there is no synchronous form, because one of the two sides cannot give one.
+  Off whatever the caller is on: Dart awaits it, so nothing blocks a frame.
+  The callback is the only answer; there is no synchronous form, because not
+  every target can give one.
 
   `headers` is a map of name to value, which is the whole reason this is here
   rather than in `frq.media`: a picture is fetched by URL alone, and asking
   freeq about a message means carrying the bearer it handed out at sign-in.
 
-  Text and not parsed JSON: the two sides have very different JSON, and
-  `frq.atproto.core/json-*` reads a string on both."
+  Text and not parsed JSON: `frq.atproto.core/json-*` reads a string, on every
+  target."
   [url headers on-done]
   (call :fetch-text! [url headers on-done]))
 
