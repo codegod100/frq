@@ -37,15 +37,13 @@ setup = [
 ]
 # The build state a local checkout carries: 395MB of a 441MB repo, uploaded on
 # every start and wanted by nothing out there. Flutter builds into a volume of
-# its own, and the clojure caches are this machine's.
+# its own, and the Nim cache is this machine's.
 ignore  = [
     "flutter/build", "flutter/.home", "flutter/.dart_tool",
-    "flutter/.clojuredart", "flutter/.cpcache",
     # The ClojureDart compiler's output. Uploading a laptop's copy would make
     # the rsync below overwrite the one the last container compiled, and every
     # file whose content differed would look new to the compiler and to
     # Flutter -- the incremental build undone by the thing meant to feed it.
-    "flutter/lib/cljd-out",
     # The toolchain, which is a gigabyte of Flutter SDK and lives on the
     # volume out here.
     ".toolchain",
@@ -58,7 +56,7 @@ ignore  = [
 # One volume now, where there were two: the nix binary cache went with nix.
 # `devshell` is the working state of an incremental loop, shared by every
 # container that has one -- each gets its own directory under it, named for
-# what it belongs to, so `web` and `flutter-desktop` never write the
+# what it belongs to, so two containers never write the
 # same tree. Modal Volumes have no locking, so those directory names are the
 # only thing keeping them apart, and two runs of the *same* container must not
 # overlap.
@@ -106,9 +104,7 @@ echo "sync: /app -> $SHELL_DIR"
 # would defeat the volume.
 rsync -a --checksum --delete \
     --exclude 'flutter/.home/' \
-    --exclude 'flutter/.clojuredart/' \
     --exclude 'flutter/build/' \
-    --exclude 'flutter/lib/cljd-out/' \
     --exclude 'flutter/.dart_tool/' \
     --exclude '.toolchain/' \
     --exclude '.git' \
@@ -118,16 +114,20 @@ cd "$SHELL_DIR"
 # What survived from the last run, by presence and not by size: `du` here
 # walked the pub cache, the toolchain and every object of the last build over
 # a network volume, for numbers nobody acts on.
-for d in "$FRQ_TOOLCHAIN" flutter/.clojuredart flutter/lib/cljd-out flutter/build; do
+for d in "$FRQ_TOOLCHAIN" build/nim flutter/build; do
     [ -d "$d" ] && echo "  carried over: $d"
 done
 
 # Run from the volume, where the state it reuses lives. `just` is not in this
 # image and is not worth an apt line for one call: the recipe is a wrapper
 # around the toolchain, and this is that wrapper.
+# The Nim core first: the app dlopens it at startup, and a missing .so is a
+# blank window with a StateError behind it.
 tools/toolchain.sh exec -- bash -euo pipefail -c '
-    cd flutter
-    clojure -Sdeps "{:mvn/local-repo \\"$FRQ_M2\\"}" -M:cljd compile
+    cd nim && nim c --app:lib --mm:orc -d:release --hints:off --path:src \
+        --out:../build/nim/libfrqcore.so src/frq_core.nim
+    cd ../flutter
+    flutter pub get
     flutter build linux --debug'
 
 echo "built:"

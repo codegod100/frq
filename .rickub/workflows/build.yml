@@ -20,16 +20,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # The same read-only check GitLab runs, for the same reason: common/ compiles
-  # for two targets, so a host-specific call in shared code breaks one of them
-  # at a namespace nobody touched. Seconds, no toolchain. Worth having on both
-  # hosts rather than depending on which one a given push reaches.
-  check-common:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: python3 tools/check-common.py common
-
   # The Nim core: its own suite, and the library the Dart job needs.
   #
   # NOT in a `container:`, and that is the whole reason this job is shaped the
@@ -119,64 +109,3 @@ jobs:
           path: build/nim
       - run: cd dart/frq_core && dart pub get && dart test -r expanded
 
-  web:
-    runs-on: ubuntu-latest
-    needs: [check-common, nim-test, dart-test]
-    # What it spends its time on is the ClojureDart compile and, on a cold
-    # toolchain, fetching the pinned Flutter/JDK/Clojure tarballs.
-    timeout-minutes: 30
-    steps:
-      # The container copies `.` — the whole working tree, uncommitted edits
-      # included. On a runner that is whatever the checkout left, so it wants
-      # to be the commit and not a shallow surprise.
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - run: pip install --disable-pip-version-check modal
-
-      # Two secrets, set under Settings -> Secrets and variables. A Modal
-      # token is the whole of this job's configuration: no nix, no builder,
-      # no cache of its own.
-      - name: Build the web bundle, on Modal
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        # Unpiped on purpose. The image build streams to this client and
-        # nowhere else, and `modal app logs` cannot reach an ephemeral run —
-        # so this terminal is the only place the build is visible. tee, not
-        # tail: a run killed mid-pipe through tail takes its output with it.
-        run: modal run .modal/web/container.py 2>&1 | tee /tmp/frq-build.log
-
-      # The Sandbox leaves the bundle on the devshell volume rather than
-      # anywhere a runner can see, so fetch it back out.
-      - name: Fetch the bundle out of the volume
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        # Into a directory that already exists, which `modal volume get` then
-        # creates `web/` inside — the same shape `just serve` uses. Naming
-        # `web` as the destination itself is what failed, with `[Errno 21] Is a
-        # directory`, after the Modal build had already succeeded.
-        run: |
-          mkdir -p dist
-          modal volume get --force devshell \
-            frq-web/flutter/build/web dist
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: frq-web-${{ github.sha }}
-          path: dist/web
-          if-no-files-found: error
-          if-no-files-found: error
-
-      # Kept whether or not the build succeeded: a failed run's log is the
-      # one most worth reading, and it is gone with the runner otherwise.
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: build-log
-          path: /tmp/frq-build.log
-          if-no-files-found: ignore

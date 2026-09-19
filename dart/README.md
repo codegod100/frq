@@ -16,12 +16,12 @@ things:
   by path. Nothing here may depend on Flutter, and if that ever becomes
   tempting the thing being written belongs on the other side of the line.
 
-## Why Dart and not ClojureDart
+## Why Dart
 
-The Nim core exists to have less Clojure in the tree. Writing its binding in
-ClojureDart would have added some — and would have meant fighting generic
-interop for a file that is pure marshalling, since `lookupFunction` takes two
-type arguments. In Dart it is a typedef.
+The binding was ClojureDart for exactly one commit, which is how it got its
+own README section. Writing it in the language being removed meant fighting
+generic interop — `lookupFunction` takes two type arguments — for a file that
+is pure marshalling. In Dart it is a typedef.
 
-So the shape the migration moves toward: Nim owns the rules, Dart owns the
-platform, and ClojureDart shrinks from both ends.
+The ClojureDart is all gone now, and the shape it left is the one to keep:
+Nim owns the rules, Dart owns the platform.

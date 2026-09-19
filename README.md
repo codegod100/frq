@@ -1,82 +1,57 @@
 # frq
 
-A **[freeq](https://github.com/codegod100/freeq)** client written in
-**[ClojureDart](https://github.com/tensegritics/ClojureDart)**, painted by
-Flutter — one set of screens on Android, on the Linux desktop and in a browser.
-See [flutter/README.md](flutter/README.md).
+A **[freeq](https://github.com/codegod100/freeq)** client written in **Nim**,
+painted by Flutter. Nim owns the state, the screens, the IRC connection and
+the message signing; Flutter is a renderer over the widget tree it emits.
 
 It is a proof of concept port of [sleek](../sleek), which is the same client in
 Rust against egui directly. The screens are sleek's — connect, chats, chat,
-discover, settings, under a tab bar — but each is hiccup over the widget tags
-`frq.hiccup` translates into Flutter, and state lives in atoms instead of an
-`AppState` struct.
-
-Source lives in three trees:
+discover, settings, under a tab bar.
 
 ```
-common/  .cljc  portable: the screens, the state, the protocol — no dart:
-flutter/ .cljd  the Flutter half, and the host's answers — flutter/README.md
-nim/     .nim   the portable logic as a native library — nim/README.md
-dart/    .dart  the binding to it, and not a Flutter package — dart/README.md
+nim/           the program: state, screens, IRC, signing
+dart/frq_core  the FFI binding — plain Dart, not a Flutter package
+flutter/lib    the renderer, and the app's entry point
 ```
 
-The first two are the client as it runs today. `nim/` is where the logic under
-the screens is moving, a module at a time, behind a C ABI; `dart/` is what
-calls it. One module has made the trip so far and nothing imports it yet — see
-`nim/README.md` for what is wired up and what is not.
-
-What `common/` needs of the host it asks `common/frq/io.cljc` for — the seam,
-named once and answered per target: `frq.io.dart` on Android and the desktop,
-`frq.io.web` in a browser.
-
 ```
-common/frq/io.cljc            the seam: filesystem, environment, config dir, clock
-common/frq/clock.cljc         IRCv3 time tags → the reader's own zone
-common/frq/store.cljc         the saved sign-in, mode 600 in the config directory
-common/frq/emoji.cljc         the picker's catalog: every emoji and its name
-common/frq/rooms.cljc         the rooms this client has been in, and their order
-common/frq/cells.cljc         the atoms every screen reads
-common/frq/screens/           connect, chats, chat, discover, settings
-common/frq/irc/parse.cljc     the IRC line parser, tags and all
-common/frq/irc/handshake.cljc SASL, driven from shared code
-common/frq/atproto/core.cljc  handle → DID → PDS → session, and the SASL payloads
-common/frq/oauth/core.cljc    the broker flow, as far as it is portable
-common/frq/msgsig.cljc        message signatures
-flutter/src/frq/main.cljd     the entry point: installs the host, then starts
-flutter/src/frq/hiccup.cljd   the widget tags, as Flutter
-flutter/src/frq/net/          sockets: dart:io on native, WebSocket on the web
-flutter/src/frq/io/           the host's answers to the seam
+nim/src/frq/ui.nim          the widget tree, in the screens' own tag vocabulary
+nim/src/frq/cells.nim       every piece of state the screens read
+nim/src/frq/reducer.nim     every event they can send, and what it does
+nim/src/frq/conn.nim        the socket, the TLS, the line framing
+nim/src/frq/ircparse.nim    the IRC wire format
+nim/src/frq/handshake.nim   CAP and the SASL exchange inside it
+nim/src/frq/atproto.nim     handle → DID → PDS → session
+nim/src/frq/crypto.nim      OpenSSL, bound: SHA-256 and Ed25519
+nim/src/frq/msgsig.nim      signing a mutation so freeq will accept it
+nim/src/frq/screens/        connect, chats, chat, discover, settings
+flutter/lib/nim_renderer.dart   the tags, as Flutter widgets
 ```
 
-There used to be a third tree, `src/`, and another runtime under it: jolt, with
-[glimmer](https://github.com/jolt-lang/glimmer) components painted by
-**libcosmic** in a desktop window and by `libjolttui` in a terminal, plus an
-AV media plane over MoQ. It is gone. Flutter is the only frontend now, which is
-why `common/` no longer carries `#?(:jolt ...)` reader conditionals and why the
-calls and terminal sections that used to be here are not.
-
-## Tracing
-
-`FRQ_TRACE=1` prints every IRC line sent and received to stderr, which on
-Android is logcat.
+There were two other clients here. `src/` was jolt with a libcosmic window and
+a terminal; `common/` and `flutter/src/` were ClojureDart, compiled for
+Android, Linux and the web. Both are gone. The APK and the web target went with
+the second: a browser has no `dart:ffi`, so the web needs the core compiled to
+wasm rather than ClojureDart restored.
 
 ## Running
 
 ```bash
-just run desktop     # the Linux window
-just run apk         # onto a connected Android device
-just run web         # a browser, on :8080
+just run desktop     # build and open the window
+just test            # nim, dart and the layout suite
+just test live       # the whole stack against a real freeq
 ```
 
-Every recipe lives in the `justfile` itself, and none of them needs Nix:
-`tools/toolchain.sh` fetches Flutter, a JDK, the Clojure CLI and Nim by
-sha256 into `.toolchain/`, and every recipe runs inside that. It is the same
-script `.modal/` runs, which is what lets a plain Debian image build this.
-`just build apk` additionally asks it for Google's command-line tools, and
-sdkmanager finishes the Android SDK off.
+`tools/toolchain.sh` fetches Flutter and Nim by sha256; there is no nix and no
+JVM. The host brings a C compiler, OpenSSL, GTK and the usual
+CMake/Ninja/pkg-config.
 
-All three are one `clojure -M:cljd compile` over `flutter/src` and `common/`,
-and differ only in which Flutter target runs afterwards.
+Two switches, because a Wayland window cannot be clicked from a script:
+
+```bash
+FRQ_TRACE=1 just run desktop        # every line in and out, both languages
+FRQ_AUTOCONNECT=1 just run desktop  # press Connect at startup
+```
 
 frq connects to `irc.freeq.at:6697` over TLS and joins `#test`. Untick TLS on
 the connect screen (or point it at `127.0.0.1`) for a local server's plain
@@ -85,11 +60,6 @@ listener:
 ```bash
 cargo run --release --bin freeq-server        # in the freeq checkout
 ```
-
-A browser has no TCP, so the web build wants a WebSocket URL in the Server
-field — `wss://irc.freeq.at/irc`. And Bluesky sign-in only completes on
-`localhost`, because that is the one origin freeq's auth broker will redirect
-back to: `just serve` is what serves the Modal-built bundle there.
 
 ## Signing in
 
@@ -125,24 +95,18 @@ A refused sign-in is reported and the connection carries on as a guest.
 
 ## Targets
 
-Three, from one compile, and what separates them is the host half rather than
-the screens.
+One: the Linux desktop.
 
-**Android** and **the Linux desktop** are both `dart:io` underneath:
-`frq.io.dart` answers the seam, `frq.net.dart` opens a real TCP or TLS socket.
-`frq.io.dart/write-private-file!` is the one place that asks which of the two it
-is on (`Platform.isAndroid`), because assuming cost a token its file mode.
-
-**The web** is not: a browser has no TCP and no filesystem, so `frq.net.web`
-carries an IRC WebSocket and `frq.io.web` keeps the seam's files in local
-storage. Bluesky sign-in works there only on `localhost` — see Running.
-
-What carries over untouched is `common/` — the screens, the state, the parser,
-the protocol. See the two trees at the top.
+There were three, and losing two is the cost of the port rather than an
+accident. **The web** needs the core compiled to wasm — a browser has no
+`dart:ffi`, so there is no way for Dart to call a native library there, and
+that was true of this design from the first day. **Android** needs
+`libfrqcore.so` cross-compiled for its ABIs; `dart:ffi` works there, so this
+is a build problem rather than a design one.
 
 ## What the PoC covers
 
-* TLS (`:6697`, out of `dart:io`) or plain TCP (`:6667`); a WebSocket on the web
+* TLS (`:6697`) or plain TCP (`:6667`), out of Nim's `std/net`
 * Guest connect (`NICK`/`USER`), `001` welcome, `PING`/`PONG` keepalive
 * Auto-joins `#test` on `irc.freeq.at`
 * Join channels, channel buffers with unread counts, send and receive `PRIVMSG`

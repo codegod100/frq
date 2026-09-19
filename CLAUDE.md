@@ -2,20 +2,20 @@
 
 ## The toolchain, and where builds happen
 
-There is no nix in the build any more. `tools/toolchain.sh` fetches Flutter
-(which carries Dart), a JDK, the Clojure CLI and Nim as sha256-pinned tarballs
-into `.toolchain/`, and every `just` recipe runs inside the environment that
-script prints. `just tools android` adds Google's command-line tools, which is
-what `just build apk` needs before Gradle can have sdkmanager finish the SDK
-off. The host still brings a C compiler, OpenSSL, git, curl, unzip and
-python3 — and GTK with the usual CMake/Ninja/pkg-config for the Linux targets.
+There is no nix in the build. `tools/toolchain.sh` fetches Flutter (which
+carries Dart) and Nim as sha256-pinned tarballs into `.toolchain/`, and every
+`just` recipe runs inside the environment that script prints. The host brings
+a C compiler, OpenSSL, git, curl, unzip and python3 — and GTK with the usual
+CMake/Ninja/pkg-config for the Linux target.
+
+It used to carry a JDK, the Clojure CLI, a maven repo and an Android SDK as
+well. Those were ClojureDart's and the APK's, and both are gone.
 
 **Prefer Modal for a long build.** A cold Flutter toolchain plus a full
 compile is a lot of laptop, and the containers in `.modal/` do it on a real
 machine:
 
 ```bash
-just modal web    # the web bundle, on Modal
 just modal dev    # the incremental Flutter loop
 ```
 
@@ -58,10 +58,9 @@ file instead.
 
 ## The Nim core
 
-`nim/` is the portable logic, moving out of `common/` one module at a time as
-a native library the Dart side calls through FFI. Read `nim/README.md` before
-touching it — in particular the status section, which says what is actually
-wired up (the Nim half and its ABI) and what is not (the Dart binding).
+`nim/` is the program. It owns the state, the screens, the IRC connection and
+the signing; Flutter is a renderer over the widget tree it emits. Read
+`nim/README.md` before touching it.
 
 Two rules the ABI has, both of which cost a segfault to rediscover:
 
@@ -69,64 +68,47 @@ Two rules the ABI has, both of which cost a segfault to rediscover:
   Nim's allocator is not Dart's.
 * `frq_init` runs once before anything else.
 
-`dart/frq_core` is the other half of that seam, and is **plain Dart**. New
-code on the Dart side of the boundary is written in Dart rather than
-ClojureDart — the core exists to have less Clojure in the tree, and adding
-more of it to call the thing replacing it is the wrong direction. ClojureDart
-shrinks from both ends.
+`dart/frq_core` is the other half of that seam. It is a plain Dart package and
+not a Flutter one, deliberately: `flutter/pubspec.yaml` depends on the Flutter
+SDK, so anything living there needs a Flutter toolchain to check one assertion
+about a string, where this resolves and tests on its own.
+
+The rule that used to be here said new Dart-side code is written in Dart
+rather than ClojureDart. There is no ClojureDart left for it to rule against,
+but the reasoning it rested on still holds for the next thing: logic goes in
+Nim, the platform goes in Dart, and neither is written in a third language
+because it is already open.
 
 `just test nim` and `just test dart` need no Flutter, which is most of the
 point: the whole boundary is checkable in about a second.
 
-A module is not deleted from `common/` when its Nim version lands: the web
-target cannot load a native library, so the ClojureDart original is the web's
-implementation until there is a wasm build. Deleting one would take the web
-build with it.
+There is no `common/` any more, and that rule went with it. It said a module
+stays until there is a wasm build of the core, because a browser has no
+dart:ffi — which was true, and the web target is gone rather than the rule
+being wrong. Bringing it back means compiling the core to wasm, not restoring
+ClojureDart.
 
-## The two source trees
+## The source trees
 
 ```
-common/  .cljc  portable — every target compiles it
-flutter/ .cljd  the Flutter half, and the host implementations
+nim/           the program: state, screens, IRC, signing
+dart/frq_core  the FFI binding — plain Dart, not a Flutter package
+flutter/lib    the renderer, and the app's entry point
 ```
 
-The extension is the boundary, not a convention: ClojureDart reads `.cljd` and
-`.cljc` and never `.clj`. The rule for anything under `common/` is that it may
-not require a `dart:` library — if it needs the host, it asks `frq.io`, and the
-implementation that installed itself answers. `frq.io.dart` is installed by
-`flutter/src/frq/main.cljd`, which has to await the storage directory first;
-`frq.io.web` by `main_web.cljd`.
+`nim/src/frq/ui.nim` builds a widget tree; `frq_core` carries it across the
+FFI as JSON; `flutter/lib/nim_renderer.dart` walks it into Flutter widgets.
+The renderer knows the tag vocabulary and nothing else — no screens, no state,
+no idea what "connect" means. If a feature ever needs a change on both sides,
+the boundary is in the wrong place.
 
-Adding a host call means adding it to the seam in `common/frq/io.cljc` and to
-every implementation. Name it for the result rather than the mechanism — the
-seam has `write-private-file!` and not a chmod, because Dart has no chmod.
+There used to be two more trees. `src/` was jolt and libcosmic; `common/` and
+`flutter/src/` were ClojureDart, compiled for Android, Linux and the web. Both
+are gone, and with the second went the APK and the web target: a browser has
+no `dart:ffi`, and the APK wants `libfrqcore.so` cross-compiled for Android's
+ABIs. What is left builds one thing, `just build desktop`.
 
-There used to be a third tree, `src/`, and a second runtime under it: jolt,
-glimmer, and a libcosmic desktop window painting the same screens. It is gone,
-along with `just cosmic`, `just tui`, the AV/MoQ media plane and the native
-objects they loaded. Flutter is the only frontend now, and `common/` is
-compiled by one compiler rather than two — which is why the `#?(:jolt ...)`
-reader conditionals that used to be scattered through it are not there any
-more. `tools/check-common.py` still guards the seam, and CI still runs it on
-every push.
+Two modules were never ported and are gone rather than moved: `frq.profile`
+(the Bluesky profile behind a nick) and `frq.replies` (asking freeq what a
+collapsed msgid was). Neither had a screen in the Nim app to appear on.
 
-`flutter/` builds three things, from one `clojure -M:cljd compile`:
-
-`just build apk`. Impure on purpose: Gradle resolves its own dependencies over
-the network and has sdkmanager install a platform and build-tools into
-`ANDROID_HOME` as it goes, which is why that SDK lives in `.toolchain/` and is
-ours to write to.
-
-`just build desktop`, Flutter's Linux target — CMake, Ninja, pkg-config and
-GTK from the host where the APK wants a JDK and an SDK. Impure for the network
-half of the same reasons.
-
-`just build web`, which needs least of all: a Dart, a JVM and a browser, and
-the browser is not ours. That is what lets `.modal/web/` run the same
-`tools/build-web.sh` on a plain Debian image.
-
-The consequence for `common/` is that "the phone" is not a synonym for "the
-ClojureDart side": three targets compile it. An implementation that branches on
-the platform has to ask (`Platform.isAndroid`) rather than assume; see
-`frq.io.dart/write-private-file!`, where assuming cost a token its file mode.
-See flutter/README.md.

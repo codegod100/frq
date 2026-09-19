@@ -16,7 +16,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frq_core/frq_core.dart' as core;
-import 'package:cljd_flutter/nim_renderer.dart';
+import 'package:frq/nim_renderer.dart';
 
 /// Phone, small desktop, and a deliberately cramped one. The head row of the
 /// chat screen asks for more than 360 points has, which is why it wraps.
