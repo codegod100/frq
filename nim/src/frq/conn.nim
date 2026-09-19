@@ -16,6 +16,7 @@
 ## channels. See irc.nim's comment for why ORC makes that the sane choice.
 
 import std/net
+import std/posix as p   ## for `shutdown(2)`; see `close`
 import frq/[trace]
 
 type
@@ -115,18 +116,51 @@ proc open*(cfg: ConnConfig) =
   # the last one's backlog to the new one's callbacks.
   while inbound.tryRecv()[0]: discard
   while events.tryRecv()[0]: discard
+  # Including anything written while there was nowhere to write it: a line
+  # queued before this connection existed was meant for the last one.
+  while outbound.tryRecv()[0]: discard
   running = true
   createThread(reader, readerBody, cfg)
 
 proc send*(line: string) =
-  if running: outbound.send(line)
+  ## Queued whether or not there is a connection.
+  ##
+  ## It used to drop the line when there was none, which made the whole of
+  ## what this client says to a server unobservable from a test — nothing
+  ## could ask "and what did it send?" without opening a socket. `open` drains
+  ## the queue, so a line written while disconnected is never delivered to the
+  ## next connection; it is simply readable in between.
+  outbound.send(line)
+
+proc tryOutbound*(): (bool, string) = outbound.tryRecv()
+  ## What is queued to go out, for a test that has no socket. The writer
+  ## thread takes these when there is one.
+
+proc feed*(line: string) =
+  ## Put a line in as though the server had sent it.
+  ##
+  ## The other half of `tryOutbound`, and the reason both exist: the reducer's
+  ## answer to an incoming line was the largest untested thing in this program
+  ## — reachable only through a real socket — and that is where a missing
+  ## CHATHISTORY request sat unnoticed through the whole port. Together they
+  ## make the conversation checkable from both ends without one.
+  inbound.send(line)
 
 proc close*() =
   if not running: return
   running = false
-  # The reader is blocked in recvLine; closing the socket is what wakes it.
+  # The reader is blocked in recvLine, and waking it is this thread's job —
+  # but closing the socket is NOT. `Socket.close()` on a TLS socket calls
+  # SSL_shutdown and SSL_free, and the reader is inside SSL_read on that very
+  # handle: freeing it here is a use-after-free in `uniRecv`, which arrives as
+  # `SIGSEGV: Illegal storage access. (Attempt to read from nil?)` and takes
+  # the whole app with it. Every disconnect had a chance of it.
+  #
+  # `shutdown(2)` on the descriptor instead. It frees nothing and owns
+  # nothing; it makes the blocked read return, and the reader then closes the
+  # socket in its own `finally` — the one thread that may.
   if not shared.isNil:
-    try: shared.close() except CatchableError: discard
+    discard p.shutdown(shared.getFd(), SHUT_RDWR)
   outbound.send("")
   joinThread(reader)
   trace("conn", "closed")

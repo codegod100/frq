@@ -11,7 +11,7 @@
 ## payload: the alternative is a second serialisation to define and version,
 ## for arguments that are always one string.
 
-import std/[json, options, strutils, tables]
+import std/[json, options, sequtils, strutils, tables]
 import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
            atproto, handshake, textruns, members, msgsig, profile, store]
@@ -34,6 +34,9 @@ var
 proc setError(msg: string) =
   app.error = msg
   app.hasError = true
+
+const historyLimit = 100
+  ## How many lines of backlog to ask a room for.
 
 proc rememberRooms(force = false)
   ## Declared here because `openRoom` is above it and calls it — the file is
@@ -718,6 +721,26 @@ proc drain*() =
             r.users = r.namesAcc
             r.namesAcc.clear()
           app.rooms[room] = r
+          # And the only moment this client knows a room has fully arrived.
+          #
+          # freeq re-joins an authenticated user's channels at registration
+          # and leaves the backlog for the client to ask for, so a room that
+          # reaches here with an empty buffer has no history coming unless we
+          # ask — which is why nothing but new lines ever appeared. It shows
+          # up worst on a signed-in connection, which is the one that gets
+          # re-joined into rooms it never sent a JOIN for.
+          #
+          # Only where there is no conversation yet: the replayed lines come
+          # back as ordinary PRIVMSGs, and asking again for a room that
+          # already has its history is a second copy of it crossing the wire
+          # to be discarded by the marker.
+          #
+          # System lines do not count, and getting that wrong is what made
+          # the first version of this do nothing at all: joining a room puts
+          # "alice joined #freeq" in the buffer before 366 arrives, so a test
+          # for an empty one is a test that never passes.
+          if not r.messages.anyIt(not it.system):
+            send("CHATHISTORY LATEST " & room & " * " & $historyLimit)
 
     of "MODE":
       # A channel MODE, for the letters that change how someone is listed.
