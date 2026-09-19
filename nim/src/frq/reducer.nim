@@ -14,8 +14,9 @@
 import std/[json, options, strutils, tables]
 import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
-           atproto, handshake, textruns, members, msgsig, profile]
+           atproto, handshake, textruns, members, msgsig, profile, store]
 import frq/conn as tr
+import frq/oauth as oa
 
 proc split2(id: string): (string, string) =
   ## `"room.open:#test"` → `("room.open", "#test")`. The argument may itself
@@ -48,6 +49,42 @@ proc openRoom(name: string) =
   app.atPresent = true
   # Opening a room is reading it: the marker moves to the newest line here.
   app.rooms[name] = app.rooms[name].markRead
+
+proc restore*() =
+  ## What a previous run left on disk, back in the state.
+  ##
+  ## Only the sign-in: a broker token is what saves the reader a login page,
+  ## and the mode goes with it because a remembered session is not much use
+  ## sitting behind the Guest tab. The nick and handle come along so the
+  ## screen says who it is about before the broker is asked.
+  let (saved, had) = loadSession()
+  if not had: return
+  app.brokerToken = saved.brokerToken
+  app.authMode = amBluesky
+  if saved.handle.len > 0: app.formHandle = saved.handle
+  if saved.nick.len > 0: app.formNick = saved.nick
+  trace("oauth", "a saved session for " & saved.handle)
+
+proc adoptTokens(t: oa.Tokens) =
+  ## A broker handoff, become an identity.
+  ##
+  ## The nick and the handle are set together for the reason the app-password
+  ## path sets them together: the channel calls us one thing and the client
+  ## believes another otherwise, and every "is this me?" test comes back
+  ## false. The broker's `nick` wins where it sent one — it is what the server
+  ## has already decided to call this DID.
+  session = Session(kind: skWebToken, token: t.token,
+                    did: t.did, handle: t.handle)
+  if t.handle.len > 0: app.formHandle = t.handle
+  let nick = if t.nick.len > 0: t.nick else: t.handle
+  if nick.len > 0: app.formNick = nick
+  # Only the durable half is written: the web-token beside it is single-use
+  # and would be a stale secret on disk by the time anything read it.
+  app.brokerToken = t.brokerToken
+  discard saveSession(SavedSession(brokerToken: t.brokerToken,
+                                   handle: app.formHandle, did: t.did,
+                                   nick: app.formNick))
+  trace("oauth", "signed in as " & t.did)
 
 proc signIn(): bool =
   ## Whatever identity was asked for, settled before the socket opens.
@@ -83,11 +120,43 @@ proc signIn(): bool =
       app.connecting = false
       false
   of amBluesky:
-    # The broker flow needs a browser and a loopback listener to catch the
-    # redirect, and neither is ported. Said plainly rather than connecting as
-    # a guest and looking like it worked.
-    setError("Bluesky OAuth is not wired up yet — use an app password, or connect as a guest.")
-    false
+    # A remembered broker token is the whole reason to keep one: it buys a
+    # fresh web-token without a browser, so a second run connects with no
+    # login page at all. Only when there is none does the browser open, and
+    # that path does not finish here — `connectNow` is called again from the
+    # drain once the handoff lands.
+    if app.brokerToken.len == 0:
+      app.status = "Waiting for the browser…"
+      oa.begin(oa.defaultBroker, app.formHandle)
+      return false
+    try:
+      app.status = "Refreshing your sign-in…"
+      adoptTokens(oa.refreshSession(oa.defaultBroker, app.brokerToken))
+      true
+    except CatchableError as e:
+      # A token the broker no longer honours is worse than none: every
+      # Connect would spend a round trip failing the same way. Dropped, and
+      # the next press opens the browser.
+      trace("oauth", "refresh failed: " & e.msg)
+      app.brokerToken = ""
+      clearSession()
+      setError(e.msg)
+      app.connecting = false
+      false
+
+proc openSocket() =
+  ## The connection itself, with whoever we are already settled.
+  ##
+  ## Split from `connectNow` for the browser handoff: that path has signed in
+  ## already, on a token that is single-use, and running `signIn` again would
+  ## spend a broker round trip replacing a session it is holding.
+  app.connecting = true
+  app.status = "Connecting to " & app.formHost & ":" & app.formPort &
+               (if app.formTls: " over TLS" else: "") & "…"
+  let port = try: parseInt(app.formPort.strip())
+             except ValueError: (if app.formTls: 6697 else: 6667)
+  tr.open(tr.ConnConfig(host: app.formHost.strip(), port: port,
+                        tls: app.formTls))
 
 proc connectNow() =
   if app.formHost.strip().len == 0:
@@ -96,13 +165,7 @@ proc connectNow() =
     setError("A nickname is required."); return
   app.hasError = false
   if not signIn(): return
-  app.connecting = true
-  app.status = "Connecting to " & app.formHost & ":" & app.formPort &
-               (if app.formTls: " over TLS" else: "") & "…"
-  let port = try: parseInt(app.formPort.strip())
-             except ValueError: (if app.formTls: 6697 else: 6667)
-  tr.open(tr.ConnConfig(host: app.formHost.strip(), port: port,
-                        tls: app.formTls))
+  openSocket()
 
 proc sendDraft() =
   let text = app.draft.strip()
@@ -160,12 +223,19 @@ proc dispatch*(event: JsonNode) =
 
   of "session.forget":
     app.brokerToken = ""
+    clearSession()
+    app.loginUrl = ""
+    oa.cancel()
     app.status = "Saved session forgotten."
 
   # --------------------------------------------------------- the connection
   of "connect": connectNow()
 
   of "cancel", "disconnect":
+    # A browser wait is part of connecting, so Cancel ends it too — otherwise
+    # a tab finished ten minutes later would sign in behind the reader.
+    oa.cancel()
+    app.loginUrl = ""
     # The key goes with the connection, so a reconnect signs with one the
     # server has actually been told about.
     msgsig.forget()
@@ -365,6 +435,33 @@ proc note(room: string, m: Message) =
   app.rooms[room] = r.recount(app.formNick)
 
 proc drain*() =
+  # The browser handoff, before the socket: a sign-in that just landed should
+  # open the connection in the same frame it arrived, rather than leaving the
+  # screen saying "Waiting for the browser…" until the next one.
+  while true:
+    let (ok, e) = oa.tryEvent()
+    if not ok: break
+    if e.startsWith("url: "):
+      # Shown under "If the browser did not open, visit:" — on a machine with
+      # no xdg-open this is the whole of the flow the reader can see.
+      app.loginUrl = e[5 .. ^1]
+    elif e.startsWith("ok: "):
+      oa.finished()
+      app.loginUrl = ""
+      try:
+        adoptTokens(oa.tokensOf(e[4 .. ^1]))
+        openSocket()
+      except CatchableError as ex:
+        setError(ex.msg)
+        app.connecting = false
+        app.status = "Not connected"
+    elif e.startsWith("error: "):
+      oa.finished()
+      app.loginUrl = ""
+      setError(e[7 .. ^1])
+      app.connecting = false
+      app.status = "Not connected"
+
   while true:
     let (ok, e) = tr.tryEvent()
     if not ok: break

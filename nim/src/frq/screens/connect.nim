@@ -54,12 +54,13 @@ func authFields(s: State): Node =
   of amBluesky:
     result = vbox(%*{"spacing": 6},
       title2("Sign in with Bluesky"),
-      # Says what it actually does today. The broker flow needs a browser and
-      # a loopback listener to catch the redirect, and neither is ported — a
-      # screen that describes the finished thing is a screen that lies.
-      dimLabel("Not wired up yet: the broker flow needs a browser and a " &
-               "loopback listener, and neither is ported. Use an app " &
-               "password, or connect as a guest."),
+      # What actually happens, in the order it happens: a browser opens, the
+      # login page is your PDS's own, and the app waits on a loopback port
+      # for the answer. Worth saying because a window opening on its own is
+      # otherwise alarming.
+      dimLabel("Connect opens your browser at auth.freeq.at, which signs you " &
+               "in with your own PDS and hands the result back. Your password " &
+               "never reaches this app."),
       label("Handle"),
       entry("handle", s.formHandle, "alice.bsky.social", "handle.change",
             width = 320))
@@ -74,7 +75,7 @@ func authFields(s: State): Node =
     var login = vbox(%*{"key": "login-url", "spacing": 4})
     if s.loginUrl.len > 0:
       login.children.add vbox(%*{"spacing": 4},
-        dimLabel("If the browser did not open, visit:"),
+        dimLabel("Waiting for the browser. If it did not open, visit:"),
         label(s.loginUrl))
     result.children.add login
 

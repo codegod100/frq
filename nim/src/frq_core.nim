@@ -34,7 +34,7 @@ import frq/screens/chat as scChatScreen
 import frq/screens/settings as scSettingsScreen
 
 proc frq_init*() {.exportc, dynlib.} =
-  ## Kept for the ABI, and deliberately empty.
+  ## Reads the saved sign-in, and otherwise stays out of the way.
   ##
   ## It used to call `NimMain()`. On Linux `--app:lib` already emits a library
   ## constructor that runs Nim's module initialisers at dlopen, so calling it
@@ -43,9 +43,16 @@ proc frq_init*() {.exportc, dynlib.} =
   ## quietly resetting them. The reader thread then drained a different queue
   ## from the one the writer filled, and nothing this client sent ever left.
   ##
-  ## Nothing to do here, then, but the symbol stays: a binding that calls it
-  ## should keep working, and one that does not should not have to care.
-  discard
+  ## So it stayed empty for a long time. What it does now is the one thing
+  ## that genuinely belongs before the first frame and cannot go in
+  ## `initState`, which is a `func` and touches no disk: restoring the broker
+  ## token, so the connect screen opens saying the session is remembered
+  ## rather than offering a login page the reader does not need.
+  ##
+  ## `frq_ui_reset` deliberately does not do this. It is the tests' entry
+  ## point, and a suite that picked up whoever is signed in on the machine
+  ## running it would pass or fail by accident.
+  reducer.restore()
 
 proc dup(s: string): cstring =
   ## A copy of `s` that outlives this call, for the caller to `frq_free`.

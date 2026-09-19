@@ -46,10 +46,14 @@ suite "the connect screen":
     check "handle" in t.keys("entry")
     check "nick" notin t.keys("entry")
 
-  test "and admits the broker flow is not wired up":
-    # A screen that describes the finished thing is a screen that lies.
+  test "and says what Connect will actually do":
+    # This used to assert the opposite — that the screen admitted the broker
+    # flow was not wired up — which was the honest copy while it was not.
+    # A window opening on its own is alarming without a line saying it will.
     s.authMode = amBluesky
-    check cs.connectScreen(s).labels("dim-label").anyIt("Not wired up yet" in it)
+    let dim = cs.connectScreen(s).labels("dim-label")
+    check dim.anyIt("opens your browser" in it)
+    check dim.anyIt("never reaches this app" in it)
 
   test "app-password asks for both, and says where to make one":
     s.authMode = amAppPassword

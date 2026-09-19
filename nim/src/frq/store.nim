@@ -10,7 +10,7 @@
 ## count its whole history unread — which is worse than a room that starts
 ## over.
 
-import std/[json, os, strutils, tables]
+import std/[json, os, tables]
 import frq/[model, trace]
 
 type
