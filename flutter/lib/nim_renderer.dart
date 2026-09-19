@@ -47,6 +47,19 @@ class _NimAppState extends State<NimApp> {
   // leaks, and this tree is rebuilt on every keystroke.
   final _linkTaps = <String, TapGestureRecognizer>{};
 
+  // One ScrollController per `scrollKey`, for the same reason the entries
+  // have one per key — and for a second reason of its own. A `Scrollbar` with
+  // no controller of its own asks the PrimaryScrollController, and a
+  // SingleChildScrollView is only primary on mobile: on a desktop the two
+  // ends looked at different controllers, so the first wheel event over any
+  // scroll threw "The Scrollbar's ScrollController has no ScrollPosition
+  // attached" and went on throwing it. Naming the controller joins them.
+  //
+  // Two positions must never share one, which is what makes `scrollKey` a
+  // requirement rather than a nicety — the chat screen's is per room, since
+  // switching rooms is a different backlog at a different offset.
+  final _scrollers = <String, ScrollController>{};
+
   @override
   void initState() {
     super.initState();
@@ -79,6 +92,9 @@ class _NimAppState extends State<NimApp> {
     }
     for (final r in _linkTaps.values) {
       r.dispose();
+    }
+    for (final c in _scrollers.values) {
+      c.dispose();
     }
     super.dispose();
   }
@@ -598,14 +614,18 @@ class _NimAppState extends State<NimApp> {
 
       case 'scroll':
         {
+          // Both ends of the same scroll, named so they are the same one.
+          final c = _scrollers.putIfAbsent(
+              n.prop('scrollKey', 'scroll'), ScrollController.new);
           Widget body = SingleChildScrollView(
+            controller: c,
             // The backlog reads from the bottom; a settings list from the top.
             reverse: n.prop('stickToBottom', false),
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: _spaced(kids, spacing, vertical: true)),
           );
-          body = Scrollbar(child: body);
+          body = Scrollbar(controller: c, child: body);
           // A scroll takes what the column has left. Outside a Flex there is
           // nothing to take, and the tree is malformed — `_strandedScroll` is
           // a visible size rather than a correct one, so the layout tests see

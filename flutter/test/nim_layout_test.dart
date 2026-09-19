@@ -13,6 +13,7 @@
 ///   just test layout
 library;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frq_core/frq_core.dart' as core;
@@ -176,6 +177,41 @@ void main() {
           expectLaidOut(tester, '$screen at ${entry.key}');
         });
       }
+    }
+  });
+
+  group('the wheel', () {
+    // Laying a screen out was never enough to catch this one: the failure
+    // arrives on the first wheel event, not on the first frame. A `Scrollbar`
+    // with no controller asks the PrimaryScrollController, and a
+    // SingleChildScrollView is only primary on mobile — so on a desktop the
+    // scrollbar and the view held different controllers, and every scroll
+    // threw "has no ScrollPosition attached".
+    Future<void> wheelOver(WidgetTester tester, Finder target) async {
+      final pointer = TestPointer(1, PointerDeviceKind.mouse);
+      pointer.hover(tester.getCenter(target));
+      await tester.sendEventToBinding(pointer.scroll(const Offset(0, 60)));
+      await tester.pump();
+    }
+
+    for (final screen in ['chat', 'chats', 'discover', 'settings']) {
+      // The platform has to be said out loud. A widget test runs as Android
+      // by default, where a SingleChildScrollView *is* primary and attaches
+      // to the very controller the scrollbar is looking at — so this passed
+      // on the broken renderer while the desktop app threw on every wheel
+      // event. `variant` rather than an override this test resets itself,
+      // which the framework catches as a leaked debug variable.
+      testWidgets('$screen scrolls without losing its scrollbar',
+          variant: TargetPlatformVariant.desktop(), (tester) async {
+        core.demoUi();
+        if (screen != 'chat') core.dispatch('screen.$screen');
+        await layOut(tester, sizes['desktop']!);
+        expectLaidOut(tester, '$screen before scrolling');
+        final bars = find.byType(Scrollbar);
+        expect(bars, findsWidgets, reason: '$screen has nothing to scroll');
+        await wheelOver(tester, bars.first);
+        expectLaidOut(tester, '$screen on the wheel');
+      });
     }
   });
 
