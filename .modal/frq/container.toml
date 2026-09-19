@@ -1,9 +1,22 @@
 [container]
 name        = "frq"
-description = "nix build .#appimage -- the cosmic GUI, in one file"
-base        = "arch-nix"
-# A Sandbox, not a Function: runs on a real VM, and the command is
-# the sandbox's own process so it dies when the command does.
+description = "the cosmic desktop bundle, from a pinned toolchain"
+# `debian:13-slim` and not `arch-nix`: there is no nix in this container any
+# more, and the AppImage it used to build is gone with it. What this assembles
+# is a directory — a jolt binary, the native objects, the source and a
+# launcher — and what it owes that is curl, git, tar, a C compiler and
+# openh264's headers.
+#
+# The reason this could stop being a nix build is not that nix was doing it
+# badly. It is that everything it was building from source is now published as
+# something a machine without nix can use: jolt as one statically-linked
+# binary, the backends as jolt-native's `portable` tarball (RUNPATH $ORIGIN,
+# NEEDED closure alongside), libmoq_ffi as an upstream release object. What
+# was left was a Mesa and a nixGL to put the host driver in front of it —
+# and not carrying a Mesa is what means not needing a nixGL.
+registry    = "debian:13-slim"
+# A Sandbox, not a Function: it runs on a real VM and the command is the
+# sandbox's own process, so it dies when the command does.
 runtime     = "sandbox"
 
 [build]
@@ -12,108 +25,82 @@ runtime     = "sandbox"
 # the point of copying rather than fetching.
 context = "../.."
 include = ["."]
-# The build state a local checkout carries: 395MB of a 441MB repo, uploaded on
-# every start and wanted by nothing out there. Flutter builds into a volume of
-# its own, and the jolt and clojure caches are this machine's.
+# One apt line, where there used to be a nix store to populate. gcc and
+# pkg-config for `c/frq_h264.c`, which is the only thing here that compiles;
+# libopenh264-dev for its header and link; libopus and libasound because the
+# bundle carries them out to the machine that runs it. patchelf to set
+# $ORIGIN on the objects that arrive without it. git for the two pinned source
+# checkouts, ca-certificates so curl can verify what it fetches.
+setup = [
+  "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git gcc libc6-dev pkg-config libopenh264-dev libopus-dev libasound2-dev patchelf rsync tar xz-utils && rm -rf /var/lib/apt/lists/*",
+]
+# The build state a local checkout carries, wanted by nothing out here.
 ignore  = [
     "flutter/build", "flutter/.home", "flutter/.dart_tool",
-    "flutter/.clojuredart", "flutter/.cpcache",
+    "flutter/.clojuredart", "flutter/.cpcache", "flutter/lib/cljd-out",
+    # The toolchains, which live on the volume out here.
+    ".toolchain", ".toolchain-desktop",
     ".jolt", ".cpcache", "result", "build", ".git",
+    # An editor's linter rewrites this while the upload is reading it, and
+    # Modal fails the whole run with "was modified during build process".
+    ".clj-kondo",
 ]
 
-# The Modal Volume that makes a second build cheap. Mounted at run time, which
-# is when the build happens here -- nothing is written to it while the image is
-# built, because a volume mount is not part of the resulting image.
+# `devshell` and not `nix-cache`, which went with nix — the same volume every
+# other container's working state lives on, under a directory named for this
+# one. The toolchain is what makes a second run cheap now: ~30MB of jolt and
+# objects fetched once and found there afterwards.
 [volumes]
-nix-cache = "/nix-cache"
+devshell = "/devshell"
 
 [resources]
-cpu     = 8
-memory  = 16384
-# libjoltcosmic's tree is the long pole even when most of it substitutes.
-timeout = 3600
+# Four, not eight: nothing here compiles except one .c file. What this job
+# spends its time on is fetching and copying.
+cpu     = 4
+memory  = 8192
+# Minutes, not an hour. The old timeout was sized for libjoltcosmic's
+# dependency tree, which is now somebody else's pipeline's problem.
+timeout = 900
 
 [run]
 workdir = "/app"
-# The build, not the window: `#appimage` bundles `#frq` -- the cosmic GUI,
-# whose frqScript runs `-m frq.cosmic` -- and nothing here tries to open it.
-# There is no GL and no display on a build box, which is why this only builds.
-#
-# `#appimage` rather than `#frq` because of how the result gets home. A store
-# path is only useful to a machine that can take its whole closure, which
-# means walking ~200 narinfos out of the volume one call at a time and then
-# importing them. The AppImage is that same closure squashed into one file:
-# one `modal volume get`, no store import, and it runs off NixOS because the
-# bundle carries the Mesa that nixGL puts the host driver in front of.
-#
-# `path:/app` and not `.`: a checkout copied in here brings its `.git` with
-# it, and in a worktree that is a *file* naming a gitdir back on the host.
-# Nix believes it, tries to open a repository that is not there, and fails
-# before it evaluates anything. `path:` says plain directory and means it.
-#
-# The cache is read as a substituter and written with `nix copy --all`, but
-# only when this run actually produced something the cache has not got. That
-# test is the difference between a nine-minute run and a two-minute one: on a
-# full hit `--all` still interrogates every one of the cache's thousands of
-# paths to discover it has nothing to write, and that interrogation cost more
-# than the build it exists to avoid. Asking whether the result's own narinfo
-# is already there answers the same question in one stat.
-#
-# `--max-jobs auto` on the command line and not only in nix.conf: the base
-# image carries that setting now, but only from the next `modal run
-# arch_nix.py` onwards, and the flag costs nothing once it is redundant.
-# Nix's default is 1 -- the whole graph end to end, one derivation at a time.
-#
-# `set -e` earns its place: the last command here is a `ls`, so without it a
-# failed `nix build` would still leave the sandbox exiting 0 and the run would
-# report success. The substituter test is an `if` rather than `&&` for the same
-# reason -- under `set -e` a false `&&` would abort the whole script on the
-# first run, when there is legitimately nothing in the cache yet.
+# Source in, toolchain out of the volume, assemble, tar. The old command was a
+# `nix build` of a closure with ~200 store paths in it, a substituter test to
+# decide whether writing the cache back was worth it, and a copy of the
+# AppImage into the volume. This is four steps and none of them evaluates
+# anything.
 command = """
 set -e
-mkdir -p /nix-cache/artifacts
-subs=""
-if [ -f /nix-cache/nix-cache-info ]; then
-    subs="--extra-substituters file:///nix-cache"
-    echo "cache: reading from /nix-cache"
-else
-    echo "cache: empty, this run fills it"
-fi
-# One setting per invocation -- `nix config show a b` is an argument error,
-# and under `set -e` that kills the run before it builds anything.
-nix config show max-jobs
-nix config show cores
+BUILD_DIR=/devshell/frq-desktop
 
-out=$(nix build path:/app#appimage --accept-flake-config $subs \
-    --max-jobs auto --cores 0 --print-out-paths --print-build-logs)
-echo "built: $out"
+# Beside the working tree and NOT inside it: the rsync below runs with
+# --delete, so anything under $BUILD_DIR that is not in /app is removed on
+# every run. A toolchain kept in there would be deleted moments before it was
+# consulted.
+export FRQ_DESKTOP_TOOLCHAIN=/devshell/frq-desktop.toolchain
+mkdir -p "$BUILD_DIR" "$FRQ_DESKTOP_TOOLCHAIN" /devshell/artifacts
 
-cp -L "$out" /nix-cache/artifacts/frq.AppImage
-chmod +x /nix-cache/artifacts/frq.AppImage
-ls -la /nix-cache/artifacts/frq.AppImage
+echo "sync: /app -> $BUILD_DIR"
+rsync -a --checksum --delete \
+    --exclude '.toolchain/' \
+    --exclude '.toolchain-desktop/' \
+    --exclude '.git' \
+    /app/ "$BUILD_DIR/"
 
-hash=$(basename "$out" | cut -d- -f1)
-if [ -f "/nix-cache/$hash.narinfo" ]; then
-    echo "cache: $hash already held, nothing to write"
-else
-    echo "cache: writing the store back"
-    nix copy --no-check-sigs --all --to file:///nix-cache
-fi
+cd "$BUILD_DIR"
+[ -d "$FRQ_DESKTOP_TOOLCHAIN/jolt" ] && echo "  carried over: the toolchain"
+
+# The same script `just desktop` runs, and the same single action: what a
+# laptop assembles and what this ships are the same directory.
+tools/build-desktop.sh tar
+
+# Where the runner fetches it from, the way the AppImage was left in the
+# nix-cache volume before. One file, already a squashed tree.
+cp -L build/frq-desktop-x86_64-linux.tar.gz /devshell/artifacts/
+ls -la /devshell/artifacts/frq-desktop-x86_64-linux.tar.gz
 """
-env     = { }
-
-[nix]
-# Every nix command in the container reads the mounted cache, including one
-# typed by hand in a shell. Passing --extra-substituters per command only ever
-# covered the scripts.
-substituters = ["file:///nix-cache"]
-# No devShell: we want `nix build`, not a shell to run something inside, so
-# there is nothing to warm at build time and no reason for the ptyshim. The
-# build happens at run time, in the Sandbox, on a real VM -- which is the
-# whole reason it can realise a derivation at all.
-flake = false
-shim  = false
-
-# [experimental] overrides the sandbox default of vm_runtime = true.
-# Setting it here turns that default off, so leave it alone unless you
-# want gVisor.
+# Set here rather than in the command so a shell into this container gets them
+# too. FRQ_JOLT_NATIVE_SHA is the one pin the script will not invent: until
+# jolt-native's pipeline has published a portable tarball for the revision
+# tools/desktop-toolchain.sh names, this container fails fast and says so.
+env     = { FRQ_DESKTOP_TOOLCHAIN = "/devshell/frq-desktop.toolchain" }

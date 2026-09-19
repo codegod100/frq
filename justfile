@@ -462,15 +462,44 @@ flutter-web action="build" port="8080":
     # start would be one dependency away from the point.
     exec "{{justfile_directory()}}/tools/build-web.sh" {{action}} {{port}}
 
+# The cosmic GUI as a directory anyone can unpack, with no nix on either end.
+#
+# `just cosmic run` is the edit loop — a devShell, this tree's source, a store
+# path per dependency. This is the other end of the same program: a jolt
+# binary, the backends out of jolt-native's portable tarball, libmoq_ffi off
+# its release, glimmer and glimmer-cosmic at pinned revs, and one .c file
+# compiled on the spot. `tools/desktop-toolchain.sh` fetches; nothing is
+# built from source that somebody else has already published.
+#
+# It replaces `nix build .#appimage`, and what it drops with it is the reason
+# that output existed. nix-appimage squashed a closure into one file so a
+# machine without nix could run it, and the heaviest thing in that closure was
+# a Mesa — carried so that nixGL had something to put the host driver in front
+# of. There is no Mesa here, so there is no nixGL: the GL driver is the
+# host's, the way it is for everything else on the machine.
+#
+#   just desktop            assemble build/desktop
+#   just desktop tar        ...and tar it up for another machine
+#   just desktop run        ...and start it
+desktop action="build":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # A wrapper and nothing else, for the reason `flutter-web` is one: the
+    # container runs the same script, and a container that had to install
+    # `just` first would be one dependency away from the point.
+    exec "{{justfile_directory()}}/tools/build-desktop.sh" {{action}}
+
 # The containers in `.modal/`, run on Modal rather than here. This machine
 # evaluates and Modal builds — see CLAUDE.md, which says so rather more
 # firmly — and these two recipes are the whole interface to that.
 #
 # Named for where the work happens, the way `cosmic` and `flutter-desktop`
 # are named for what paints: there is no re-entry test here because nothing
-# re-enters, and no `nix` variable because nix runs out there.
+# re-enters. There is no `nix` variable either, and that used to be because
+# nix ran out there — now it is because two of these three containers have no
+# nix in them at all.
 #
-#   just modal frq                 build `.#appimage` on Modal
+#   just modal frq                 assemble the desktop bundle on Modal
 #   just modal flutter-dev         the incremental Flutter loop
 modal container="frq" *args:
     #!/usr/bin/env bash
@@ -528,7 +557,7 @@ web-local port="8080":
 # the sandbox bills until you do.
 #
 #   just modal-shell               flutter-dev, the usual one
-#   just modal-shell frq           the appimage container
+#   just modal-shell frq           the desktop bundle container
 modal-shell container="flutter-dev":
     #!/usr/bin/env bash
     set -euo pipefail

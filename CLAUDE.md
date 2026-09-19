@@ -9,7 +9,7 @@ memory long before it finishes, and the minutes spent finding that out are
 minutes not spent on the change. So:
 
 ```bash
-modal run .modal/frq/container.py   # .#appimage, on Modal
+modal run .modal/frq/container.py   # the desktop bundle, on Modal
 ```
 
 The container is `.modal/`, not a fourth source tree: it is CI config that
