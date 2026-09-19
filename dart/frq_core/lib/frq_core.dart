@@ -323,6 +323,11 @@ UiNode dispatch(String id, [String value = '']) {
   }
 }
 
+/// Fill a room with a representative conversation, so a test can lay the chat
+/// screen out without a server. See the Nim side for why it exists.
+void demoUi() =>
+    _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_demo')();
+
 /// Back to a fresh state, for a caller that wants a known starting point.
 void resetUi() =>
     _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_reset')();

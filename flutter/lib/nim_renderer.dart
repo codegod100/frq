@@ -13,6 +13,8 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
+
 import 'package:flutter/material.dart';
 import 'package:frq_core/frq_core.dart' as core;
 
@@ -38,6 +40,11 @@ class _NimAppState extends State<NimApp> {
   // first line.
   final _controllers = <String, TextEditingController>{};
   final _focus = <String, FocusNode>{};
+
+  // One tap recogniser per link URL, kept across rebuilds and disposed with
+  // the state. A recogniser made during build and dropped on the next frame
+  // leaks, and this tree is rebuilt on every keystroke.
+  final _linkTaps = <String, TapGestureRecognizer>{};
 
   @override
   void initState() {
@@ -66,6 +73,9 @@ class _NimAppState extends State<NimApp> {
     }
     for (final f in _focus.values) {
       f.dispose();
+    }
+    for (final r in _linkTaps.values) {
+      r.dispose();
     }
     super.dispose();
   }
@@ -194,6 +204,21 @@ class _NimAppState extends State<NimApp> {
               : col;
         }
 
+      // A paragraph: the words and the links of one message, wrapping as text
+      // rather than as boxes.
+      //
+      // NOT a Wrap, which is what this was. Children of a Wrap are given
+      // unbounded width, so a long URL or a long word can never wrap — it
+      // overflows, the layout fails, and every box under it is then hit-tested
+      // having never been laid out. That is the pile of "Cannot hit test"
+      // errors the chat screen produced. Spans in one RichText wrap the way
+      // the Clojure's `:inline` row always meant.
+      case 'hbox' when n.prop('inline', false):
+        return Text.rich(
+          TextSpan(children: n.children.map(_span).toList()),
+          softWrap: true,
+        );
+
       case 'hbox':
         {
           // Wrap and not Row: `:hbox` in the screens means "these go together
@@ -205,19 +230,26 @@ class _NimAppState extends State<NimApp> {
           if (!wrapping) {
             // A child asking to fill the height gets it from the row's cross
             // axis, not from an Expanded — Expanded in a Row is about width.
+            //
+            // But stretch needs a bounded height to stretch to, and a Row in a
+            // Column has none of its own: it is as tall as its tallest child.
+            // So the row that holds a filling child has to take the column's
+            // remaining height itself, or the stretch resolves to infinity and
+            // the assertion reads `BoxConstraints forces an infinite height`.
             final stretches =
                 n.children.any((c) => c.prop('fillHeight', false));
-            return _margins(
-              n,
-              Row(
-                crossAxisAlignment: stretches
-                    ? CrossAxisAlignment.stretch
-                    : (align == 'end'
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.center),
-                children: _spaced(kids, spacing, vertical: false),
-              ),
+            final row = Row(
+              crossAxisAlignment: stretches
+                  ? CrossAxisAlignment.stretch
+                  : (align == 'end'
+                      ? CrossAxisAlignment.end
+                      : CrossAxisAlignment.center),
+              children: _spaced(kids, spacing, vertical: false),
             );
+            if (stretches && axis == _column) {
+              return Expanded(child: _margins(n, row));
+            }
+            return _margins(n, row);
           }
           return _margins(
             n,
@@ -362,7 +394,13 @@ class _NimAppState extends State<NimApp> {
                   value: n.prop('active', false),
                   onChanged: (_) => _send(onToggled),
                 ),
-                Text(n.prop('label', ''), style: _style(t.textBody, t.onBg)),
+                // Flexible, because the label is prose and the row is as wide
+                // as the window: "Hide join/part messages" beside a checkbox
+                // overflows a phone otherwise.
+                Flexible(
+                  child: Text(n.prop('label', ''),
+                      style: _style(t.textBody, t.onBg)),
+                ),
               ],
             ),
           );
@@ -566,6 +604,36 @@ class _NimAppState extends State<NimApp> {
           color: Colors.orange.withValues(alpha: 0.3),
           child: Text('?${n.tag}'),
         );
+    }
+  }
+
+  /// One node of an inline paragraph, as a span.
+  ///
+  /// Only `text` and `link` appear here — they are the only things `runNodes`
+  /// emits — and anything else falls back to its plain text so an unexpected
+  /// tag degrades to something readable rather than vanishing.
+  InlineSpan _span(core.UiNode n) {
+    switch (n.tag) {
+      case 'link':
+        final url = n.prop('url', n.prop('label', ''));
+        final onClick = n.prop('onClick', '');
+        return TextSpan(
+          text: n.prop('label', ''),
+          style: _style(t.textBody, t.accent)
+              .copyWith(decoration: TextDecoration.underline,
+                        decorationColor: t.accent),
+          recognizer: onClick.isEmpty
+              ? null
+              : (_linkTaps[url] ??= TapGestureRecognizer()
+                ..onTap = () => _send(onClick)),
+        );
+      case 'text':
+        return TextSpan(
+            text: n.prop('text', ''), style: _style(t.textBody, t.onBg));
+      default:
+        return TextSpan(
+            text: n.prop('label', n.prop('text', '')),
+            style: _style(t.textBody, t.onBg));
     }
   }
 

@@ -104,8 +104,11 @@ test suite="all" *args:
     cd "{{root}}"
     shift
     case "{{suite}}" in
-        all)    just test common && just test nim && just test dart ;;
+        all)    just test common && just test nim && just test dart \
+                  && just test layout ;;
         common) exec python3 tools/check-common.py common ;;
+        layout) just _nim-lib
+                just _flutter layout test ;;
         nim)    just _nim-test "$@" ;;
         dart)   just _nim-lib
                 exec "{{tc}}" exec -- bash -c \
@@ -227,7 +230,7 @@ _flutter target action:
     cd "{{root}}"
     case "{{target}}" in
         apk) "{{tc}}" android ;;
-        ui|app) just _nim-lib ;;
+        ui|app|layout) just _nim-lib ;;
     esac
     exec "{{tc}}" exec -- bash -euo pipefail -c '
         cd flutter
@@ -258,4 +261,9 @@ _flutter target action:
                            exec flutter build linux --debug -t lib/main_nim_app.dart ;;
             app:run)       flutter pub get; cljd frq.main-nim
                            exec flutter run -d linux -t lib/main_nim_app.dart ;;
+            # Widget tests, which lay every screen out for real. Headless: no
+            # GL, no window, which is what makes them the check a Wayland
+            # window cannot be.
+            layout:test)   flutter pub get
+                           exec flutter test test/nim_layout_test.dart ;;
         esac' _ "{{target}}" "{{action}}"

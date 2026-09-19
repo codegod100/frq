@@ -25,8 +25,8 @@
 ## from `common/frq/screens/` rather than reimagined, which is the difference
 ## between this and the experiment that was deleted for being a facsimile.
 
-import std/[json, strutils]
-import frq/[ircparse, trace, ui, cells, reducer]
+import std/[json, strutils, tables]
+import frq/[ircparse, trace, ui, cells, reducer, model, rooms, reactions]
 import frq/conn as tr
 import frq/screens/connect as scConnectScreen
 import frq/screens/chats as scChatsScreen
@@ -191,6 +191,48 @@ proc frq_ui_poll*(): cstring {.exportc, dynlib.} =
   ## The tree, for a renderer asking because time passed rather than because
   ## anything happened. Same work as render; named for what the caller means.
   dup(currentTree())
+
+proc frq_ui_demo*() {.exportc, dynlib.} =
+  ## Fill a room with a representative conversation, for a test that wants to
+  ## lay the chat screen out without a server.
+  ##
+  ## It exists because the chat screen is the one a script could not reach: a
+  ## GUI on Wayland cannot be clicked, so every automated check stopped at the
+  ## room list and the biggest screen in the app went out unlaid-out. The
+  ## content is chosen to be awkward on purpose — a long unbroken URL, a very
+  ## long word, an image, reactions, a reply, a system line, an edited line —
+  ## because a layout bug is about what does not fit.
+  app = initState()
+  app.formNick = "me"
+  app.rooms.ensureRoom("#test")
+  var r = app.rooms["#test"]
+  r.joined = true
+  r.users = @["me", "alice", "bob"]
+  r.topic = "a room"
+  let t0 = 1_700_000_000_000'i64
+  r.messages = @[
+    Message(id: "1", frm: "*", text: "me joined #test", at: t0, system: true),
+    Message(id: "2", frm: "alice", text: "hello there", at: t0 + 1000),
+    Message(id: "3", frm: "bob",
+            text: "see https://example.com/a/very/long/path/that/will/not/wrap/anywhere/at/all?q=1 for more",
+            at: t0 + 2000),
+    Message(id: "4", frm: "alice",
+            text: "Supercalifragilisticexpialidociousssssssssssssssssssssssssssssssssssss",
+            at: t0 + 3000),
+    Message(id: "5", frm: "me", text: "a picture", at: t0 + 4000,
+            imageUrl: "https://example.com/a.png"),
+    Message(id: "6", frm: "bob", text: "answering you", at: t0 + 5000,
+            replyTo: "5"),
+    Message(id: "7", frm: "me", text: "edited line", at: t0 + 6000,
+            edited: true,
+            reactions: @[Reaction(emoji: "👍", nicks: @["me", "alice"]),
+                         Reaction(emoji: "🎉", nicks: @["bob"])]),
+    # A different day, so a heading has to land between them.
+    Message(id: "8", frm: "alice", text: "next day", at: t0 + 200_000_000)]
+  app.rooms["#test"] = r
+  app.current = "#test"
+  app.screen = scChat
+  app.status = "Connected as me"
 
 proc frq_ui_reset*() {.exportc, dynlib.} =
   tr.close()
