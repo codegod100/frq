@@ -67,6 +67,15 @@ func isHandle*(nick: string): bool =
   # The last label is the TLD: at least two characters, and all letters.
   labels > 0 and labelLen >= 2 and lastAllAlpha
 
+func isAgent*(actor: string): bool =
+  ## Whether this identity is a `did:key:` — an agent that signs with a key
+  ## of its own rather than an account in somebody's PDS.
+  ##
+  ## There is no Bluesky profile behind one, so asking for it is a request
+  ## that can only 400. freeq has several in its rooms; they are not broken
+  ## accounts and should not be reported as one.
+  actor.startsWith("did:key:")
+
 proc actorFor*(did, nick: string): string =
   ## The identity to look a profile up by, or "" when there is none.
   ##

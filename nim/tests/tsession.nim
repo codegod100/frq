@@ -9,7 +9,7 @@
 ## `conn.feed` puts a line in as though the server had sent it; `tryOutbound`
 ## reads what went out. No socket at either end.
 
-import std/[sequtils, strutils, tables, unittest]
+import std/[json, sequtils, strutils, tables, unittest]
 import frq/[cells, model, reducer, rooms]
 import frq/conn as tr
 
@@ -104,3 +104,52 @@ suite "the rest of the conversation":
     say(":bob!b@h PRIVMSG alice :a direct word")
     check app.rooms.hasKey("bob")
     check app.rooms["bob"].messages[^1].text == "a direct word"
+
+suite "who is who":
+  setup: reset()
+
+  test "WHO reports the whole DID where the hostmask has eight characters":
+    # `freeq/plc/ngokl2gn` is enough to tell two people apart and not enough
+    # to look either of them up. The realname field carries all of it.
+    say(":irc.freeq.at 352 alice #freeq ~u freeq/plc/ngokl2gn irc.freeq.at " &
+        "nandi.uk H :0 did:plc:ngokl2gnmpbvuvrfckja3g7p")
+    check app.dids["nandi.uk"] == "did:plc:ngokl2gnmpbvuvrfckja3g7p"
+
+  test "an agent signs with a key, and that is an identity too":
+    say(":irc.freeq.at 352 alice #freeq ~u freeq/key/z6Mkp5we irc.freeq.at " &
+        "cartographer H :0 did:key:z6Mkp5wegrxZR62h54HwR329yz7TJ8Ccx4shCpSB")
+    check app.dids["cartographer"].startsWith("did:key:")
+
+  test "a guest has none, and is not recorded as having one":
+    # freeq puts the literal "IRC User" there for an unauthenticated
+    # connection, which is not a DID and must not be stored as one.
+    say(":irc.freeq.at 352 alice #freeq ~u freeq/guest irc.freeq.at " &
+        "adam12 H :0 IRC User")
+    check not app.dids.hasKey("adam12")
+
+  test "WHOIS answers for one nick the same way":
+    say(":irc.freeq.at 330 alice zapnap did:plc:k2n3e2vsabcdefghijklmnop " &
+        ":is authenticated as")
+    check app.dids["zapnap"] == "did:plc:k2n3e2vsabcdefghijklmnop"
+
+  test "and the room is asked who is in it once it has arrived":
+    joined("#freeq")
+    say(":server 366 alice #freeq :End of /NAMES list")
+    check "WHO #freeq" in sent()
+
+suite "opening a profile":
+  setup: reset()
+
+  test "uses what WHO reported for a nick that is not a handle":
+    say(":irc.freeq.at 352 alice #freeq ~u freeq/plc/k2n3e2vs irc.freeq.at " &
+        "zapnap H :0 did:plc:k2n3e2vsabcdefghijklmnop")
+    dispatch(%*{"id": "profile.open:zapnap:"})
+    check app.profileViewing.actor == "did:plc:k2n3e2vsabcdefghijklmnop"
+
+  test "asks the server about somebody it has never seen":
+    dispatch(%*{"id": "profile.open:stranger:"})
+    check "WHOIS stranger" in sent()
+
+  test "and what the message itself knew still wins":
+    dispatch(%*{"id": "profile.open:bob:did:plc:fromtheaccounttag"})
+    check app.profileViewing.actor == "did:plc:fromtheaccounttag"

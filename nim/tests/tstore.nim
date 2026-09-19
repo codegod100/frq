@@ -5,7 +5,7 @@
 ## and writes the config of whoever runs it, which would both lie about the
 ## result and cost them their room list.
 
-import std/[json, os, sets, tables, times, unittest]
+import std/[json, os, tables, times, unittest]
 
 let sandbox = getTempDir() / "frq-tstore-" & $epochTime()
 putEnv("XDG_CONFIG_HOME", sandbox)

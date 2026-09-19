@@ -92,6 +92,17 @@ type
     apiBearer*: string
     loginUrl*: string     ## shown while the browser is open
 
+    dids*: Table[string, string]
+      ## Nick → DID, as the server reports it.
+      ##
+      ## freeq sends no `account` tag: the identity is in the hostmask, and
+      ## the hostmask carries eight characters of a DID — too few to resolve.
+      ## The whole of it comes back from `WHO` (352, in the realname field)
+      ## and from `WHOIS` (330), and this is where it is kept. Without it a
+      ## nick that is not itself a handle — `livecodelife`, `zapnap` — has no
+      ## identity a profile can be looked up by, which is why opening one did
+      ## nothing.
+
     # Rooms.
     rooms*: OrderedTable[string, Room]
     current*: string

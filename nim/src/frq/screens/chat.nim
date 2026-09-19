@@ -141,7 +141,11 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
     # A face is a way in to who someone is, so it takes the press that opens
     # them — and so does the name beside it, since a name is the thing a
     # reader is actually looking at.
-    let senderActor = actorFor(m.account, m.frm)
+    # The `account` tag where the server sends one, and what WHO reported
+    # for this nick where it does not — freeq is the second case.
+    let senderActor = actorFor(
+      if m.account.len > 0: m.account else: s.dids.getOrDefault(m.frm, ""),
+      m.frm)
     let open = "profile.open:" & m.frm & ":" & senderActor
     var row = hbox(%*{"spacing": 6},
       avatar(m.avatar, m.frm, size = faceSize, onClick = open),
@@ -294,6 +298,13 @@ proc profilePane(s: State): Node =
     # spinner that never lands.
     result.children.add dimLabel(
       "A guest — no Bluesky identity to look up.")
+    return
+
+  if isAgent(actor):
+    result.children.add dimLabel(
+      "An agent — it signs with a key of its own rather than a Bluesky " &
+      "account, so there is no profile to show.")
+    result.children.add dimLabel(actor)
     return
 
   let (p, known) = entry(actor)

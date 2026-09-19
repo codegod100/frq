@@ -509,13 +509,22 @@ proc dispatch*(event: JsonNode) =
   of "profile.open":
     # `nick:actor`, and the actor may be empty — a guest has no identity to
     # fetch, and the panel says so rather than spinning.
-    let (nick, who) = split2(arg)
+    let (nick, argWho) = split2(arg)
     if nick.len > 0:
+      # The screen passes what the message itself knows. Where that is
+      # nothing — no `account` tag, and a nick that is not handle-shaped —
+      # the map filled in by WHO is the answer, and a WHOIS is the last
+      # resort for somebody who has since left the room.
+      var who = argWho
+      if who.len == 0: who = app.dids.getOrDefault(nick, "")
+      if who.len == 0: send("WHOIS " & nick)
       app.profileViewing = ProfileView(has: true, nick: nick, actor: who)
       # Blocking, and this is the one place that can afford it: the render
       # path must not, the socket threads have their own work, and the reader
       # pressed a face and is already waiting.
-      if who.len > 0: fetch(who)
+      # A `did:key:` agent has no Bluesky profile to fetch, and the panel
+      # says so rather than showing a failure it caused itself.
+      if who.len > 0 and not isAgent(who): fetch(who)
 
   of "profile.close": app.profileViewing = ProfileView()
 
@@ -741,6 +750,31 @@ proc drain*() =
           # for an empty one is a test that never passes.
           if not r.messages.anyIt(not it.system):
             send("CHATHISTORY LATEST " & room & " * " & $historyLimit)
+          # And who these people actually are. One WHO answers for the whole
+          # room; the alternative is a WHOIS per nick, which is a round trip
+          # per face on screen.
+          send("WHO " & room)
+
+    of "352":
+      # WHO: `<me> <chan> <user> <host> <server> <nick> <flags> :<hops> <real>`
+      #
+      # freeq puts the full DID in the realname field — `did:plc:…` for an
+      # account, `did:key:…` for an agent, and the literal "IRC User" for a
+      # guest, who has no identity at all. The hostmask beside it carries
+      # `freeq/plc/ngokl2gn`: the first eight characters, which is enough to
+      # tell two people apart and not enough to look either of them up.
+      if p.params.len >= 8:
+        let who = p.params[5]
+        let real = p.params[^1]
+        let sp = real.find(' ')       # the hop count comes first
+        let did = if sp >= 0: real[sp + 1 .. ^1].strip() else: ""
+        if did.startsWith("did:"): app.dids[who] = did
+
+    of "330":
+      # WHOIS's `<nick> <account> :is authenticated as`. The same DID by a
+      # different road — one nick rather than a room of them.
+      if p.params.len >= 3 and p.params[2].startsWith("did:"):
+        app.dids[p.params[1]] = p.params[2]
 
     of "MODE":
       # A channel MODE, for the letters that change how someone is listed.
