@@ -4,7 +4,13 @@ description = "the Flutter web build, incremental, from a pinned toolchain"
 # `debian:13-slim` and not `arch-nix`: there is no nix in this container any
 # more. The build is `tools/build-web.sh`, which fetches its own Flutter, JDK
 # and Clojure CLI by pinned sha256, so what the image owes it is curl, git,
-# tar and a C runtime — and the smallest image that has them is the right one.
+# tar and a C compiler — and the smallest image that has them is the right one.
+#
+# gcc for the `cc` that `require_host_tools` gates on. This container never
+# compiles Nim, but the check is one gate for every toolchain user rather than
+# one per subcommand, and a web build without a compiler is what failed CI:
+# `toolchain: this needs cc on PATH and cannot fetch them`, and then flutter
+# not found, because the gate exits before anything is fetched.
 registry    = "debian:13-slim"
 # A Sandbox, not a Function: it runs on a real VM, the command is the
 # sandbox's own process so it dies when the command does, and only a Sandbox
@@ -27,7 +33,7 @@ include = ["."]
 # SDK and the toolchain tarballs arrive as; rsync for the sync below;
 # ca-certificates so curl can verify what it fetches.
 setup = [
-  "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git rsync tar unzip xz-utils && rm -rf /var/lib/apt/lists/*",
+  "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gcc git rsync tar unzip xz-utils && rm -rf /var/lib/apt/lists/*",
 ]
 # The build state a local checkout carries, wanted by nothing out here: this
 # container builds into a volume of its own, and the clojure caches
