@@ -132,6 +132,7 @@ func recentEverywhere*(channels: OrderedTable[string, Room],
   for name, ch in channels:
     if name == current: continue
     var said = ch.messages.filterIt(not it.system)
+    for i in 0 ..< said.len: said[i].room = name
     if said.len > overviewLimit:
       said = said[^overviewLimit .. ^1]
     if said.len == 0: continue

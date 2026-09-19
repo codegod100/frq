@@ -258,7 +258,35 @@ proc dispatch*(event: JsonNode) =
   # -------------------------------------------------------------- reactions
   of "react.open":
     app.reacting = ReactTarget(has: true, room: app.current, id: arg)
-  of "react.close": app.reacting = ReactTarget()
+    app.emojiSearch = ""
+    app.emojiGroup = ""
+  of "react.close":
+    app.reacting = ReactTarget()
+    # The search goes with the panel. A picker reopened on another message
+    # showing the last one's search is a picker that has to be cleared first.
+    app.emojiSearch = ""
+    app.emojiGroup = ""
+
+  of "emoji.search.change": app.emojiSearch = value
+  of "emoji.group": app.emojiGroup = arg
+
+  of "react.pick":
+    # Picking is reacting, and then the panel has done its job.
+    if app.reacting.has and arg.len > 0:
+      let mid = app.reacting.id
+      let m = app.currentRoom.messageById(mid)
+      let on = if m.isSome: not m.get.mine(arg, app.formNick) else: true
+      var tags = "+draft/react=" & arg & ";+draft/reply=" & mid
+      for k, v in mutationTags(if on: "react" else: "unreact",
+                               app.current, mid, arg,
+                               peerDid(app.currentRoom, app.formNick),
+                               nowMs()):
+        tags.add ";" & k & "=" & v
+      send("@" & tags & " TAGMSG " & app.current)
+      app.rooms.updateReaction(app.current, mid, arg, app.formNick, on)
+    app.reacting = ReactTarget()
+    app.emojiSearch = ""
+    app.emojiGroup = ""
 
   of "react.toggle":
     # `id:emoji`, and the emoji may contain nothing colon-like so one more
@@ -282,6 +310,23 @@ proc dispatch*(event: JsonNode) =
   of "goto":
     app.jumpTo = arg
     app.highlight = arg
+
+  of "overview.goto":
+    # The overview is the one place that moves the reader without their having
+    # asked to leave where they were, so it is the one place that owes them
+    # the way back. `room:id`.
+    let (room, mid) = split2(arg)
+    if room.len > 0 and app.rooms.hasKey(room):
+      app.overviewReturn = app.current
+      openRoom(room)
+      app.jumpTo = mid
+      app.highlight = mid
+      app.overview = false
+
+  of "overview.back":
+    if app.overviewReturn.len > 0:
+      openRoom(app.overviewReturn)
+      app.overviewReturn = ""
 
   of "lightbox":
     app.lightbox = Lightbox(has: true, url: arg, path: arg)

@@ -14,7 +14,8 @@
 
 import std/[algorithm, json, strutils, tables]
 import std/options
-import frq/[ui, cells, model, clock, reactions, textruns, members]
+import frq/[ui, cells, model, clock, reactions, textruns, members,
+           glyphs, emoji, rooms]
 from frq/screens/connect import errorNote
 
 const
@@ -80,6 +81,54 @@ func runNodes(m: Message): Node =
     of rkText: result.children.add text(r.value)
     of rkLink: result.children.add link(r.value, r.value)
 
+const pickerColumns = 8
+  ## How wide the emoji grid is. Narrow enough to sit under a message on a
+  ## phone without the compose bar leaving the screen.
+
+proc emojiPicker(s: State): Node =
+  ## The set to choose from, under the message it is for.
+  ##
+  ## A panel over the compose bar rather than a screen: what is being reacted
+  ## to has to stay in sight, which is the whole reason a reaction is cheaper
+  ## than typing.
+  result = card(
+    hbox(%*{"spacing": 8},
+      entry("emoji-search", s.emojiSearch, "Search emoji",
+            "emoji.search.change", width = 200),
+      button("✕", "react.close")))
+
+  # The groups, as a row of switches. Nothing selected is the popular row,
+  # which is what the picker opens on.
+  var groupRow = hbox(%*{"spacing": 4})
+  groupRow.children.add button("Popular", "emoji.group:",
+                               if s.emojiGroup.len == 0: "primary" else: "default")
+  for g in groups:
+    groupRow.children.add button(g, "emoji.group:" & g,
+                                 if s.emojiGroup == g: "primary" else: "default")
+  result.children.add groupRow
+
+  # The grid. Capped, because the catalogue is 1,884 and a tree that carries
+  # all of them across the boundary on every keystroke is a tree nobody can
+  # type into.
+  let shown = pickerEmoji(s.emojiSearch, s.emojiGroup)
+  var grid = vbox(%*{"key": "grid", "spacing": 4})
+  var row = hbox(%*{"spacing": 4})
+  var n = 0
+  for e in shown:
+    if n >= pickerLimit: break
+    row.children.add reaction(e.glyph, 0, false,
+                              "react.pick:" & e.glyph)
+    n += 1
+    if n mod pickerColumns == 0:
+      grid.children.add row
+      row = hbox(%*{"spacing": 4})
+  if row.children.len > 0: grid.children.add row
+  if n == 0:
+    grid.children.add dimLabel("Nothing matches that.")
+  elif shown.len > pickerLimit:
+    grid.children.add dimLabel("…and " & $(shown.len - pickerLimit) & " more — keep typing.")
+  result.children.add grid
+
 proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
   ## A message without its face: the sender's line, the words, and what hangs
   ## under them.
@@ -123,6 +172,11 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
     images.children.add image(m.imageUrl, maxWidth = 320, maxHeight = 240,
                               onClick = "lightbox:" & m.imageUrl)
 
+  # The picker, under the message it is for and nowhere else.
+  var picker = vbox(%*{"key": "picker", "marginBottom": 4})
+  if s.reacting.has and s.reacting.id == rowId(m):
+    picker.children.add emojiPicker(s)
+
   var pills = vbox(%*{"key": "reactions-row", "marginTop": 6})
   if m.id.len > 0 and not m.system and m.reactions.len > 0:
     pills.children.add reactionRow(m, s.formNick)
@@ -132,7 +186,7 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
   n(if highlit: "card" else: "vbox",
     %*{"key": (if highlit: "body-card" else: "body-plain"),
        "spacing": 2, "margin": 0},
-    @[who, body, images, pills])
+    @[who, body, picker, images, pills])
 
 proc messageRow(s: State, room: Room, i: int, m: Message): Node =
   ## One message: who said it, when, what you can do to it, and the words.
@@ -181,6 +235,43 @@ proc visible(s: State, messages: seq[Message]): seq[Message] =
   for m in messages:
     if s.hideJoinPart and m.system: continue
     result.add m
+
+proc overviewPane(s: State): Node =
+  ## What is happening in every room but this one, newest first.
+  ##
+  ## A turn to each room rather than the newest lines outright — see
+  ## `rooms.recentEverywhere`. Taking the newest hundred would be the strip
+  ## answering about whichever room is busiest, which is the one already on
+  ## screen.
+  result = card(title2("Overview"))
+  var body = vbox(%*{"spacing": 4})
+  var n = 0
+  for m in recentEverywhere(s.rooms, s.current):
+    if n >= overviewLines: break
+    n += 1
+    # Each line carries the room it was said in, since that is the one thing a
+    # line taken out of its own conversation no longer says for itself.
+    body.children.add hbox(%*{"spacing": 6},
+      dimLabel(m.room),
+      label(m.frm & ":"),
+      text(summarise(m.text, 48)),
+      button("→", "overview.goto:" & m.room & ":" & rowId(m)))
+  if n == 0:
+    body.children.add dimLabel("Nothing has happened anywhere else.")
+  result.children.add body
+
+proc lightboxPane(s: State): Node =
+  ## The picture being looked at, full size.
+  ##
+  ## A panel over the conversation rather than a screen of its own: closing it
+  ## should put the reader back exactly where they were, and a screen would
+  ## have to remember where that was.
+  card(
+    hbox(%*{"spacing": 8},
+      title2("Picture"),
+      button("Close", "lightbox.close")),
+    image(s.lightbox.url, maxWidth = 640, maxHeight = 480),
+    dimLabel(s.lightbox.url))
 
 proc chatScreen*(s: State, connected: bool): Node =
   let room = s.currentRoom
@@ -254,6 +345,21 @@ proc chatScreen*(s: State, connected: bool): Node =
       panel.children.add label(m.prefix & m.nick)
     peoplePane.children.add panel
 
+  # Both panels are in wrappers that are always there, for the reason the
+  # error note is: a child that comes and goes renumbers the row.
+  var overview = vbox(%*{"key": "overview-pane"})
+  if s.overview:
+    overview.children.add overviewPane(s)
+
+  var lightbox = vbox(%*{"key": "lightbox-pane"})
+  if s.lightbox.has:
+    lightbox.children.add lightboxPane(s)
+
+  var returnRow = vbox(%*{"key": "overview-back"})
+  if s.overviewReturn.len > 0:
+    returnRow.children.add button("← back to " & s.overviewReturn,
+                                  "overview.back")
+
   var jump = vbox(%*{"key": "jump"})
   if not s.atPresent:
     jump.children.add button("↓ Jump to present", "jump.present")
@@ -302,6 +408,9 @@ proc chatScreen*(s: State, connected: bool): Node =
     # row's children, which is the prop being on the wrong node.
     n("hbox", %*{"spacing": 8, "wrap": false, "expand": true},
       @[messages, peoplePane]),
+    overview,
+    lightbox,
+    returnRow,
     jump,
     banners,
     separator(),

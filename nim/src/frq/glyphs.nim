@@ -101,6 +101,13 @@ func hasEmoji*(rs: seq[GlyphRun]): bool =
     if r.kind == gkEmoji: return true
   false
 
+const pickerLimit* = 120
+  ## How many of the catalogue the picker will put on screen at once.
+  ##
+  ## 1,884 emoji is a tree that has to be built, serialised, crossed and
+  ## rebuilt on every keystroke in the search box. The reader is scanning for
+  ## a face, not reading the list.
+
 proc pickerEmoji*(search, group: string): seq[Emoji] =
   ## What the picker is showing: the popular row, one group, or whatever the
   ## search matches — by name, so "cat" finds the cat and the cat face, and by

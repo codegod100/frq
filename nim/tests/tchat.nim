@@ -188,3 +188,129 @@ suite "the chat screen":
     let t = cs.chatScreen(s, true)
     check "draft" in t.find("entry").mapIt(it.props{"key"}.getStr())
     check "Send" in t.labels("button")
+
+import frq/[reducer, glyphs, emoji]
+
+suite "the emoji picker":
+  setup:
+    var s = withRoom()
+    app = s
+
+  test "is not there until a message asks for it":
+    check cs.chatScreen(s, true).find("entry")
+      .mapIt(it.props{"key"}.getStr()).countIt(it == "emoji-search") == 0
+
+  test "opens under the message it is for, and nowhere else":
+    s.reacting = ReactTarget(has: true, room: "#test", id: "1")
+    let t = cs.chatScreen(s, true)
+    check t.find("entry").anyIt(it.props{"key"}.getStr() == "emoji-search")
+    # One picker, not one per message.
+    check t.find("entry").countIt(it.props{"key"}.getStr() == "emoji-search") == 1
+
+  test "opens on the popular row":
+    s.reacting = ReactTarget(has: true, room: "#test", id: "1")
+    let picks = cs.chatScreen(s, true).find("reaction")
+      .filterIt(it.props{"onClick"}.getStr().startsWith("react.pick:"))
+    check picks.len == popular.len
+    check picks[0].props{"emoji"}.getStr() == popular[0]
+
+  test "a group shows that group, capped":
+    s.reacting = ReactTarget(has: true, room: "#test", id: "1")
+    s.emojiGroup = "Smileys & Emotion"
+    let picks = cs.chatScreen(s, true).find("reaction")
+      .filterIt(it.props{"onClick"}.getStr().startsWith("react.pick:"))
+    # Capped: the whole catalogue crossing the boundary per keystroke is a
+    # picker nobody can type into.
+    check picks.len == pickerLimit
+
+  test "search narrows it":
+    s.reacting = ReactTarget(has: true, room: "#test", id: "1")
+    s.emojiSearch = "grinning"
+    let picks = cs.chatScreen(s, true).find("reaction")
+      .filterIt(it.props{"onClick"}.getStr().startsWith("react.pick:"))
+    check picks.len > 0
+    check picks.len < pickerLimit
+
+  test "a search matching nothing says so rather than showing an empty grid":
+    s.reacting = ReactTarget(has: true, room: "#test", id: "1")
+    s.emojiSearch = "zzzzznotanemoji"
+    check "Nothing matches that." in cs.chatScreen(s, true).labels("dim-label")
+
+suite "the overview":
+  setup:
+    app = withRoom()
+    app.rooms["#other"] = initRoom("#other")
+    var o = app.rooms["#other"]
+    o.messages = @[Message(id: "o1", frm: "zoe", text: "elsewhere",
+                           at: 1_700_000_500_000)]
+    app.rooms["#other"] = o
+
+  test "is not there until asked for":
+    check "Overview" notin cs.chatScreen(app, true).labels("title-2")
+
+  test "shows lines from other rooms, naming the room":
+    app.overview = true
+    let t = cs.chatScreen(app, true)
+    check "Overview" in t.labels("title-2")
+    check "#other" in t.labels("dim-label")
+    check t.find("text").anyIt("elsewhere" in it.props{"text"}.getStr())
+
+  test "leaves out the room being read":
+    app.overview = true
+    # #test's own lines are on screen already, directly above.
+    check not cs.chatScreen(app, true).find("text")
+      .anyIt("hello" in it.props{"text"}.getStr() and
+             it.props{"text"}.getStr() != "hello")
+
+  test "an empty one says so":
+    var lonely = withRoom()
+    lonely.overview = true
+    check "Nothing has happened anywhere else." in
+      cs.chatScreen(lonely, true).labels("dim-label")
+
+  test "going somewhere from it offers the way back":
+    app.overview = true
+    dispatch(%*{"id": "overview.goto:#other:o1"})
+    check app.current == "#other"
+    check app.overviewReturn == "#test"
+    check not app.overview
+    check cs.chatScreen(app, true).labels("button").anyIt("back to #test" in it)
+
+  test "and the way back works":
+    app.overview = true
+    dispatch(%*{"id": "overview.goto:#other:o1"})
+    dispatch(%*{"id": "overview.back"})
+    check app.current == "#test"
+    check app.overviewReturn == ""
+
+suite "the lightbox":
+  setup:
+    var s = withRoom()
+    app = s
+
+  test "is not there until a picture is opened":
+    check "Picture" notin cs.chatScreen(s, true).labels("title-2")
+
+  test "shows the picture and a way out":
+    s.lightbox = Lightbox(has: true, url: "https://x.com/a.png",
+                          path: "https://x.com/a.png")
+    let t = cs.chatScreen(s, true)
+    check "Picture" in t.labels("title-2")
+    check "Close" in t.labels("button")
+    check t.find("image").anyIt(it.props{"src"}.getStr() == "https://x.com/a.png")
+
+  test "clicking a picture opens it":
+    var r = app.rooms["#test"]
+    r.messages[0].imageUrl = "https://x.com/a.png"
+    app.rooms["#test"] = r
+    let img = cs.chatScreen(app, true).find("image")
+      .filterIt(it.props{"src"}.getStr() == "https://x.com/a.png")
+    check img.len == 1
+    dispatch(%*{"id": img[0].props{"onClick"}.getStr()})
+    check app.lightbox.has
+    check app.lightbox.url == "https://x.com/a.png"
+
+  test "and closing it puts it away":
+    dispatch(%*{"id": "lightbox:https://x.com/a.png"})
+    dispatch(%*{"id": "lightbox.close"})
+    check not app.lightbox.has

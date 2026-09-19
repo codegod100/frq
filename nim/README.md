@@ -75,9 +75,14 @@ ClojureDart rather than moving: a Bluesky profile behind a nick, and asking
 freeq what a collapsed msgid was. Neither had a screen in this app to appear
 on.
 
-The emoji picker, the overview strip, the lightbox and the profile card are
-state without a screen: the reducer moves them and nothing renders them, so
-those buttons change colour and do nothing.
+The profile card is state without a screen: `profileViewing` is moved by
+nothing and rendered by nothing, and `frq.profile` was never ported.
+
+The emoji picker, the overview strip and the lightbox used to be in that list.
+They have screens now — the picker under the message it is for, the overview
+as a pane above the compose bar, the lightbox as a panel over the
+conversation — so the 🙂 chip, the Overview toggle and clicking a picture all
+do what they look like they do.
 
 Untested against a real account: nobody has watched freeq accept a SASL
 challenge response or a signature. The shapes are checked and the curve is

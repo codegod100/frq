@@ -38,6 +38,10 @@ type
     reactions*: seq[Reaction]
     imageUrl*: string     ## the first picture link in the text, "" for none
     pending*: bool        ## sent, not yet echoed
+    room*: string
+      ## Which room this was said in. Empty on a stored message — a room
+      ## already knows its own name — and filled in by `recentEverywhere`,
+      ## where a line taken out of its conversation no longer says for itself.
 
   Room* = object
     ## A buffer: a channel or a DM. Named Room rather than Channel because

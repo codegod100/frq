@@ -99,6 +99,37 @@ void main() {
       expectLaidOut(tester, 'chat editing');
     });
 
+    testWidgets('lays out with the emoji picker open', (tester) async {
+      // 120 emoji in a grid under a message, on a phone.
+      core.demoUi();
+      core.dispatch('react.open:2');
+      await layOut(tester, sizes['phone']!);
+      expectLaidOut(tester, 'chat with the picker');
+    });
+
+    testWidgets('lays out with the picker showing a whole group',
+        (tester) async {
+      core.demoUi();
+      core.dispatch('react.open:2');
+      core.dispatch('emoji.group:Smileys & Emotion');
+      await layOut(tester, sizes['cramped']!);
+      expectLaidOut(tester, 'chat with a full picker');
+    });
+
+    testWidgets('lays out with the overview open', (tester) async {
+      core.demoUi();
+      core.dispatch('overview.toggle');
+      await layOut(tester, sizes['phone']!);
+      expectLaidOut(tester, 'chat with the overview');
+    });
+
+    testWidgets('lays out with the lightbox open', (tester) async {
+      core.demoUi();
+      core.dispatch('lightbox:https://example.com/a.png');
+      await layOut(tester, sizes['phone']!);
+      expectLaidOut(tester, 'chat with the lightbox');
+    });
+
     testWidgets('lays out when scrolled off the present', (tester) async {
       core.demoUi();
       core.dispatch('jump.present');
