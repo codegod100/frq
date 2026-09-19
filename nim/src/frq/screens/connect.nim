@@ -52,8 +52,12 @@ func authFields(s: State): Node =
   of amBluesky:
     result = vbox(%*{"spacing": 6},
       title2("Sign in with Bluesky"),
-      dimLabel("Opens your browser for AT Protocol OAuth. freeq's broker " &
-               "hands back a token; no password passes through frq."),
+      # Says what it actually does today. The broker flow needs a browser and
+      # a loopback listener to catch the redirect, and neither is ported — a
+      # screen that describes the finished thing is a screen that lies.
+      dimLabel("Not wired up yet: the broker flow needs a browser and a " &
+               "loopback listener, and neither is ported. Use an app " &
+               "password, or connect as a guest."),
       label("Handle"),
       entry("handle", s.formHandle, "alice.bsky.social", "handle.change",
             width = 320))

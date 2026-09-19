@@ -12,7 +12,9 @@
 ## for arguments that are always one string.
 
 import std/[json, options, sequtils, strutils, tables]
-import frq/[cells, model, rooms, reactions, edits, trace, ircparse, clock]
+import std/sets
+import frq/[cells, model, rooms, reactions, edits, trace, ircparse, clock,
+           atproto, handshake]
 import frq/conn as tr
 
 proc split2(id: string): (string, string) =
@@ -21,6 +23,12 @@ proc split2(id: string): (string, string) =
   ## the first is a separator.
   let i = id.find(':')
   if i < 0: (id, "") else: (id[0 ..< i], id[i + 1 .. ^1])
+
+var
+  session: Session
+    ## What this connection is signing in as, settled before the socket opens.
+  caps: HashSet[string]
+    ## What the server has ACKed so far, threaded through `handshake.step`.
 
 proc setError(msg: string) =
   app.error = msg
@@ -41,13 +49,54 @@ proc openRoom(name: string) =
   # Opening a room is reading it: the marker moves to the newest line here.
   app.rooms[name] = app.rooms[name].markRead
 
+proc signIn(): bool =
+  ## Whatever identity was asked for, settled before the socket opens.
+  ##
+  ## An app-password sign-in is an HTTPS round trip that has nothing to do
+  ## with IRC, and a failure in it must stop here: connecting anyway lands us
+  ## on the server as a guest, which looks like a success and is not the one
+  ## that was asked for.
+  session = Session()
+  caps = initHashSet[string]()
+  case app.authMode
+  of amGuest:
+    true
+  of amAppPassword:
+    if app.formHandle.strip().len == 0:
+      setError("A handle is required."); return false
+    if app.formAppPassword.len == 0:
+      setError("An app password is required."); return false
+    try:
+      app.status = "Signing in to your PDS…"
+      session = createSession(app.formHandle, app.formAppPassword)
+      # The nick is what the channel calls us and the DID is the identity;
+      # both halves have to agree, so the handle becomes the nick. Sending the
+      # handle here and a different nick at registration is what once had the
+      # channel calling us alice.bsky.social while the client thought it was
+      # alice, so every "is this me?" test came back false.
+      app.formNick = session.handle
+      app.formHandle = session.handle
+      trace("auth", "signed in as " & session.did)
+      true
+    except CatchableError as e:
+      setError(e.msg)
+      app.connecting = false
+      false
+  of amBluesky:
+    # The broker flow needs a browser and a loopback listener to catch the
+    # redirect, and neither is ported. Said plainly rather than connecting as
+    # a guest and looking like it worked.
+    setError("Bluesky OAuth is not wired up yet — use an app password, or connect as a guest.")
+    false
+
 proc connectNow() =
   if app.formHost.strip().len == 0:
     setError("A server is required."); return
-  if app.formNick.strip().len == 0:
+  if app.formNick.strip().len == 0 and app.authMode == amGuest:
     setError("A nickname is required."); return
-  app.connecting = true
   app.hasError = false
+  if not signIn(): return
+  app.connecting = true
   app.status = "Connecting to " & app.formHost & ":" & app.formPort &
                (if app.formTls: " over TLS" else: "") & "…"
   let port = try: parseInt(app.formPort.strip())
@@ -253,12 +302,7 @@ proc drain*() =
     trace("status", e)
     if e == "open":
       # The client speaks first in IRC. CAP before registration, the order the
-      # server expects and the order `frq.main` used.
-      #
-      # No SASL yet: this registers as a guest. The Bluesky handshake is
-      # `frq.irc.handshake` and has not been ported, so the two signed-in
-      # modes on the connect screen reach this point and land as guests —
-      # which the connect screen does not yet say, and should.
+      # server expects. What comes back is answered by `handshake.step`.
       send("CAP LS 302")
       send("NICK " & app.formNick)
       send("USER " & app.formNick & " 0 * :frq")
@@ -287,14 +331,25 @@ proc drain*() =
       let (v, ok2) = tagValue(p.tags, "msgid")
       if ok2: v else: ""
 
-    case p.command
-    of "CAP":
-      # Nothing is requested yet — no SASL, no message-tags of our own — so
-      # the negotiation is ended immediately. A CAP LS with no END leaves the
-      # server waiting and registration never completes.
-      if p.params.len >= 2 and p.params[1] == "LS":
-        send("CAP END")
+    # CAP and the SASL exchange inside it, out of `handshake`. Answered before
+    # the per-command handling below, because these are the transport's own
+    # conversation rather than anything a screen reads.
+    if p.command in ["CAP", "AUTHENTICATE", "903", "904", "905", "906"]:
+      let st = step(session, caps, p)
+      caps = st.caps
+      for line in st.send: send(line)
+      if p.command == "903":
+        app.status = "Signed in as " & app.formNick
+        trace("auth", "SASL accepted")
+      elif p.command in ["904", "905", "906"]:
+        # Refused. Registration carries on as a guest, which is freeq's own
+        # behaviour — but it is said, because a silent downgrade is the thing
+        # that makes a client look like it signed in when it did not.
+        setError("Sign-in refused — connected as a guest.")
+        trace("auth", "SASL refused: " & $p.params)
+      continue
 
+    case p.command
     of "001":
       app.connecting = false
       app.status = "Connected as " & app.formNick

@@ -46,6 +46,11 @@ suite "the connect screen":
     check "handle" in t.keys("entry")
     check "nick" notin t.keys("entry")
 
+  test "and admits the broker flow is not wired up":
+    # A screen that describes the finished thing is a screen that lies.
+    s.authMode = amBluesky
+    check cs.connectScreen(s).labels("dim-label").anyIt("Not wired up yet" in it)
+
   test "app-password asks for both, and says where to make one":
     s.authMode = amAppPassword
     let t = cs.connectScreen(s)
