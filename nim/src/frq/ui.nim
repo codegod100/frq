@@ -90,3 +90,56 @@ func scroll*(props: JsonNode, children: varargs[Node]): Node =
   ## A list that is taller than the room it has. The renderer decides how that
   ## is done; the tree only says that it is expected.
   n("scroll", props, @children)
+
+# ------------------------------------------------- the rest of the vocabulary
+#
+# Every tag the real screens use. `frq.hiccup` interprets exactly these into
+# Flutter widgets today, so a tree emitted here describes the same screen it
+# describes there — which is what makes the port a transcription rather than a
+# redesign.
+
+func separator*(): Node = n("separator")
+
+func spacer*(size: int): Node = n("spacer", %*{"size": size})
+
+func text*(body: string): Node =
+  ## Prose, as opposed to a `label`: wraps, and is the thing a message is.
+  n("text", %*{"text": body})
+
+func link*(label, url: string): Node =
+  n("link", %*{"label": label, "url": url})
+
+func image*(src: string, maxWidth = 0, maxHeight = 0, onClick = ""): Node =
+  var p = %*{"src": src}
+  if maxWidth > 0: p["maxWidth"] = %maxWidth
+  if maxHeight > 0: p["maxHeight"] = %maxHeight
+  if onClick.len > 0: p["onClick"] = %onClick
+  n("image", p)
+
+func avatar*(url, fallback: string, size = 24): Node =
+  ## A profile picture, or the letter to draw where there is none. The
+  ## fallback is here rather than in the renderer because which letter is a
+  ## question about the nick, and the nick is the tree's business.
+  n("avatar", %*{"url": url, "fallback": fallback, "size": size})
+
+func reaction*(emoji: string, count: int, mine: bool, onClick: string): Node =
+  ## A pill under a message. `mine` is what makes it look pressed, and is why
+  ## this is not just a button with a count in it.
+  n("reaction", %*{"emoji": emoji, "count": count, "mine": mine,
+                   "onClick": onClick})
+
+func status*(label: string, live = false): Node =
+  ## A connection indicator. `live` is what makes the dot beside it green, and
+  ## is why this is not a plain label.
+  n("status", %*{"label": label, "live": live})
+
+func emoji*(glyph, onClick: string): Node =
+  n("emoji", %*{"glyph": glyph, "onClick": onClick})
+
+func dialog*(title: string, props: JsonNode, children: varargs[Node]): Node =
+  ## A panel over the screen rather than a screen of its own. `frq.screens.app`
+  ## floats it where there is a pointer and draws it in place where there is
+  ## not; the tree says only that it is a dialog.
+  var p = if props.isNil: newJObject() else: props
+  p["title"] = %title
+  n("dialog", p, @children)

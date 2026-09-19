@@ -1,0 +1,235 @@
+## The screens, as pure functions of the state.
+##
+## These are the tests the ClojureDart screens never had and could not easily
+## have: a screen there is hiccup over cells a host installs, so exercising one
+## means standing up a host. Here it is a function from a record to a tree.
+
+import std/[json, sequtils, strutils, tables, unicode, unittest]
+import frq/[ui, cells, model]
+import frq/screens/connect as cs
+import frq/screens/settings as ss
+
+proc find*(node: Node, tag: string): seq[Node] =
+  if node.isNil: return
+  if node.tag == tag: result.add node
+  for c in node.children: result.add c.find(tag)
+
+proc labels(node: Node, tag: string): seq[string] =
+  node.find(tag).mapIt(it.props{"label"}.getStr())
+
+proc keys(node: Node, tag: string): seq[string] =
+  node.find(tag).mapIt(it.props{"key"}.getStr())
+
+suite "the connect screen":
+  setup:
+    var s = initState()
+
+  test "is a page with the title and the transport note":
+    let t = cs.connectScreen(s)
+    check t.tag == "page"
+    check "frq" in t.labels("title")
+    check cs.transportNote in t.labels("dim-label")
+
+  test "is pure — twice with no change is the same tree":
+    check $cs.connectScreen(s).toJson == $cs.connectScreen(s).toJson
+
+  test "guest is the default, and shows a nick field":
+    let t = cs.connectScreen(s)
+    check "Connect as guest" in t.labels("title-2")
+    check "nick" in t.keys("entry")
+    check "handle" notin t.keys("entry")
+
+  test "bluesky shows a handle and its own copy":
+    s.authMode = amBluesky
+    let t = cs.connectScreen(s)
+    check "Sign in with Bluesky" in t.labels("title-2")
+    check "handle" in t.keys("entry")
+    check "nick" notin t.keys("entry")
+
+  test "app-password asks for both, and says where to make one":
+    s.authMode = amAppPassword
+    let t = cs.connectScreen(s)
+    check "handle" in t.keys("entry")
+    check "app-password" in t.keys("entry")
+    check t.labels("dim-label").anyIt("App Passwords" in it)
+
+  test "a remembered session offers to be forgotten, and only then":
+    s.authMode = amBluesky
+    check "Forget saved session" notin cs.connectScreen(s).labels("button")
+    s.brokerToken = "tok"
+    check "Forget saved session" in cs.connectScreen(s).labels("button")
+
+  test "the login URL is shown while the browser is open":
+    s.authMode = amBluesky
+    s.loginUrl = "https://auth.freeq.at/x"
+    let t = cs.connectScreen(s)
+    check "https://auth.freeq.at/x" in t.labels("label")
+
+  test "the error note keeps its place whether or not there is an error":
+    # The bug the stable wrapper exists for: a renderer matching children by
+    # position would patch the header into a card when the error appeared.
+    let before = cs.connectScreen(s).children.mapIt(it.tag)
+    s.hasError = true
+    s.error = "nope"
+    check cs.connectScreen(s).children.mapIt(it.tag) == before
+    check "Dismiss" in cs.connectScreen(s).labels("button")
+
+  test "the remembered and login-url wrappers hold their place too":
+    s.authMode = amBluesky
+    let bare = cs.connectScreen(s)
+    s.brokerToken = "tok"
+    s.loginUrl = "https://x"
+    check cs.connectScreen(s).keys("vbox").filterIt(it.len > 0) ==
+          bare.keys("vbox").filterIt(it.len > 0)
+
+  test "connecting swaps Connect for a spinner and a way out":
+    s.connecting = true
+    let t = cs.connectScreen(s)
+    check t.find("spinner").len == 1
+    check "Connect" notin t.labels("button")
+    check "Cancel" in t.labels("button")
+
+suite "discover":
+  setup:
+    var s = initState()
+
+  test "lists the popular channels with their blurbs":
+    let t = ss.discoverScreen(s)
+    check t.labels("title-2") == popularChannels.mapIt(it[0])
+    check "#general" in t.keys("card")
+
+  test "offers Join for a room we are not in and Open for one we are":
+    check ss.discoverScreen(s).labels("button").countIt(it == "Join") ==
+          popularChannels.len
+    var r = initRoom("#test"); r.joined = true
+    s.rooms["#test"] = r
+    let t = ss.discoverScreen(s)
+    check "Open" in t.labels("button")
+    check t.labels("button").countIt(it == "Join") == popularChannels.len - 1
+
+  test "the tab bar is under it, with Discover selected":
+    let t = ss.discoverScreen(s)
+    s.screen = scDiscover
+    let sel = ss.discoverScreen(s).find("button")
+      .filterIt(it.props{"kind"}.getStr() == "primary")
+      .mapIt(it.props{"label"}.getStr())
+    check "Discover" in sel
+    check t.find("scroll").len == 1
+
+suite "settings":
+  setup:
+    var s = initState()
+
+  test "a guest is told so":
+    check "Guest — not signed in." in
+      ss.settingsScreen(s, connected = false, desktop = true).labels("dim-label")
+
+  test "a signed-in handle is shown, and can be forgotten":
+    s.formHandle = "alice.bsky.social"
+    s.brokerToken = "tok"
+    let t = ss.settingsScreen(s, connected = true, desktop = true)
+    check "alice.bsky.social" in t.labels("label")
+    check "Forget Bluesky session" in t.labels("button")
+
+  test "Disconnect when connected, Back to connect when not":
+    check "Disconnect" in
+      ss.settingsScreen(s, connected = true, desktop = true).labels("button")
+    check "Back to connect" in
+      ss.settingsScreen(s, connected = false, desktop = true).labels("button")
+
+  test "Quit only where there is a window to quit":
+    check "Quit" in
+      ss.settingsScreen(s, connected = false, desktop = true).labels("button")
+    check "Quit" notin
+      ss.settingsScreen(s, connected = false, desktop = false).labels("button")
+
+  test "the join/part switch reflects the cell":
+    let off = ss.settingsScreen(s, false, true).find("checkbutton")[0]
+    check not off.props{"active"}.getBool()
+    s.hideJoinPart = true
+    let on = ss.settingsScreen(s, false, true).find("checkbutton")[0]
+    check on.props{"active"}.getBool()
+
+  test "the status line is live only when connected":
+    check ss.settingsScreen(s, true, true).find("status")[0]
+            .props{"live"}.getBool()
+    check not ss.settingsScreen(s, false, true).find("status")[0]
+            .props{"live"}.getBool()
+
+import frq/screens/chats as ch
+
+suite "previewLine":
+  test "collapses whitespace so a card reads as one line":
+    check ch.previewLine("a\n  b\tc") == "a b c"
+  test "truncates a pasted script rather than growing the card":
+    let long = "x".repeat(200)
+    check ch.previewLine(long).runeLen == 60
+    check ch.previewLine(long).endsWith("…")
+
+  test "truncates by character, not by byte":
+    # A byte slice at 59 lands inside a multi-byte character and produces
+    # mojibake where an ellipsis was wanted. The first draft did exactly that.
+    let emoji = "😀".repeat(100)
+    let got = ch.previewLine(emoji)
+    check got.runeLen == 60
+    check got.validateUtf8 == -1
+  test "leaves a short line alone":
+    check ch.previewLine("hello there") == "hello there"
+
+suite "the chats screen":
+  setup:
+    var s = initState()
+    var r = initRoom("#test")
+    r.joined = true
+    r.messages = @[Message(frm: "alice", text: "hello")]
+    s.rooms["#test"] = r
+
+  test "an empty list says so instead of showing nothing":
+    var empty = initState()
+    check "No conversations yet — join a channel." in
+      ch.chatsScreen(empty, false).labels("dim-label")
+
+  test "a room is a card with its name and last line":
+    let t = ch.chatsScreen(s, true)
+    check "#test" in t.labels("title-2")
+    check "alice: hello" in t.labels("dim-label")
+
+  test "the title says who we are when connected":
+    check "Logged in as frq-guest" in ch.chatsScreen(s, true).labels("title")
+    check "Chats" in ch.chatsScreen(s, false).labels("title")
+
+  test "an unread count shows, with a mention marked differently":
+    var u = s.rooms["#test"]
+    u.unread = 3
+    s.rooms["#test"] = u
+    check "● 3" in ch.chatsScreen(s, true).labels("label")
+    u.mention = true
+    s.rooms["#test"] = u
+    check "◆ @ 3" in ch.chatsScreen(s, true).labels("label")
+
+  test "a channel we are not in is badged, a DM never is":
+    var away = s.rooms["#test"]
+    away.joined = false
+    s.rooms["#test"] = away
+    check "not joined" in ch.chatsScreen(s, true).labels("status")
+    var dmr = initRoom("alice")
+    s.rooms["alice"] = dmr
+    # Still only the one badge: a DM has nothing to join.
+    check ch.chatsScreen(s, true).labels("status").countIt(it == "not joined") == 1
+
+  test "the button says Message for a nick and Join for a channel":
+    s.joinInput = "#room"
+    check "Join" in ch.chatsScreen(s, true).labels("button")
+    s.joinInput = "@alice"
+    check "Message" in ch.chatsScreen(s, true).labels("button")
+
+  test "the search box offers a clear only when there is something to clear":
+    check "✕" notin ch.chatsScreen(s, true).labels("button")
+    s.search = "te"
+    check "✕" in ch.chatsScreen(s, true).labels("button")
+
+  test "search filters the list":
+    s.rooms["#other"] = initRoom("#other")
+    s.search = "oth"
+    let names = ch.chatsScreen(s, true).labels("title-2")
+    check names == @["#other"]
