@@ -26,7 +26,11 @@ type
     editIds*: seq[string] ## every msgid this line has worn — see `answersTo`
     frm*: string
     text*: string
-    at*: int64            ## epoch seconds, 0 where the line carried no time
+    at*: int64            ## epoch MILLISECONDS, 0 where the line carried none
+                          ## Milliseconds because `clock.parseTimeTag` answers
+                          ## in them and every clock function takes them. The
+                          ## first draft of this said seconds and the day
+                          ## headings quietly stopped appearing.
     system*: bool         ## a join/part/notice rather than something said
     mention*: bool
     edited*: bool
