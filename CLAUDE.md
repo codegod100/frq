@@ -1,44 +1,36 @@
 # Working in this repo
 
-## Nix
+## The toolchain, and where builds happen
 
-**STOP BUILDING LOCALLY. Build on Modal.** This machine is for editing and for
-evaluating — `nix flake check`, `nix eval`, `nix build --dry-run`, `nix repl`
-— and not for realising a derivation. A local build of the whole graph gets
-killed for memory long before it finishes, and the minutes spent finding that
-out are minutes not spent on the change. So:
+There is no nix in the build any more. `tools/toolchain.sh` fetches Flutter
+(which carries Dart), a JDK, the Clojure CLI and Nim as sha256-pinned tarballs
+into `.toolchain/`, and every `just` recipe runs inside the environment that
+script prints. `just tools android` adds Google's command-line tools, which is
+what `just build apk` needs before Gradle can have sdkmanager finish the SDK
+off. The host still brings a C compiler, OpenSSL, git, curl, unzip and
+python3 — and GTK with the usual CMake/Ninja/pkg-config for the Linux targets.
+
+**Prefer Modal for a long build.** A cold Flutter toolchain plus a full
+compile is a lot of laptop, and the containers in `.modal/` do it on a real
+machine:
 
 ```bash
-modal run .modal/flutter-web/container.py   # the web bundle, on Modal
-modal run .modal/flutter-dev/container.py   # the incremental Flutter loop
+just modal web    # the web bundle, on Modal
+just modal dev    # the incremental Flutter loop
 ```
 
 The containers in `.modal/` are not a third source tree: they are CI config
-that happens to live here, the way `.github/` would be.
-
-`--dry-run` locally to see what *would* be built, then hand the build to Modal.
-The one exception is a derivation you already know is trivial and already
-substitutable; if you are unsure, it is not the exception.
+that happens to live here, the way `.github/` would be. They run the very same
+`tools/toolchain.sh`, which is why a plain Debian image is enough.
 
 `modal app logs` is no substitute for watching that command: it resolves
 deployed apps by name, not the ephemeral one a `modal run` creates, and carries
 nothing until the Sandbox starts — the image build streams to the client and
 nowhere else.
 
-You are already running inside the Arch distrobox, where `nix` lives, so run
-the evaluating commands directly — do not wrap them in `distrobox enter`.
-
-The containers run as Modal **Sandboxes on a real VM**, which is what makes a
-build work out there at all: the ptyshim that used to stand in for a working
-pty under gVisor is deprecated, and nothing here should reintroduce it. Neither
-container carries nix: `tools/toolchain.sh` fetches Flutter, a JDK and the
-Clojure CLI by sha256 onto the `devshell` Volume, and the build runs out of
-those.
-
-A remote builder (`eu.nixbuild.net`) is also configured here, for the case
-where you want a derivation built somewhere other than Modal: `--store
-ssh-ng://eu.nixbuild.net --eval-store auto` rather than a `builders` entry, so
-the whole graph stays there and only .drv files go up.
+The containers run as Modal **Sandboxes on a real VM** rather than under
+gVisor: a real kernel, a working pty, and memory that is exactly what
+`[resources] memory` asks for.
 
 One thing this container is *not* representative of: `/etc/localtime` is a
 regular file here rather than a symlink, so anything that reads the zone out
@@ -56,7 +48,7 @@ Let them write to the terminal, or `tee` them if you want a copy to grep
 afterwards:
 
 ```bash
-modal run .modal/flutter-web/container.py 2>&1 | tee /tmp/frq-build.log
+modal run .modal/web/container.py 2>&1 | tee /tmp/frq-build.log
 ```
 
 Trim afterwards, on the file, where the whole run is still there to re-read.
@@ -83,7 +75,7 @@ ClojureDart — the core exists to have less Clojure in the tree, and adding
 more of it to call the thing replacing it is the wrong direction. ClojureDart
 shrinks from both ends.
 
-`just nim-test` and `just dart-test` need no Flutter, which is most of the
+`just test nim` and `just test dart` need no Flutter, which is most of the
 point: the whole boundary is checkable in about a second.
 
 A module is not deleted from `common/` when its Nim version lands: the web
@@ -120,19 +112,18 @@ every push.
 
 `flutter/` builds three things, from one `clojure -M:cljd compile`:
 
-`just apk`, out of the flake's own `.#flutter` shell (clojure, jdk17, flutter)
-and its `.#android-sdk` package. Impure on purpose: Gradle fetches its own
-dependencies and writes into `ANDROID_HOME`, so the recipe copies the store SDK
-to `flutter/.home` and lets it finish there.
+`just build apk`. Impure on purpose: Gradle resolves its own dependencies over
+the network and has sdkmanager install a platform and build-tools into
+`ANDROID_HOME` as it goes, which is why that SDK lives in `.toolchain/` and is
+ours to write to.
 
-`just flutter-desktop`, out of `.#flutter-desktop` (the same clojure and
-flutter, with cmake, ninja, pkg-config and gtk3 where the JDK and the SDK are).
-Impure for the network half of the same reasons and no writable-SDK dance,
-since nothing writes into the store. nixGL off NixOS.
+`just build desktop`, Flutter's Linux target — CMake, Ninja, pkg-config and
+GTK from the host where the APK wants a JDK and an SDK. Impure for the network
+half of the same reasons.
 
-`just flutter-web`, out of no nix shell at all — `tools/toolchain.sh` fetches
-the three pinned tarballs it needs, which is what lets `.modal/flutter-web/`
-run the same script on a plain Debian image.
+`just build web`, which needs least of all: a Dart, a JVM and a browser, and
+the browser is not ours. That is what lets `.modal/web/` run the same
+`tools/build-web.sh` on a plain Debian image.
 
 The consequence for `common/` is that "the phone" is not a synonym for "the
 ClojureDart side": three targets compile it. An implementation that branches on

@@ -1,9 +1,10 @@
-# `flutter-web`
+# `web`
 
-    modal run .modal/flutter-web/container.py
-    just modal flutter-web
+    modal run .modal/web/container.py
+    just modal web
 
-Defined by `container.toml`; see `../spec.md` for the keys.
+Defined by `container.toml`; `../_loader.py` is what reads it, and
+its comments are the spec.
 Built on `debian:13-slim`.
 
 No nix, and that is the point of this container rather than an
@@ -18,14 +19,14 @@ copying a nix closure back to a volume afterwards -- does not happen
 at all. The toolchain lands on the volume and the second run finds
 it there.
 
-The other two Flutter targets keep their devShells: `apk` needs the
-Android SDK and `flutter-desktop` needs GTK and a C++ toolchain, and
-a host toolchain is what nix is better at than a tarball. The web
-target needs a Dart and a JVM, which is what a tarball is for.
+The `dev` container beside it works the same way now, and so does a
+laptop: one script, one pinned set of tarballs, and whatever the
+host has to bring for a given target -- GTK and a C++ toolchain for
+the desktop build, Google's command-line tools for the APK.
 
 Same incremental shape as before -- the working tree, the generated
 Dart under `flutter/lib/cljd-out` and Flutter's caches live on the
-`devshell` volume, under `frq-flutter-web/` so the desktop
+`devshell` volume, under `frq-web/` so the desktop
 container's directory beside it is untouched. None of them is copied
 in from the laptop: a checkout's copy of the compiler's output is
 not this container's, and overwriting the volume's with it is how an
@@ -44,8 +45,8 @@ To look at what it built, ask for the serve action -- `[network]
 ports` tunnels 8080 out, and the URL is printed once the sandbox is
 scheduled:
 
-    modal run .modal/flutter-web/container.py \
-      --command 'cd /devshell/frq-flutter-web && tools/build-web.sh serve 8080'
+    modal run .modal/web/container.py \
+      --command 'cd /devshell/frq-web && tools/build-web.sh serve 8080'
 
 That blocks until you Ctrl-C it, and it bills until you do.
 
@@ -73,7 +74,7 @@ browser has no raw socket, so the IRC connection wants a WebSocket.
 and hands out `flutter/build/web`, so a rebuild in the Sandbox is
 picked up by the next cold start with nothing redeployed.
 
-    modal deploy .modal/flutter-web/serve.py
+    modal deploy .modal/web/serve.py
 
 `[network] ports` tunnels 8080 out of the Sandbox as well, for the
 case where you want the build and the server to be one process.

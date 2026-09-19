@@ -26,10 +26,11 @@ def main(command: str = "", shell: bool = False):
         c.run_sandbox(command)
         return
 
-    # `modal shell --image` only takes registry references, so it cannot be
-    # pointed at a published Modal image like arch-nix. Attaching to a running
-    # Sandbox can, and that Sandbox is this container: same image, same
-    # volumes, same env.
+    # `modal shell --image` takes a registry reference and nothing else, so
+    # it cannot be pointed at the image this container actually runs -- the
+    # one with its setup steps and its source copy in it. Attaching to a
+    # running Sandbox can, and that Sandbox is this container: same image,
+    # same volumes, same env.
     sb = c.open_sandbox()
     print(f"sandbox {sb.object_id} up, with {', '.join(c.volumes) or 'no volumes'}")
     print(f"  attach: modal shell {sb.object_id}   (from another terminal)")

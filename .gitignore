@@ -11,7 +11,8 @@
 /nim/tests/t*
 !/nim/tests/t*.nim
 
-# The pinned Flutter/JDK/Clojure tarballs `tools/toolchain.sh` fetches, plus
+# The pinned Flutter/JDK/Clojure/Nim tarballs and the Android SDK that
+# `tools/toolchain.sh` fetches, plus
 # the pub cache, gitlibs and maven repo it keeps beside them. A gigabyte of
 # SDK, reproducible from the hashes in that script.
 /.toolchain/
@@ -31,5 +32,5 @@
 # Python bytecode, from the loader the .modal/ containers import.
 __pycache__/
 
-# The mirror `just web-local` keeps of the Modal-built web bundle.
+# The mirror `just serve` keeps of the Modal-built web bundle.
 .web-local/

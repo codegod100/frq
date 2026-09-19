@@ -76,39 +76,36 @@ all of them — `clojure -M:cljd compile` over `src/` and `../common` — and wh
 differs is only what Flutter is asked to wrap it in.
 
 ```bash
-just apk                 # the debug APK
-just apk install         # and onto a connected device
-just apk run             # and launched
-just apk log             # logcat
+just build apk           # the debug APK
+just run apk             # onto a connected device, and launched
+just run log             # logcat
 
-just flutter-desktop     # the debug Linux bundle
-just flutter-desktop run # and the window
+just build desktop       # the debug Linux bundle
+just run desktop         # and the window
 
-just flutter-web         # the web bundle
-just flutter-web serve   # and served on :8080
+just build web           # the web bundle
+just run web             # and served on :8080
 ```
 
 ### The desktop one
 
-`just flutter-desktop` is this tree under Flutter's Linux target — the same
+`just build desktop` is this tree under Flutter's Linux target — the same
 screens out of `common/frq/screens/` as the APK, with `frq.hiccup` emitting
 Flutter widgets. There used to be a second desktop GUI beside it, libcosmic
 under jolt, walking the same hiccup through a different renderer; it is gone.
 
-Its toolchain is `devShells.flutter-desktop`, which is the APK shell with the
-Android half swapped out: clojure and Flutter are the same two packages at the
-same pinned rev, and CMake, Ninja, pkg-config and GTK stand where the JDK and
+Its toolchain is the same `.toolchain/` every other target uses — clojure and
+Flutter, at the same pins — with CMake, Ninja, pkg-config and GTK coming from
+the host where the JDK and
 the SDK do. Kept separate rather than merged into one shell because the halves
 are disjoint — a desktop build has no use for a few hundred megabytes of
 Android SDK.
 
 Still impure, for one of the two reasons the APK is: pub.dev resolution and
-Flutter's engine artifacts are network. What it does *not* need is the
-writable-`ANDROID_HOME` dance, since nothing here writes into the store — so
-there is no `flutter/.home` on this path.
+Flutter's engine artifacts are network. What it does *not* need is the Android
+SDK, so `just build desktop` never asks `tools/toolchain.sh` for one.
 
-nixGL off NixOS: Flutter paints through GL and the driver that can do that is
-the host's.
+GL is the host's, as is the driver that can do it.
 
 `linux/` is the Flutter template's GTK runner, renamed — `frq` rather than
 `cljd_flutter`, and `uk.nandi.frq` rather than `com.example.cljd_flutter`, so
@@ -132,28 +129,15 @@ Two things the desktop target changed in the Dart, both of them cases where
 ### The APK
 
 Impure on purpose. Gradle resolves its own dependencies over the network and
-installs build-tools and a platform into `ANDROID_HOME` as it goes, so it can
-neither run in a sandbox nor write to the store. What nix gives is the
-toolchain — clojure, a JDK, Flutter, and an SDK composed by androidenv — and
-the recipe copies that SDK to `flutter/.home` for Gradle to finish off. That
-copy and everything Gradle leaves behind are gitignored.
+has sdkmanager install build-tools and a platform into `ANDROID_HOME` as it
+goes, so it cannot run in a sandbox and the SDK it writes to has to be ours.
+`just tools android` fetches Google's command-line tools by pinned sha256 into
+`.toolchain/android-sdk` and accepts the licences; Gradle finishes the job from
+there. All of it is gitignored.
 
-All of it is the flake's, which it did not used to be. The toolchain was
-`nix shell nixpkgs#clojure nixpkgs#jdk17 nixpkgs#flutter` and the SDK was a
-`nix build --impure --expr` around `builtins.getFlake
-"github:NixOS/nixpkgs/nixos-unstable"` — two references to an *unlocked*
-nixpkgs, so the Flutter that compiled the APK and the nixpkgs under everything
-else could drift apart without flake.lock changing a line. They are
-`devShells.<system>.flutter` and `packages.<system>.android-sdk` now, at the
-pinned rev, and the recipe is `nix develop .#flutter --command` over
-`nix build .#android-sdk`.
-
-The SDK needs `allowUnfree` and `android_sdk.accept_license`, which cannot be
-set on a `legacyPackages` attribute after the fact — hence `androidPkgsFor` in
-the flake, a second `import` of the same locked input rather than a second
-nixpkgs. The Flutter toolchain is kept out of the default dev shell: it brings
-its own Dart and a JDK's worth of closure, and a desktop build wants none of
-it.
+The platform and build-tools versions are deliberately not pinned here: they
+come from whatever Flutter asks Gradle for, and pinning them in a second place
+is how the two drift apart.
 
 Two things the Flutter template wanted that are deliberately not here. There is
 no `ndkVersion` in `android/app/build.gradle.kts`: setting it makes Gradle
@@ -249,7 +233,7 @@ move from. What remains is work the port never covered:
    listen on localhost for a browser it does not own. That wants an app link or
    a custom scheme, an intent filter, and a redirect URI the broker will accept
    — a decision about freeq's broker, not a porting problem. The web build has
-   its own answer in `frq.oauth.web`, and `just web-local` is why it only
+   its own answer in `frq.oauth.web`, and `just serve` is why it only
    completes on localhost.
 2. **Calls.** The signaling is IRC and is still in the screens; the media plane
    it drove was `libjoltmoq` — Opus, H.264, V4L2, ALSA, MoQ over QUIC — under

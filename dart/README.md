@@ -11,7 +11,7 @@ things:
 * **It tests on the plain Dart VM.** `flutter/pubspec.yaml` depends on the
   Flutter SDK, so `dart pub get` cannot resolve it at all — anything living
   there needs a Flutter toolchain to run one assertion about a string. This
-  package resolves and tests in a second. `just dart-test`.
+  package resolves and tests in a second. `just test dart`.
 * **It says which way the dependency goes.** The Flutter app depends on this
   by path. Nothing here may depend on Flutter, and if that ever becomes
   tempting the thing being written belongs on the other side of the line.

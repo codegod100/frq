@@ -2,22 +2,18 @@
 
 Every container -- under `containers/` here, `.modal/` in a repo that merely
 builds itself on Modal -- is a directory with a `container.toml` and
-a stub `container.py`. See `spec.md` for the keys; this file is what reads
-them. Nothing here is Modal-specific configuration in its own right -- each
+a stub `container.py`. The keys are documented by the comments below, which
+is the whole of the spec. Nothing here is Modal-specific configuration in its
+own right -- each
 spec key maps onto a documented Modal argument, and the mapping is meant to
 stay boring enough to read straight through.
 """
 
 import os
-import shlex
 import subprocess
 import tomllib
 
 import modal
-
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PTYSHIM_C = os.path.join(REPO, "ptyshim.c")
-SHIM_SO = "/opt/ptyshim.so"
 
 
 class SpecError(Exception):
@@ -44,34 +40,16 @@ class Container:
         self.command = run.get("command", "")
         self.env = dict(run.get("env", {}))
 
-        # Substituters reach nix through NIX_CONFIG rather than nix.conf, and
-        # at run time rather than build time. Written into the image's nix.conf
-        # instead, nix touches the path while the image is being built and
-        # creates it -- and Modal will not mount a volume over a non-empty
-        # directory, so the container that wanted the cache cannot start. As
-        # env it covers every nix command that runs in the container, the ones
-        # typed by hand in a shell included, and leaves the mount point empty.
-        if subs := list(spec.get("nix", {}).get("substituters", [])):
-            line = "extra-substituters = " + " ".join(subs)
-            self.env["NIX_CONFIG"] = (
-                f"{self.env['NIX_CONFIG']}\n{line}" if "NIX_CONFIG" in self.env
-                else line
-            )
-
         # "function" (the default) or "sandbox". Sandboxes can run on a real
         # VM, which Functions cannot -- see ../README.md.
         self.runtime = spec.get("container", {}).get("runtime", "function")
-
-        nix = spec.get("nix", {})
-        self.use_flake = bool(nix.get("flake", False))
-        self.use_shim = bool(nix.get("shim", False))
 
         # name -> mount path. Modal Volumes, mounted while the container runs
         # and NOT while its image is built: a volume mount is not part of the
         # resulting image, so anything written to one during a build step is
         # gone by the time the container starts. Persist across runs is the
-        # whole point -- a nix store to substitute from, a cargo target
-        # directory, a dataset too big to bake in.
+        # whole point -- a toolchain too big to fetch every run, a build
+        # tree an incremental compile reuses, a dataset too big to bake in.
         self.volume_spec = dict(spec.get("volumes", {}))
 
         # Ports to tunnel out of a Sandbox, from [network] ports. Encrypted,
@@ -86,7 +64,7 @@ class Container:
 
         # Modal re-imports this module inside the container, so everything
         # below runs twice: once here, once out there. Out there the local
-        # tree does not exist -- no flake.nix, no ptyshim.c, no repo -- and
+        # tree does not exist -- no repo to copy from -- and
         # the image is already built, so validating and rebuilding it would
         # only fail. The App still has to exist for the decorators to bind.
         if self.is_remote:
@@ -124,17 +102,6 @@ class Container:
             )
         if bool(c.get("base")) == bool(c.get("registry")):
             raise SpecError("set exactly one of [container] base or registry")
-        if self.use_flake:
-            if not os.path.exists(os.path.join(self.dir, "flake.nix")):
-                raise SpecError("[nix] flake = true but there is no flake.nix")
-            if not self.use_shim:
-                # Warming the shell builds nix-shell-env, which is the gVisor
-                # pty bug. Failing here beats failing ten minutes into a build.
-                raise SpecError(
-                    "[nix] flake = true needs shim = true -- see ../README.md"
-                )
-        if self.use_shim and not os.path.exists(PTYSHIM_C):
-            raise SpecError(f"[nix] shim = true but {PTYSHIM_C} is missing")
         if self.ports and self.runtime != "sandbox":
             raise SpecError(
                 "[network] ports needs [container] runtime = \"sandbox\" --"
@@ -146,9 +113,9 @@ class Container:
                     f"[volumes] {name} must be an absolute path, not {mount!r}"
                 )
             # Mounting over one of these hides what the image already has
-            # there -- /nix in particular, where the empty volume would shadow
-            # the store the base image spent its build populating.
-            if mount.rstrip("/") in ("", "/nix", "/nix/store", "/usr", "/etc"):
+            # there: an empty volume would shadow what the image's own build
+            # put in its place.
+            if mount.rstrip("/") in ("", "/usr", "/etc", "/bin", "/lib"):
                 raise SpecError(
                     f"[volumes] {name} may not mount over {mount} --"
                     " it would hide what the image has there"
@@ -161,33 +128,6 @@ class Container:
 
     # -- image -----------------------------------------------------------
 
-    @property
-    def nix(self) -> str:
-        """The `nix` command as the container runs it.
-
-        A sandbox on a real VM has a working pty, so the shim buys nothing
-        there and is left off even when the image was built with it.
-        """
-        if self.use_shim and not self.vm_at_runtime:
-            return f"LD_PRELOAD={SHIM_SO} nix"
-        return "nix"
-
-    @property
-    def vm_at_runtime(self) -> bool:
-        """True when this container actually runs on a VM rather than gVisor."""
-        return (self.runtime == "sandbox"
-                and bool(self.experimental_options.get("vm_runtime")))
-
-    @property
-    def build_nix(self) -> str:
-        """The `nix` command for BUILD steps, which always run under gVisor.
-
-        Image builds are Functions underneath, so a sandbox container still
-        needs the shim while its image is being built -- only its run time
-        gets the VM.
-        """
-        return f"LD_PRELOAD={SHIM_SO} nix" if self.use_shim else "nix"
-
     def _build_image(self) -> modal.Image:
         c = self.spec["container"]
         build = self.spec.get("build", {})
@@ -197,45 +137,6 @@ class Container:
         else:
             image = modal.Image.from_registry(c["registry"])
 
-        # `nix profile install` puts things in ~/.nix-profile/bin, which is on
-        # nobody's PATH here -- so the install succeeds and the very next line
-        # says `command not found`. Set on the image rather than in a .bashrc,
-        # because a container's command runs under `sh -c` and reads neither.
-        # Spelled out rather than prefixed onto $PATH: an image env is a value,
-        # not a shell expression, so "$PATH" here would be four literal
-        # characters.
-        image = image.env({
-            "PATH": "/root/.nix-profile/bin:/usr/local/sbin:/usr/local/bin"
-                    ":/usr/sbin:/usr/bin:/sbin:/bin",
-        })
-
-        if self.use_shim:
-            image = image.add_local_file(
-                PTYSHIM_C, "/opt/ptyshim.c", copy=True
-            ).run_commands(
-                f"gcc -shared -fPIC -O2 -o {SHIM_SO} /opt/ptyshim.c -ldl"
-            )
-
-        # Warm the devShell BEFORE the source is copied in. Everything the
-        # shell needs is binary-cached, so the download happens once -- but
-        # only if this layer survives. Copy the source first and any edit to
-        # any file invalidates the warm, and the whole closure is fetched
-        # again on every build. Only flake.nix and flake.lock go in here, so
-        # the layer is invalidated by a dependency change and nothing else.
-        if self.use_flake:
-            for f in ("flake.nix", "flake.lock"):
-                path = os.path.join(self.dir, f)
-                if os.path.exists(path):
-                    image = image.add_local_file(
-                        path, f"{self.workdir}/{f}", copy=True
-                    )
-            image = image.run_commands(
-                f"cd {self.workdir} && {self.build_nix} develop"
-                " --accept-flake-config --command true",
-                f'echo "store paths after warming:'
-                f' $({self.build_nix} path-info --all | wc -l)"',
-            )
-
         # copy=True throughout: later run_commands need these files present.
         # `context` is what include paths are relative to, and it may sit above
         # the container directory -- a container that builds the repo it lives
@@ -244,19 +145,13 @@ class Container:
 
         # Image building and program building, kept apart.
         #
-        # `[build] commands` run AFTER the source copy, so any edit anywhere in
-        # the tree invalidates them -- and for a container whose commands warm
-        # a devShell, that means minutes of nix on every iteration of a
-        # one-line change. `warm` + `setup` are the same two steps moved in
-        # front of the source: `warm` names only the files the flake actually
-        # evaluates (its own, and whatever the devShell's derivations read),
-        # and `setup` runs against those alone. Editing `flutter/src` then
-        # invalidates nothing above the final copy, and the toolchain layer is
-        # reused until a dependency moves.
-        #
-        # Volumes are mounted here for `commands`' reason: a step that can
-        # reach the binary cache never has to build, which is the one thing
-        # gVisor will not do.
+        # `[build] commands` run AFTER the source copy, so any edit anywhere
+        # in the tree invalidates them. `warm` + `setup` are the same step
+        # moved in front of the source: `warm` names only the files the step
+        # actually reads, and `setup` runs against those alone, so editing
+        # `flutter/src` invalidates nothing above the final copy. A container
+        # whose setup is an `apt-get` needs no `warm` at all -- it reads
+        # nothing out of the tree, so nothing in the tree can invalidate it.
         for rel in build.get("warm", []):
             src = os.path.normpath(os.path.join(context, rel))
             dest = f"{self.workdir}/{rel}"
@@ -281,21 +176,17 @@ class Container:
             else:
                 image = image.add_local_file(src, dest, copy=True)
 
-        # A repo copied in brings its `.git` along, and in a worktree that is a
-        # *file* holding `gitdir: <path on the machine that copied it>`. Nix
-        # believes it and goes looking for a checkout that is not there --
-        # `nix develop` and `nix build .#x` both die before evaluating
-        # anything. Nothing in a container wants the git metadata, so it goes.
+        # A repo copied in brings its `.git` along, and in a worktree that is
+        # a *file* holding `gitdir: <path on the machine that copied it>` --
+        # which points at nothing out here, so any tool that follows it fails
+        # in a way that has nothing to do with what it was asked to do.
+        # Nothing in a container wants the git metadata, so it goes.
         image = image.run_commands(f"rm -rf {self.workdir}/.git")
 
         if commands := build.get("commands", []):
-            # Volumes mounted for the build too, not just the run. A build step
-            # that wants nix to *build* something is the one thing gVisor will
-            # not do -- image builds are Functions underneath, and a derivation
-            # there dies on `unexpected EOF reading a line`. Substituting is
-            # fine, so a step that can reach the cache never has to build, and
-            # the shim stays retired. The mount is not part of the resulting
-            # image; only what the step writes outside it is.
+            # Volumes mounted for the build too, not just the run, so a step
+            # can read a cache the last run filled. The mount is not part of
+            # the resulting image; only what the step writes outside it is.
             image = image.run_commands(*commands, volumes=self.volumes)
 
         # container.py does `from _loader import Container`, and Modal mounts
@@ -386,15 +277,10 @@ class Container:
         return kwargs
 
     def shell_command(self, override: str = "") -> str:
-        """The full shell line the container runs, devShell wrapper included."""
+        """The full shell line the container runs."""
         command = override or self.command
         if not command:
             raise SpecError("container.toml has no [run] command")
-        if self.use_flake:
-            return (
-                f"cd {self.workdir} && {self.nix} develop --accept-flake-config"
-                f" --command sh -c {shlex.quote(command)}"
-            )
         return f"cd {self.workdir} && {command}"
 
     def run_sandbox(self, override: str = "") -> str:

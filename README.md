@@ -53,7 +53,7 @@ There used to be a third tree, `src/`, and another runtime under it: jolt, with
 **libcosmic** in a desktop window and by `libjolttui` in a terminal, plus an
 AV media plane over MoQ. It is gone. Flutter is the only frontend now, which is
 why `common/` no longer carries `#?(:jolt ...)` reader conditionals and why the
-calls, terminal and `nix run .#frq` sections that used to be here are not.
+calls and terminal sections that used to be here are not.
 
 ## Tracing
 
@@ -63,18 +63,17 @@ Android is logcat.
 ## Running
 
 ```bash
-just flutter-desktop run     # the Linux window
-just apk run                 # onto a connected Android device
-just flutter-web serve       # a browser, on :8080
+just run desktop     # the Linux window
+just run apk         # onto a connected Android device
+just run web         # a browser, on :8080
 ```
 
-Every recipe lives in the `justfile` itself. The two that need a toolchain from
-Nix re-enter `nix develop` and come back to the same recipe, so `just
-flutter-desktop` and `nix develop .#flutter-desktop --command just
-flutter-desktop` are one code path rather than two. `just flutter-web` needs no
-Nix at all: `tools/toolchain.sh` fetches Flutter, a JDK and the Clojure CLI by
-sha256, which is what lets `.modal/flutter-web/` run the same script on a plain
-Debian image.
+Every recipe lives in the `justfile` itself, and none of them needs Nix:
+`tools/toolchain.sh` fetches Flutter, a JDK, the Clojure CLI and Nim by
+sha256 into `.toolchain/`, and every recipe runs inside that. It is the same
+script `.modal/` runs, which is what lets a plain Debian image build this.
+`just build apk` additionally asks it for Google's command-line tools, and
+sdkmanager finishes the Android SDK off.
 
 All three are one `clojure -M:cljd compile` over `flutter/src` and `common/`,
 and differ only in which Flutter target runs afterwards.
@@ -90,7 +89,7 @@ cargo run --release --bin freeq-server        # in the freeq checkout
 A browser has no TCP, so the web build wants a WebSocket URL in the Server
 field — `wss://irc.freeq.at/irc`. And Bluesky sign-in only completes on
 `localhost`, because that is the one origin freeq's auth broker will redirect
-back to: `just web-local` is what serves the Modal-built bundle there.
+back to: `just serve` is what serves the Modal-built bundle there.
 
 ## Signing in
 

@@ -1,0 +1,140 @@
+[container]
+name        = "frq-dev"
+description = "the Flutter desktop build, incremental, from a pinned toolchain"
+# `debian:13-slim` and not `arch-nix`: there is no nix in this container any
+# more, and no flake left in the tree for it to enter. The build is
+# `just build desktop`, which gets Flutter, a JDK, the Clojure CLI and Nim out
+# of `tools/toolchain.sh` by pinned sha256 -- so what the image owes it is the
+# C and GTK half Flutter's Linux target links against, and nothing else.
+registry    = "debian:13-slim"
+# A Sandbox, not a Function: runs on a real VM, and the command is
+# the sandbox's own process so it dies when the command does.
+runtime     = "sandbox"
+
+[build]
+# The container lives inside the repo it builds, so the copy is rooted two
+# levels up and `.` is the whole tree.
+context = "../.."
+include = ["."]
+# The whole image build, and it is one apt line. What used to be here -- a nix
+# store to populate and a devShell to print into /etc/devshell.sh, so that a
+# shell attached to this container *was* the devShell -- is gone with the nix
+# it was for. The toolchain script now plays that part, and it lives on the
+# volume rather than in a layer.
+#
+# The first half is what the toolchain itself needs: git, because Flutter
+# shells out to it against its own SDK checkout and refuses to run without
+# one; unzip and xz-utils for the tarballs; ca-certificates so curl can verify
+# what it fetches; rsync for the sync below.
+#
+# The second half is Flutter's Linux target: CMake, Ninja and pkg-config drive
+# the build, GTK 3 is what the runner links, and a C toolchain compiles both
+# that and whatever `nim c` is asked for. libssl is Nim's: nim.cfg is
+# `-d:ssl`, and std/net resolves -lssl and -lcrypto through dynlib at run time.
+setup = [
+  "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git rsync tar unzip xz-utils && rm -rf /var/lib/apt/lists/*",
+  "apt-get update && apt-get install -y --no-install-recommends build-essential clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libssl-dev && rm -rf /var/lib/apt/lists/*",
+]
+# The build state a local checkout carries: 395MB of a 441MB repo, uploaded on
+# every start and wanted by nothing out there. Flutter builds into a volume of
+# its own, and the clojure caches are this machine's.
+ignore  = [
+    "flutter/build", "flutter/.home", "flutter/.dart_tool",
+    "flutter/.clojuredart", "flutter/.cpcache",
+    # The ClojureDart compiler's output. Uploading a laptop's copy would make
+    # the rsync below overwrite the one the last container compiled, and every
+    # file whose content differed would look new to the compiler and to
+    # Flutter -- the incremental build undone by the thing meant to feed it.
+    "flutter/lib/cljd-out",
+    # The toolchain, which is a gigabyte of Flutter SDK and lives on the
+    # volume out here.
+    ".toolchain",
+    ".cpcache", "result", "build", ".git",
+    # An editor's linter rewrites this while the upload is reading it, and
+    # Modal fails the whole run with "was modified during build process".
+    ".clj-kondo",
+]
+
+# One volume now, where there were two: the nix binary cache went with nix.
+# `devshell` is the working state of an incremental loop, shared by every
+# container that has one -- each gets its own directory under it, named for
+# what it belongs to, so `web` and `flutter-desktop` never write the
+# same tree. Modal Volumes have no locking, so those directory names are the
+# only thing keeping them apart, and two runs of the *same* container must not
+# overlap.
+[volumes]
+devshell = "/devshell"
+
+[resources]
+cpu     = 8
+memory  = 16384
+timeout = 3600
+
+[run]
+workdir = "/app"
+# Source in, toolchain out of the volume, build in place. None of it
+# evaluates anything: the old command spent its first minutes entering a
+# devShell, printing an environment, caching that environment against
+# flake.lock and copying a nix closure back afterwards, all to arrive at a
+# PATH. A PATH is what `tools/toolchain.sh env` prints, out of a directory
+# already on the volume.
+#
+# An incremental build is the point, and `nix build` could not give one: a
+# derivation is all-or-nothing, so any edit is a fresh sandbox and a fresh
+# compile of everything. Here the toolchain supplies the compiler and
+# `flutter build` decides what is stale -- which is the whole reason
+# `just build desktop` exists as the working-tree loop.
+command = """
+set -e
+SHELL_DIR=/devshell/frq-desktop
+
+# Beside the working tree and NOT inside it: the rsync below runs with
+# --delete, so anything under $SHELL_DIR that is not in /app is removed on
+# every run. A cache kept in there would be deleted moments before it was
+# consulted.
+export FRQ_TOOLCHAIN=/devshell/frq-desktop.toolchain
+mkdir -p "$SHELL_DIR" "$FRQ_TOOLCHAIN"
+
+echo "sync: /app -> $SHELL_DIR"
+# rsync and not cp, with --checksum and not mtimes: Modal copies the source in
+# with fresh timestamps every run, so a plain copy looks entirely new to
+# Flutter and rebuilds the lot. --checksum compares content and leaves the
+# unchanged files' timestamps alone, which is the whole basis of the
+# incremental build.
+#
+# The excludes are the state we are here to keep -- overwriting them from /app
+# would defeat the volume.
+rsync -a --checksum --delete \
+    --exclude 'flutter/.home/' \
+    --exclude 'flutter/.clojuredart/' \
+    --exclude 'flutter/build/' \
+    --exclude 'flutter/lib/cljd-out/' \
+    --exclude 'flutter/.dart_tool/' \
+    --exclude '.toolchain/' \
+    --exclude '.git' \
+    /app/ "$SHELL_DIR/"
+
+cd "$SHELL_DIR"
+# What survived from the last run, by presence and not by size: `du` here
+# walked the pub cache, the toolchain and every object of the last build over
+# a network volume, for numbers nobody acts on.
+for d in "$FRQ_TOOLCHAIN" flutter/.clojuredart flutter/lib/cljd-out flutter/build; do
+    [ -d "$d" ] && echo "  carried over: $d"
+done
+
+# Run from the volume, where the state it reuses lives. `just` is not in this
+# image and is not worth an apt line for one call: the recipe is a wrapper
+# around the toolchain, and this is that wrapper.
+tools/toolchain.sh exec -- bash -euo pipefail -c '
+    cd flutter
+    clojure -Sdeps "{:mvn/local-repo \\"$FRQ_M2\\"}" -M:cljd compile
+    flutter build linux --debug'
+
+echo "built:"
+du -sh flutter/build
+"""
+# Flutter keeps its settings under XDG_CONFIG_HOME and its own caches under
+# XDG_CACHE_HOME. Both point into the volume so a second run finds what the
+# first one decided. Set here rather than in the command so a shell into this
+# container gets them too.
+env     = { XDG_CACHE_HOME = "/devshell/frq-desktop.toolchain/.cache", XDG_CONFIG_HOME = "/devshell/frq-desktop.toolchain/.config", FRQ_TOOLCHAIN = "/devshell/frq-desktop.toolchain" }

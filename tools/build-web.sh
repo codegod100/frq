@@ -6,7 +6,7 @@
 # one target that needs nothing from the host — no JDK of the machine's, no
 # GTK, no Android SDK, no nix. `tools/toolchain.sh` fetches the three tarballs
 # it does need, and everything below runs out of `.toolchain/`. The container
-# in `.modal/flutter-web/` runs this same file; `just flutter-web` is a
+# in `.modal/web/` runs this same file; `just build web` is a
 # wrapper around it.
 #
 #   tools/build-web.sh                      build build/web

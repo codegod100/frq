@@ -1,5 +1,5 @@
 [container]
-name        = "frq-flutter-web"
+name        = "frq-web"
 description = "the Flutter web build, incremental, from a pinned toolchain"
 # `debian:13-slim` and not `arch-nix`: there is no nix in this container any
 # more. The build is `tools/build-web.sh`, which fetches its own Flutter, JDK
@@ -57,7 +57,7 @@ ignore  = [
 # One volume now, where there were two: the nix binary cache went with nix.
 # `devshell` is the working state of an incremental loop, shared by every
 # container that has one -- each gets its own directory under it, named for
-# what it belongs to, so `flutter-web` and `flutter-desktop` never write the
+# what it belongs to, so `web` and `flutter-desktop` never write the
 # same tree. Modal Volumes have no locking, so those directory names are the
 # only thing keeping them apart, and two runs of the *same* container must
 # not overlap.
@@ -87,13 +87,13 @@ workdir = "/app"
 # directory that is already on the volume.
 command = """
 set -e
-SHELL_DIR=/devshell/frq-flutter-web
+SHELL_DIR=/devshell/frq-web
 
 # Beside the working tree and NOT inside it: the rsync below runs with
 # --delete, so anything under $SHELL_DIR that is not in /app is removed on
 # every run. A cache kept in there would be deleted moments before it was
 # consulted -- which is what happened to the last one that tried.
-export FRQ_TOOLCHAIN=/devshell/frq-flutter-web.toolchain
+export FRQ_TOOLCHAIN=/devshell/frq-web.toolchain
 mkdir -p "$SHELL_DIR" "$FRQ_TOOLCHAIN"
 
 echo "sync: /app -> $SHELL_DIR"
@@ -125,7 +125,7 @@ for d in "$FRQ_TOOLCHAIN" flutter/.clojuredart flutter/lib/cljd-out flutter/buil
     [ -d "$d" ] && echo "  carried over: $d"
 done
 
-# The same script `just flutter-web` runs, with the same single build mode:
+# The same script `just build web` runs, with the same single build mode:
 # what is served and what a laptop compiles are the same bundle.
 tools/build-web.sh build
 """
@@ -133,4 +133,4 @@ tools/build-web.sh build
 # XDG_CONFIG_HOME, and its own caches under XDG_CACHE_HOME. Both point into
 # the volume so a second run finds what the first one decided. Set here
 # rather than in the command so a shell into this container gets them too.
-env     = { XDG_CACHE_HOME = "/devshell/frq-flutter-web.toolchain/.cache", XDG_CONFIG_HOME = "/devshell/frq-flutter-web.toolchain/.config", FRQ_TOOLCHAIN = "/devshell/frq-flutter-web.toolchain" }
+env     = { XDG_CACHE_HOME = "/devshell/frq-web.toolchain/.cache", XDG_CONFIG_HOME = "/devshell/frq-web.toolchain/.config", FRQ_TOOLCHAIN = "/devshell/frq-web.toolchain" }

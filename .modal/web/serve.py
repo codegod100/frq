@@ -2,13 +2,13 @@
 
 Not part of `container.py`, and not a key in `container.toml`, because it is
 the other half of a split the build already makes: the Sandbox compiles into
-`/devshell/frq-flutter-web` and exits, and what it leaves behind is a
+`/devshell/frq-web` and exits, and what it leaves behind is a
 directory of static files that outlives it. A Function mounting the same
 volume can hand those out without rebuilding anything, and can scale to zero
 between readers -- which a Sandbox holding a tunnel open cannot.
 
-    modal serve .modal/flutter-web/serve.py     # while editing, auto-reloads
-    modal deploy .modal/flutter-web/serve.py    # a URL that stays
+    modal serve .modal/web/serve.py     # while editing, auto-reloads
+    modal deploy .modal/web/serve.py    # a URL that stays
 
 Deliberately NOT built on the container's own image. That image carries the
 repo and a few gigabytes of devShell closure, all of it for a compile that
@@ -26,9 +26,9 @@ import modal
 # lazy, so naming it here costs nothing until a container actually mounts it.
 DEVSHELL = modal.Volume.from_name("devshell", create_if_missing=True)
 
-# Where `just flutter-web` leaves its output, under this devShell's own
+# Where `just web` leaves its output, under this devShell's own
 # directory on the shared volume -- the same path container.toml builds in.
-WEB_ROOT = "/devshell/frq-flutter-web/flutter/build/web"
+WEB_ROOT = "/devshell/frq-web/flutter/build/web"
 
 PORT = 8080
 

@@ -148,7 +148,7 @@ jobs:
         # nowhere else, and `modal app logs` cannot reach an ephemeral run —
         # so this terminal is the only place the build is visible. tee, not
         # tail: a run killed mid-pipe through tail takes its output with it.
-        run: modal run .modal/flutter-web/container.py 2>&1 | tee /tmp/frq-build.log
+        run: modal run .modal/web/container.py 2>&1 | tee /tmp/frq-build.log
 
       # The Sandbox leaves the bundle on the devshell volume rather than
       # anywhere a runner can see, so fetch it back out.
@@ -157,13 +157,13 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         # Into a directory that already exists, which `modal volume get` then
-        # creates `web/` inside — the same shape `just web-local` uses. Naming
+        # creates `web/` inside — the same shape `just serve` uses. Naming
         # `web` as the destination itself is what failed, with `[Errno 21] Is a
         # directory`, after the Modal build had already succeeded.
         run: |
           mkdir -p dist
           modal volume get --force devshell \
-            frq-flutter-web/flutter/build/web dist
+            frq-web/flutter/build/web dist
 
       - uses: actions/upload-artifact@v4
         with:

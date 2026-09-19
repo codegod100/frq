@@ -21,7 +21,7 @@ is proven against it. Nothing is deleted on faith.
 ```
 src/frq_core.nim        the C ABI: every exported symbol, and nothing else
 src/frq/ircparse.nim    the IRC wire format
-tests/                  one per module, run by `just nim-test`
+tests/                  one per module, run by `just test nim`
 ```
 
 `src/frq_core.nim` is the only file that knows about C. Everything under
@@ -57,7 +57,7 @@ deleted as each module lands: they are the web's implementation, not dead code.
 
 ## What is wired up
 
-`just nim-app run` is the real client with the Nim core as its transport. Every
+`just run app` is the real client with the Nim core as its transport. Every
 screen, cell and action is the one that was already there; `frq.main-nim` is
 `frq.main` with one line changed.
 
@@ -88,29 +88,30 @@ replies, no images — and the path forward from it was rewriting every screen
 in Nim and losing all of that. It is at 1d62d1a if it is ever wanted.
 
 ```bash
-just nim-app run     # the real client, Nim transport
-just nim-test        # the Nim suite
-just dart-test       # the Dart side of the boundary
-just nim-lib         # libfrqcore.so into build/nim
+just run app         # the real client, Nim transport
+just test nim        # the Nim suite
+just test dart       # the Dart side of the boundary
+just build lib       # libfrqcore.so into build/nim
 
-FRQ_TRACE=1 just nim-app run    # every line in and out, both languages
+FRQ_TRACE=1 just run app    # every line in and out, both languages
 ```
 
-The GUI needs OpenSSL on its loader path, which the `flutter-desktop` shell
-provides as `FRQ_OPENSSL_LIB` and the `nim-app` recipe prepends for the app
-alone. Not set as `LD_LIBRARY_PATH` in the shell itself: that shell also runs
-Flutter through nixGL, which does its own careful things to the loader path.
+The GUI needs OpenSSL on its loader path: Nim resolves the entry points
+through dynlib at run time, and without the library there `newContext` dies in
+a SIGSEGV that says nothing about SSL. The recipe prepends `FRQ_OPENSSL_LIB`
+for the app alone, so a host whose libssl is somewhere unusual has one variable
+to set rather than an `LD_LIBRARY_PATH` to inherit.
 
 ## Status
 
-`frq/ircparse.nim` is ported and tested — 29 cases, `just nim-test` — and the
+`frq/ircparse.nim` is ported and tested — 29 cases, `just test nim` — and the
 ABI is exercised from C through `dlopen`, including the allocation contract
 under a hundred thousand parse/free cycles. That half is real.
 
 The Dart binding is real too, and is `dart/frq_core` — **plain Dart, not
 ClojureDart**. It calls the library over `dart:ffi` and is covered by 20 tests
 on the Dart VM, including the UTF-8 round trip and ten thousand calls against
-the ownership rules. `just dart-test` runs the pair of them in about a second.
+the ownership rules. `just test dart` runs the pair of them in about a second.
 
 The binding was ClojureDart for one commit and should not have been: the Nim
 core exists to have less Clojure in the tree, and `lookupFunction` takes two
@@ -123,8 +124,7 @@ the shipping app is unchanged and `frq.main-nim` is a second entry point
 beside it. `common/frq/irc/parse.cljc` is still what does the parsing on every
 target, including this one. That step is its
 own piece of work — the Flutter app takes the package as a path dependency
-(which means a `pubspec.lock` regeneration and widening the nix build's source
-root), the library has to reach each target (`jniLibs` for the APK, beside the
+(which means a `pubspec.lock` regeneration), the library has to reach each target (`jniLibs` for the APK, beside the
 executable for the desktop bundle), and only then can a call site choose Nim
 on native and the ClojureDart original on the web.
 
@@ -135,9 +135,10 @@ Modules still in `common/` and not yet here: `rooms`, `msgsig`, `crypto`,
 ## Building
 
 ```bash
-just nim-test     # the Nim test suite
-just nim-lib      # libfrqcore.so into build/nim
+just test nim     # the Nim test suite
+just build lib    # libfrqcore.so into build/nim
 ```
 
-Both want `nix develop .#nim`, and re-enter it themselves if they are not
-already inside.
+Both run out of `.toolchain/`, which `tools/toolchain.sh` fills on first
+use. What they want from the host is a C compiler -- `nim c` shells out to one
+-- and OpenSSL.
