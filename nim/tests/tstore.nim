@@ -1,119 +1,133 @@
-## What survives a restart. Every case runs against a real directory under a
-## temporary XDG_CONFIG_HOME, because the thing being tested is files.
+## What survives a restart, and what deliberately does not.
+##
+## Every test here points `XDG_CONFIG_HOME` at a directory of its own, set
+## before `frq/store` is touched at all: the alternative is a suite that reads
+## and writes the config of whoever runs it, which would both lie about the
+## result and cost them their room list.
 
-import std/[os, tables, unittest]
-import frq/[store, model]
+import std/[json, os, sets, tables, times, unittest]
 
-template withTempConfig(body: untyped) =
-  let dir = getTempDir() / "frq-test-store-" & $getCurrentProcessId()
-  removeDir(dir)
-  createDir(dir)
-  putEnv("XDG_CONFIG_HOME", dir)
-  defer:
-    delEnv("XDG_CONFIG_HOME")
-    removeDir(dir)
-  body
+let sandbox = getTempDir() / "frq-tstore-" & $epochTime()
+putEnv("XDG_CONFIG_HOME", sandbox)
 
-suite "the session":
-  test "absent when nothing was saved":
-    withTempConfig:
-      check loadSession()[1] == false
+import frq/[cells, clock, model, rooms, store, reducer]
 
-  test "round-trips":
-    withTempConfig:
-      check saveSession(SavedSession(brokerToken: "tok", handle: "alice",
-                                     did: "did:plc:x", nick: "alice"))
-      let (s, ok) = loadSession()
-      check ok
-      check s.brokerToken == "tok"
-      check s.handle == "alice"
-      check s.did == "did:plc:x"
+proc clean() =
+  removeDir(sandbox)
+  app = initState()
 
-  test "one with no broker token is not a session":
-    # The token is the whole point of saving one.
-    withTempConfig:
-      check saveSession(SavedSession(handle: "alice"))
-      check loadSession()[1] == false
+suite "the config directory":
+  test "is under XDG_CONFIG_HOME where there is one":
+    check configDir() == sandbox / "frq"
 
-  test "a file that will not parse is treated as absent":
-    # A stale credential is not worth an error at startup.
-    withTempConfig:
-      createDir(configDir())
-      writeFile(sessionFile(), "{ this is not json")
-      check loadSession()[1] == false
-
+suite "a saved session":
+  setup: clean()
+  test "round-trips, and says whether there was one":
+    check loadSession()[1] == false
+    check saveSession(SavedSession(brokerToken: "durable", handle: "alice.uk",
+                                   did: "did:plc:a", nick: "alice"))
+    let (s, had) = loadSession()
+    check had
+    check s.brokerToken == "durable"
+    check s.did == "did:plc:a"
+  test "with no broker token is not a session":
+    # The token is the whole point of saving one; the handle beside it is
+    # only there to say whose it is.
+    check saveSession(SavedSession(handle: "alice.uk"))
+    check loadSession()[1] == false
   test "is written so nobody else can read it":
-    withTempConfig:
-      check saveSession(SavedSession(brokerToken: "tok"))
-      let perms = getFilePermissions(sessionFile())
-      check fpGroupRead notin perms
-      check fpOthersRead notin perms
+    check saveSession(SavedSession(brokerToken: "durable"))
+    check getFilePermissions(sessionFile()) == {fpUserRead, fpUserWrite}
+  test "and restore brings it back as the Bluesky mode":
+    check saveSession(SavedSession(brokerToken: "durable", handle: "alice.uk",
+                                   nick: "alice"))
+    restore()
+    check app.brokerToken == "durable"
+    check app.authMode == amBluesky
+    check app.formHandle == "alice.uk"
+    check app.formNick == "alice"
 
-  test "clearing it leaves nothing behind":
-    withTempConfig:
-      check saveSession(SavedSession(brokerToken: "tok"))
-      clearSession()
-      check loadSession()[1] == false
+suite "the rooms file":
+  setup: clean()
 
-  test "clearing one that is not there is not an error":
-    withTempConfig:
-      clearSession()
+  proc saved(): seq[SavedRoom] =
+    var rooms: OrderedTable[string, Room]
+    for (name, accessed, id, at) in [("#a", 100'i64, "m1", 900'i64),
+                                     ("#b", 300'i64, "m2", 800'i64),
+                                     ("carol", 200'i64, "", 0'i64)]:
+      var r = initRoom(name)
+      r.accessed = accessed
+      r.lastReadId = id
+      r.lastReadAt = at
+      r.messages = @[Message(id: "x", frm: "bob", text: "hi", at: 1000)]
+      rooms[name] = r
+    check saveRooms(rooms)
+    loadRooms()
 
-suite "the rooms":
-  test "none when nothing was saved":
-    withTempConfig:
-      check loadRooms().len == 0
+  test "keeps the name and the marker, and not the messages":
+    # The list is the part worth keeping; the lines in it come from the
+    # server, and a client that saved them would be a second copy to go
+    # stale.
+    let rs = saved()
+    check rs.len == 3
+    check rs[0].name == "#a"
+    check rs[0].lastReadId == "m1"
+    check rs[0].lastReadAt == 900
 
-  test "round-trip, with the markers":
-    # A phone that kept the names and lost the markers comes back to a
-    # hundred lines it has already read.
-    withTempConfig:
-      var rooms = initOrderedTable[string, Room]()
-      var a = initRoom("#one")
-      a.accessed = 5
-      a.lastReadId = "m1"
-      a.lastReadAt = 1234
-      rooms["#one"] = a
-      rooms["#two"] = initRoom("#two")
-      check saveRooms(rooms)
+  test "restore brings them back empty, unjoined, with their markers":
+    discard saved()
+    restore()
+    check app.rooms.len == 3
+    check app.rooms["#a"].messages.len == 0
+    check not app.rooms["#a"].joined
+    check app.rooms["#a"].lastReadId == "m1"
+    check app.rooms["#a"].accessed == 100
+    check app.rooms["#b"].accessed == 300
 
-      let got = loadRooms()
-      check got.len == 2
-      check got[0].name == "#one"
-      check got[0].accessed == 5
-      check got[0].lastReadId == "m1"
-      check got[0].lastReadAt == 1234
+  test "and the most recently used is still top of the list":
+    discard saved()
+    restore()
+    check channelList(app.rooms, "")[0].name == "#b"
 
-  test "order is kept — most recently used first is the file's own order":
-    withTempConfig:
-      var rooms = initOrderedTable[string, Room]()
-      for n in ["#c", "#a", "#b"]: rooms[n] = initRoom(n)
-      check saveRooms(rooms)
-      check loadRooms().len == 3
-      check loadRooms()[0].name == "#c"
+  test "a record with no marker is caught up, not unread from the start":
+    # An older frq's file, or one that lost it. The alternative announces a
+    # hundred lines the reader has already seen.
+    discard saved()
+    restore()
+    let before = nowMs()
+    check app.rooms["carol"].lastReadAt >= before - 5000
+    check app.rooms["carol"].lastReadAt > 0
 
-  test "a record with no name is dropped rather than defaulted":
-    withTempConfig:
-      createDir(configDir())
-      writeFile(roomsFile(), """[{"name":"#ok"},{"accessed":3}]""")
-      let got = loadRooms()
-      check got.len == 1
-      check got[0].name == "#ok"
+  test "a room the reader has closed stays closed":
+    discard saved()
+    restore()
+    dispatch(%*{"id": "room.leave:#a"})
+    app = initState()
+    restore()
+    check not app.rooms.hasKey("#a")
+    check app.rooms.hasKey("#b")
 
-  test "a file that will not parse is no rooms, not an error":
-    withTempConfig:
-      createDir(configDir())
-      writeFile(roomsFile(), "not json at all")
-      check loadRooms().len == 0
-
-suite "the preferences":
-  test "round-trip":
-    withTempConfig:
-      check savePrefs({"hideJoinPart": true, "showUsers": false}.toTable)
-      let got = loadPrefs()
-      check got["hideJoinPart"] == true
-      check got["showUsers"] == false
-
-  test "absent is empty":
-    withTempConfig:
-      check loadPrefs().len == 0
+suite "the prefs file":
+  setup: clean()
+  test "the three display toggles outlive the run":
+    restore()
+    let wasJoinPart = app.hideJoinPart
+    dispatch(%*{"id": "join-part.toggle"})
+    dispatch(%*{"id": "users.toggle"})
+    app = initState()
+    restore()
+    check app.hideJoinPart == not wasJoinPart
+    check app.showUsers
+  test "the overview is not one of them":
+    # It is a way of looking at the moment you are in rather than a
+    # preference, and reopening into it would answer a question nobody asked
+    # twice.
+    restore()
+    dispatch(%*{"id": "overview.toggle"})
+    app = initState()
+    restore()
+    check not app.overview
+  test "and a prefs file that is not there is a first run, not an error":
+    check loadPrefs().len == 0
+    restore()
+    check not app.hideJoinPart

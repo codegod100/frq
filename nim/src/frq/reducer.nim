@@ -35,6 +35,10 @@ proc setError(msg: string) =
   app.error = msg
   app.hasError = true
 
+proc rememberRooms(force = false)
+  ## Declared here because `openRoom` is above it and calls it — the file is
+  ## ordered by what the reader does, not by what calls what.
+
 proc send(line: string) =
   trace("out", line)
   tr.send(line)
@@ -49,16 +53,100 @@ proc openRoom(name: string) =
   app.atPresent = true
   # Opening a room is reading it: the marker moves to the newest line here.
   app.rooms[name] = app.rooms[name].markRead
+  # Both of the things the file keeps just changed — where this room sits in
+  # the list, and how much of it has been read. Throttled, so a reader
+  # flicking through five rooms writes once.
+  rememberRooms()
+
+proc restoreRooms() =
+  ## The rooms of earlier runs, in the order they were last used.
+  ##
+  ## Empty buffers, not memberships: the list of rooms is the part worth
+  ## keeping and the messages in them come from the server. What makes a
+  ## returning backlog readable is the marker beside each name — without one
+  ## every replayed line is new and every room comes back with its whole
+  ## history unread.
+  ##
+  ## Inserted oldest first, so the table's own order matches the list the
+  ## reader last saw; `accessed` comes back from the file, so anything that
+  ## sorts agrees with it. A record with no marker at all — an older frq's
+  ## file, or one that lost it — is caught up to now rather than counted from
+  ## the beginning, which is the kinder of the two wrong answers.
+  let saved = loadRooms()
+  if saved.len == 0: return
+  for i in countdown(saved.high, 0):
+    let r = saved[i]
+    if app.rooms.hasKey(r.name): continue
+    var ch = initRoom(r.name)
+    ch.accessed = r.accessed
+    ch.lastReadId = r.lastReadId
+    ch.lastReadAt = if r.lastReadAt > 0: r.lastReadAt else: nowMs()
+    app.rooms[r.name] = ch
+  trace("store", $saved.len & " rooms remembered")
+
+proc restorePrefs() =
+  ## The display toggles. Three booleans, and every one of them is the
+  ## reader's answer to a question this client has no business re-asking on
+  ## every run — whether the comings and goings are worth seeing, whether the
+  ## member list is up, whether the room list is out of the way.
+  let prefs = loadPrefs()
+  app.hideJoinPart = prefs.getOrDefault("hideJoinPart", app.hideJoinPart)
+  app.showUsers = prefs.getOrDefault("showUsers", app.showUsers)
+  app.hideChatList = prefs.getOrDefault("hideChatList", app.hideChatList)
+
+proc rememberPrefs() =
+  discard savePrefs({"hideJoinPart": app.hideJoinPart,
+                     "showUsers": app.showUsers,
+                     "hideChatList": app.hideChatList}.toTable)
+
+var
+  roomsSavedAt: int64 = 0
+  roomsWritten: string
+
+proc roomsDigest(): string =
+  ## Exactly the fields the file holds, so "nothing changed" means nothing
+  ## the file would show changed. A message arriving in a room nobody is
+  ## looking at moves `lastActivity`, which is not saved and must not cost a
+  ## write.
+  for name, r in app.rooms:
+    result.add name & "\x1f" & $r.accessed & "\x1f" & r.lastReadId &
+               "\x1f" & $r.lastReadAt & "\x1e"
+
+proc rememberRooms(force = false) =
+  ## Write the room list out, at most every five seconds.
+  ##
+  ## Throttled because the things that move a marker — opening a room,
+  ## reading one, a line arriving in the one you are looking at — happen in
+  ## bursts, and a file write per line is a file write per line.
+  ##
+  ## A late write costs at most the handful of lines that arrived since the
+  ## last one, shown unread again next run. That is the right way round: the
+  ## marker never claims to have read more than it has. `force` is for the
+  ## moments there may not be a next chance — leaving a room, disconnecting.
+  let now = nowMs()
+  if not force and now - roomsSavedAt < 5000: return
+  # `drain` calls this on every frame, so the throttle alone would write the
+  # same file every five seconds for as long as the app is open.
+  let digest = roomsDigest()
+  if digest == roomsWritten: return
+  roomsSavedAt = now
+  roomsWritten = digest
+  discard saveRooms(app.rooms)
 
 proc restore*() =
   ## What a previous run left on disk, back in the state.
   ##
-  ## Only the sign-in: a broker token is what saves the reader a login page,
-  ## and the mode goes with it because a remembered session is not much use
-  ## sitting behind the Guest tab. The nick and handle come along so the
-  ## screen says who it is about before the broker is asked.
+  ## Three files, and they answer three different questions: who you are, what
+  ## you were in, and how you like it. Any of them may be missing, and a run
+  ## with none of them is a first run rather than an error.
+  restoreRooms()
+  restorePrefs()
   let (saved, had) = loadSession()
   if not had: return
+  # The broker token is what saves the reader a login page, and the mode goes
+  # with it: a remembered session is not much use sitting behind the Guest
+  # tab. The nick and handle come along so the screen says who it is about
+  # before the broker is asked.
   app.brokerToken = saved.brokerToken
   app.authMode = amBluesky
   if saved.handle.len > 0: app.formHandle = saved.handle
@@ -232,6 +320,7 @@ proc dispatch*(event: JsonNode) =
   of "connect": connectNow()
 
   of "cancel", "disconnect":
+    rememberRooms(force = true)
     # A browser wait is part of connecting, so Cancel ends it too — otherwise
     # a tab finished ten minutes later would sign in behind the reader.
     oa.cancel()
@@ -269,6 +358,9 @@ proc dispatch*(event: JsonNode) =
     if app.rooms.hasKey(arg):
       if not dm(arg): send("PART " & arg)
       app.rooms.del(arg)
+      # Forced: a room removed and not written out comes back on the next run
+      # as one the reader has already closed.
+      rememberRooms(force = true)
       if app.current == arg:
         app.current = ""
         app.screen = scChats
@@ -291,10 +383,23 @@ proc dispatch*(event: JsonNode) =
   of "search.clear": app.search = ""
 
   # ---------------------------------------------------------- chat chrome
-  of "chat-list.toggle": app.hideChatList = not app.hideChatList
-  of "users.toggle": app.showUsers = not app.showUsers
-  of "overview.toggle": app.overview = not app.overview
-  of "join-part.toggle": app.hideJoinPart = not app.hideJoinPart
+  # The three that outlive the run are written as they are pressed. There is
+  # no Save on this screen and no moment that is obviously the last one — the
+  # window closes when it closes.
+  of "chat-list.toggle":
+    app.hideChatList = not app.hideChatList
+    rememberPrefs()
+  of "users.toggle":
+    app.showUsers = not app.showUsers
+    rememberPrefs()
+  of "overview.toggle":
+    # Not kept: the overview is a way of looking at the moment you are in
+    # rather than a preference, and a client that reopened into it would be
+    # answering a question nobody asked twice.
+    app.overview = not app.overview
+  of "join-part.toggle":
+    app.hideJoinPart = not app.hideJoinPart
+    rememberPrefs()
   of "jump.present":
     app.atPresent = true
     app.jumpTick += 1
@@ -520,7 +625,22 @@ proc drain*() =
       app.connecting = false
       app.status = "Connected as " & app.formNick
       app.screen = scChats
-      send("JOIN #test")
+      # What the file says we were in, we ask to be in again. The server
+      # forgets: it has told this client it is in rooms it is not and left out
+      # ones it is, so the saved list is the authority and a room is gone when
+      # the reader closes it and not before.
+      #
+      # DMs are not joined — there is nothing to be in — but they are in the
+      # list and come back with their markers all the same.
+      var asked = 0
+      for name, _ in app.rooms:
+        if not dm(name):
+          send("JOIN " & name)
+          asked.inc
+      # A first run has nothing saved. `#test` is where this client has always
+      # landed with no list of its own, and stays that until the server's own
+      # JOINs are what fills an empty one.
+      if asked == 0: send("JOIN #test")
 
     of "PRIVMSG":
       if p.params.len >= 2:
@@ -628,4 +748,7 @@ proc drain*() =
     else:
       trace("skip", p.command & " " & $p.params)
 
-
+  # A line arriving moves the marker in the room being looked at, and closing
+  # the window is not a moment this client gets told about — so the saving
+  # happens as it goes, throttled, rather than at an end that may never come.
+  rememberRooms()
