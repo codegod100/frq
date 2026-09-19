@@ -107,6 +107,30 @@ class _NimAppState extends State<NimApp> {
   TextStyle _style(double size, Color color) =>
       TextStyle(fontSize: size, color: color, height: 1.35);
 
+  /// The style for a widget whose whole content is an emoji glyph.
+  ///
+  /// Naming the colour emoji font is not belt and braces: a glyph like ✏️ is
+  /// U+270F plus U+FE0F, and the variation selector is a *request* for emoji
+  /// presentation, not a guarantee. DejaVu Sans claims U+270F, so ordinary
+  /// fallback stops there and draws the monochrome pencil the text era had —
+  /// while 🙂, which no text font covers, falls all the way through to the
+  /// emoji font and looks right. That is why only some of the chips were
+  /// wrong.
+  ///
+  /// A family list rather than one name, because the font that has them
+  /// differs by platform, and a name nothing matches costs nothing.
+  static const List<String> _emojiFonts = <String>[
+    'Noto Color Emoji',      // Linux, Android
+    'Apple Color Emoji',     // macOS, iOS
+    'Segoe UI Emoji',        // Windows
+  ];
+
+  TextStyle _emojiStyle(double size) => TextStyle(
+        fontSize: size,
+        fontFamily: _emojiFonts.first,
+        fontFamilyFallback: _emojiFonts,
+      );
+
   double _d(dynamic v, double fallback) =>
       v is num ? v.toDouble() : fallback;
 
@@ -428,7 +452,7 @@ class _NimAppState extends State<NimApp> {
         return _wrapTap(
           n.prop('onClick', ''),
           Text(n.prop('glyph', n.prop('emoji', '')),
-              style: TextStyle(fontSize: _d(n.props['size'], 16))),
+              style: _emojiStyle(_d(n.props['size'], 16))),
         );
 
       /// A reaction pill: the glyph, and the tally beside it where there is
@@ -458,7 +482,7 @@ class _NimAppState extends State<NimApp> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(n.prop('emoji', ''), style: TextStyle(fontSize: size)),
+                  Text(n.prop('emoji', ''), style: _emojiStyle(size)),
                   if (count > 0) ...[
                     const SizedBox(width: 4),
                     Text('$count',

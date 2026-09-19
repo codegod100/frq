@@ -51,9 +51,10 @@ func reactionRow(m: Message, me: string): Node =
   ##
   ## A pill carries its count and toggles: clicking one you are already on
   ## takes yours off, which is the same gesture that put it there. `reaction`
-  ## rather than a button with the emoji as its label — the chip draws the
-  ## glyph from the Twemoji pack, in colour, where a label gets whatever the
-  ## text font has.
+  ## rather than a button with the emoji as its label — the renderer draws a
+  ## `reaction` in the colour emoji font, where a label gets whatever ordinary
+  ## fallback finds, which for ✏️ and ↩️ is a monochrome glyph out of a text
+  ## font.
   result = n("hbox", %*{"key": "pills", "spacing": chipGap})
   var emojis: seq[string]
   for r in m.reactions: emojis.add r.emoji

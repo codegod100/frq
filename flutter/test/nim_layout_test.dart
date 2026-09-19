@@ -178,4 +178,34 @@ void main() {
       }
     }
   });
+
+  group('emoji', () {
+    // ✏️ is U+270F plus a variation selector asking for emoji presentation,
+    // and DejaVu Sans claims U+270F — so ordinary fallback draws a monochrome
+    // pencil and never reaches the emoji font. Naming the font is the fix,
+    // and this is the assertion that it is still named.
+    //
+    // Emoji *presentation*, which is narrower than "not a letter". A glyph
+    // carrying U+FE0F is asking for it, and so is anything from the emoji
+    // blocks. The arrows and crosses on buttons — → ✕ ☰ — are not: they are
+    // text glyphs on purpose and take the text font, as does the reply chip's
+    // "↩ me: a picture", where the arrow sits in a sentence.
+
+    testWidgets('a lone glyph is drawn in the colour emoji font',
+        (tester) async {
+      core.demoUi();
+      await layOut(tester, sizes['desktop']!);
+      final glyphs = tester
+          .widgetList<Text>(find.byType(Text))
+          .where((t) =>
+              t.data != null &&
+              RegExp(r'[\ufe0f\u{1f300}-\u{1faff}]', unicode: true)
+                  .hasMatch(t.data!));
+      expect(glyphs, isNotEmpty, reason: 'the chat screen draws no emoji');
+      for (final g in glyphs) {
+        expect(g.style?.fontFamilyFallback, contains('Noto Color Emoji'),
+            reason: 'a bare glyph without the emoji font: ${g.data}');
+      }
+    });
+  });
 }
