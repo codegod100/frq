@@ -61,17 +61,23 @@ deleted as each module lands: they are the web's implementation, not dead code.
 ABI is exercised from C through `dlopen`, including the allocation contract
 under a hundred thousand parse/free cycles. That half is real.
 
-The Dart binding (`flutter/src/frq/core/ffi.cljd`) is **not**: it is written
-but nothing requires it, so no build has compiled it. Nothing calls the core
-yet, and `common/frq/irc/parse.cljc` is still what every target actually runs.
+The Dart binding is real too, and is `dart/frq_core` — **plain Dart, not
+ClojureDart**. It calls the library over `dart:ffi` and is covered by 20 tests
+on the Dart VM, including the UTF-8 round trip and ten thousand calls against
+the ownership rules. `just dart-test` runs the pair of them in about a second.
 
-The next step is that binding, and it is the one with the unknown in it:
-`.lookupFunction` takes native and Dart type arguments, and how ClojureDart
-spells a generic interop call is the thing to establish before porting a
-second module. After it: the library has to reach the targets — `jniLibs` for
-the APK, beside the executable for the desktop bundle — and then
-`frq.core.irc` can choose between the Nim implementation and the ClojureDart
-one per target, which is also how the web keeps working.
+The binding was ClojureDart for one commit and should not have been: the Nim
+core exists to have less Clojure in the tree, and `lookupFunction` takes two
+type arguments, so it meant fighting generic interop to write more of the
+thing being removed. In Dart it is a typedef. See `dart/README.md`.
+
+What is **not** done is the wiring: nothing imports `frq_core`, so
+`common/frq/irc/parse.cljc` is still what every target runs. That step is its
+own piece of work — the Flutter app takes the package as a path dependency
+(which means a `pubspec.lock` regeneration and widening the nix build's source
+root), the library has to reach each target (`jniLibs` for the APK, beside the
+executable for the desktop bundle), and only then can a call site choose Nim
+on native and the ClojureDart original on the web.
 
 Modules still in `common/` and not yet here: `rooms`, `msgsig`, `crypto`,
 `atproto/core`, `oauth/core`, `store`, `irc/handshake`, `irc/mutate`,

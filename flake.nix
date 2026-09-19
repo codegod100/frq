@@ -459,6 +459,19 @@
           inherit (pkgs) lib;
         in
         {
+          # Dart on its own, for the tests that need no Flutter: the FFI
+          # binding to the Nim core runs on the plain VM, and making it wait
+          # for a Flutter toolchain would throw away the reason it is fast.
+          #
+          # Flutter bundles a Dart, so this is a duplicate in one sense. It is
+          # also thirty times smaller, and the point of the boundary is that
+          # you can check it without the thing on the other side of it.
+          dart = pkgs.mkShellNoCC {
+            name = "frq-dart";
+            packages = [ pkgs.dart pkgs.just ];
+            FRQ_DART = "1";
+          };
+
           # Nim, for `nim/` — the portable core as a native library. Just the
           # compiler: the core has no dependencies outside Nim's own standard
           # library, deliberately, because a dependency here is one that has

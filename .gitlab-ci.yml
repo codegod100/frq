@@ -27,3 +27,15 @@ nim-test:
   image: nimlang/nim:2.2.0-alpine
   script:
     - cd nim && for t in tests/t*.nim; do nim c -r --hints:off --path:src "$t"; done
+
+# The Dart side of the same boundary. Needs the Nim library built first, which
+# is why this is one job and not two: the artifact would be larger than the
+# build that makes it.
+dart-test:
+  stage: check
+  image: dart:3.13
+  script:
+    - apt-get update -qq && apt-get install -y -qq nim
+    - cd nim && nim c --app:lib --mm:orc -d:release --hints:off --path:src
+        --out:../build/nim/libfrqcore.so src/frq_core.nim
+    - cd ../dart/frq_core && dart pub get && dart test -r expanded

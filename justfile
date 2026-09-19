@@ -404,3 +404,26 @@ nim-lib:
         --path:src --out:"$out/libfrqcore.so" src/frq_core.nim
     echo "built $out/libfrqcore.so"
     nm -D --defined-only "$out/libfrqcore.so" | grep ' T frq_' || true
+
+# The Dart side of the Nim boundary, on the plain Dart VM.
+#
+# No Flutter, no emulator, no ClojureDart — `dart/frq_core` is ordinary Dart
+# over `dart:ffi` and is not a Flutter package, so the test that proves the
+# marshalling runs in a second. Passing `just nim-test` and failing this one is a
+# marshalling bug, which is the whole reason the two suites are separate.
+#
+# Builds the library first: the test dlopens a real .so and there is no point
+# reporting that it could not find one.
+dart-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_DART:-}" ]; then
+        # nim-lib before the re-entry, not after: it enters a shell of its own
+        # and doing it on the far side would build the library twice.
+        just nim-lib
+        exec {{nix}} develop .#dart --max-jobs {{jobs}} --command just dart-test
+    fi
+    cd dart/frq_core
+    dart pub get
+    dart test -r expanded

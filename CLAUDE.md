@@ -77,7 +77,14 @@ Two rules the ABI has, both of which cost a segfault to rediscover:
   Nim's allocator is not Dart's.
 * `frq_init` runs once before anything else.
 
-`just nim-test` needs no Flutter and no Dart, which is most of the point.
+`dart/frq_core` is the other half of that seam, and is **plain Dart**. New
+code on the Dart side of the boundary is written in Dart rather than
+ClojureDart — the core exists to have less Clojure in the tree, and adding
+more of it to call the thing replacing it is the wrong direction. ClojureDart
+shrinks from both ends.
+
+`just nim-test` and `just dart-test` need no Flutter, which is most of the
+point: the whole boundary is checkable in about a second.
 
 A module is not deleted from `common/` when its Nim version lands: the web
 target cannot load a native library, so the ClojureDart original is the web's

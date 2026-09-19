@@ -17,12 +17,13 @@ Source lives in three trees:
 common/  .cljc  portable: the screens, the state, the protocol — no dart:
 flutter/ .cljd  the Flutter half, and the host's answers — flutter/README.md
 nim/     .nim   the portable logic as a native library — nim/README.md
+dart/    .dart  the binding to it, and not a Flutter package — dart/README.md
 ```
 
-The first two are the client as it runs today; `nim/` is where the logic under
-the screens is moving, a module at a time, behind a C ABI the Dart side calls
-through FFI. One module has made the trip so far. See `nim/README.md` for
-what is wired up and what is not.
+The first two are the client as it runs today. `nim/` is where the logic under
+the screens is moving, a module at a time, behind a C ABI; `dart/` is what
+calls it. One module has made the trip so far and nothing imports it yet — see
+`nim/README.md` for what is wired up and what is not.
 
 What `common/` needs of the host it asks `common/frq/io.cljc` for — the seam,
 named once and answered per target: `frq.io.dart` on Android and the desktop,

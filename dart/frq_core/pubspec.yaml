@@ -1,0 +1,15 @@
+name: frq_core
+description: The Dart side of frq's Nim core — dart:ffi and nothing else.
+publish_to: none
+version: 0.1.0
+
+# Deliberately NOT a Flutter package. The binding is dart:ffi and dart:convert,
+# so it resolves and tests on the plain Dart VM — which is what lets `just
+# dart-test` run in a second instead of behind a Flutter toolchain. The
+# Flutter app depends on this by path; the dependency does not run the other
+# way, and should not.
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dev_dependencies:
+  test: ^1.25.0

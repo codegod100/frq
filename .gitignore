@@ -4,6 +4,10 @@
 # Nim's own object/cache tree, and the test binaries `nim c -r` leaves beside
 # the sources — one per tests/t*.nim, named without an extension.
 /nim/nimcache/
+
+# Dart's per-package resolution output.
+/dart/*/.dart_tool/
+/dart/*/pubspec.lock
 /nim/tests/t*
 !/nim/tests/t*.nim
 
