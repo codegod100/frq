@@ -71,16 +71,9 @@
       url = "github:nix-community/nixGL";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-
-    # Wraps a closure into a single self-extracting file. Only the `appimage`
-    # output evaluates it.
-    nix-appimage = {
-      url = "github:ralismark/nix-appimage";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, nixgl, nix-appimage }:
+  outputs = { self, nixpkgs, jolt-src, jolt-native, glimmer, nixgl }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forEachSystem = f:
@@ -458,24 +451,18 @@
           # show` admits it exists.
           android-sdk = androidSdkFor pkgs.stdenv.hostPlatform.system;
 
-          # frq and everything it loads, squashed into one runnable file for
-          # hosts without Nix. The whole closure rides along — Mesa included,
-          # which is not waste: off NixOS the launcher goes through nixGL, and
-          # nixGL needs a store Mesa to put the host's driver in front of.
-          appimage =
-            nix-appimage.bundlers.${pkgs.stdenv.hostPlatform.system}.default frq;
-
-          # The other desktop GUI, squashed the same way. `flutter-desktop` is
-          # already the nixGL-wrapped launcher rather than the raw Flutter
-          # bundle, so this carries the same store Mesa for the same reason —
-          # and it is the whole point here, since a host with Flutter's
-          # runtime deps but no Nix is exactly who wants one file.
+          # There were two `appimage` outputs here — this GUI's and Flutter's —
+          # and what they were for was a host without Nix. They squashed the
+          # whole closure into one runnable file, Mesa included, and the Mesa
+          # was not waste: off NixOS the launcher goes through nixGL, which
+          # needs a store Mesa to put the host's driver in front of.
           #
-          # Named by its backend, the way the outputs it wraps are: `appimage`
-          # is libcosmic's and this is Flutter's, and neither is the default.
-          flutter-appimage =
-            nix-appimage.bundlers.${pkgs.stdenv.hostPlatform.system}.default
-              self.packages.${pkgs.stdenv.hostPlatform.system}.flutter-desktop;
+          # `tools/build-desktop.sh` answers that now, and answers it without
+          # a closure to carry: jolt ships as one static binary, the backends
+          # as jolt-native's `portable` tarball, and the GL driver is simply
+          # the host's. No Mesa to get in front of, so no nixGL, so nothing to
+          # squash. These outputs were the last thing evaluating nix-appimage,
+          # which is why that input is gone too.
 
           # Everything `clojure -M:cljd compile` would otherwise reach the
           # network for, fetched once and hashed.
