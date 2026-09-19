@@ -55,58 +55,51 @@ yet, and until it is, **the web build must keep using the ClojureDart
 originals**. This is why the originals stay in `common/` rather than being
 deleted as each module lands: they are the web's implementation, not dead code.
 
-## The spike
+## What is wired up
 
-`just nim-spike` opens a window with no ClojureDart on the path, connects to
-irc.freeq.at over TLS, joins `#test` and sends a message. Nim owns the state,
-the screens, the socket and the IRC protocol; Dart owns the pixels.
+`just nim-app run` is the real client with the Nim core as its transport. Every
+screen, cell and action is the one that was already there; `frq.main-nim` is
+`frq.main` with one line changed.
 
 ```
-src/frq/ui.nim              the widget tree, in the screens' own tag vocabulary
-src/frq/state.nim           the record, the reducer, and drain()
-src/frq/irc.nim             the socket, on its own thread, behind two channels
-src/frq/screens/            connect and chat, as pure functions of the state
-src/frq/trace.nim           FRQ_TRACE=1, the same switch the rest of frq uses
+src/frq/conn.nim      the socket, the TLS, the line framing — on its own thread
+src/frq/ircparse.nim  the IRC wire format
+src/frq/trace.nim     FRQ_TRACE=1, the same switch the rest of frq uses
 ```
 
-Three decisions worth knowing before changing any of it:
+The seam is `frq.net`, which already existed with two implementations;
+`flutter/src/frq/net/nim.cljd` is a third beside `frq.net.dart` and
+`frq.net.web`. Nim owns the socket and nothing above it — the line goes to the
+existing `frq.irc.parse`, so `on-msg` receives the same map from the same
+parser and nothing upstairs can tell which transport it is on.
+
+Two things to know before changing `conn.nim`:
 
 * **Nothing is shared with the socket thread.** Nim's ORC is thread-local for
-  ref types, so sharing the state would mean a lock per field and a heap two
-  threads both collect. The reader speaks only in channels, and `drain()` turns
-  its output into state on whichever thread Dart called in on.
-* **Dart polls; Nim never calls back.** A Dart callback from a foreign thread
-  has to be marshalled onto the main isolate — `NativeCallable`, ports, a whole
-  mechanism — and at 70µs a render a 100ms timer does the same job for free.
-* **A prop holds an event id, not a closure.** That is the one thing hiccup has
-  that a C ABI cannot, and substituting it is what makes this an architecture
-  rather than a rendering trick.
+  ref types, so sharing state would mean a lock per field and a heap two
+  threads both collect. It speaks only in channels.
+* **Writes drain before reads.** IRC has the client speak first, and reading
+  first deadlocked completely: CAP/NICK/USER sat queued while the loop waited
+  for a server that had nothing to say until we registered.
 
-Cost, measured: a full screen rebuild is 70–105µs, or 0.4–0.6% of a 60fps
-frame, for a 1.6KB tree. The caveat is the tree size rather than the number —
-the chat screen caps the backlog at fifty rows for exactly this reason, and
-nothing has measured what a real one costs.
+There was an experiment where Nim owned the state and the screens too. It is
+gone. It meant a 43-line chat screen standing in for 1,518 — no reactions, no
+replies, no images — and the path forward from it was rewriting every screen
+in Nim and losing all of that. It is at 1d62d1a if it is ever wanted.
 
 ```bash
-just nim-spike        # the window; click Connect
-FRQ_TRACE=1 FRQ_AUTOCONNECT=1 just nim-spike   # ...connecting on its own
-just nim-spike-test   # 7 widget tests: real taps, real widgets
-just nim-live         # connect to a real freeq and say a line
-just nim-bench        # what the boundary costs
-FRQ_TRACE=1 just nim-live    # ...and every line on the wire
+just nim-app run     # the real client, Nim transport
+just nim-test        # the Nim suite
+just dart-test       # the Dart side of the boundary
+just nim-lib         # libfrqcore.so into build/nim
+
+FRQ_TRACE=1 just nim-app run    # every line in and out, both languages
 ```
 
-Two switches, both for the same reason — a GUI on Wayland cannot be clicked
-from a script, so without them the only way to check the window connects is to
-sit in front of it. `FRQ_AUTOCONNECT=1` presses Connect on the first render and
-`FRQ_NICK` overrides the nickname, because two runs with the same one collide
-on the server and the second is refused.
-
 The GUI needs OpenSSL on its loader path, which the `flutter-desktop` shell
-provides as `FRQ_OPENSSL_LIB` and the `nim-spike` recipe prepends for the app
+provides as `FRQ_OPENSSL_LIB` and the `nim-app` recipe prepends for the app
 alone. Not set as `LD_LIBRARY_PATH` in the shell itself: that shell also runs
-Flutter through nixGL, which does its own careful things to the loader path,
-and a blanket setting there breaks GL on some machines and not others.
+Flutter through nixGL, which does its own careful things to the loader path.
 
 ## Status
 
@@ -124,10 +117,11 @@ core exists to have less Clojure in the tree, and `lookupFunction` takes two
 type arguments, so it meant fighting generic interop to write more of the
 thing being removed. In Dart it is a typedef. See `dart/README.md`.
 
-The spike above is wired up and runs. What is **not** done is replacing
-anything: the shipping app is still the ClojureDart one, `common/frq/irc/parse.cljc`
-is still what it runs, and the spike is a second entry point beside it
-(`lib/main_nim.dart`) rather than a replacement for `frq.main`. That step is its
+The transport is wired up and runs. What is **not** done is replacing
+anything else: `frq.main` is untouched and still installs `frq.net.dart`, so
+the shipping app is unchanged and `frq.main-nim` is a second entry point
+beside it. `common/frq/irc/parse.cljc` is still what does the parsing on every
+target, including this one. That step is its
 own piece of work — the Flutter app takes the package as a path dependency
 (which means a `pubspec.lock` regeneration and widening the nix build's source
 root), the library has to reach each target (`jniLibs` for the APK, beside the

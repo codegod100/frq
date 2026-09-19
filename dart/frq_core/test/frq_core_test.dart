@@ -118,8 +118,6 @@ void main() {
     test('a server prefix', () => expect(core.nickOf('irc.freeq.at'), 'irc.freeq.at'));
   });
 
-  uiTests();
-
   test('ten thousand calls do not leak or crash the allocator', () {
     // The contract this is really testing is ownership: what the core returns
     // is freed with frq_free, what we pass in is freed with libc free, and
@@ -128,89 +126,5 @@ void main() {
       core.parseLine('@a=1 :n!u@h PRIVMSG #c :x');
       core.tagValue('a=1;b=2', 'b');
     }
-  });
-}
-
-/// The UI half of the boundary: a tree out, an event id back.
-///
-/// These mirror `nim/tests/tui.nim`. Passing there and failing here is a
-/// marshalling bug — which, for a structure this nested, is the whole reason
-/// to test it twice.
-void uiTests() {
-  group('the UI tree', () {
-    setUp(core.resetUi);
-
-    List<core.UiNode> find(core.UiNode n, String tag) => [
-          if (n.tag == tag) n,
-          for (final c in n.children) ...find(c, tag),
-        ];
-
-    test('renders a page with a title', () {
-      final t = core.render();
-      expect(t.tag, 'page');
-      expect(find(t, 'title').single.prop('label', ''), 'frq');
-    });
-
-    test('render is pure across the boundary', () {
-      expect(core.render().toString(), core.render().toString());
-      expect(find(core.render(), 'entry').length,
-          find(core.render(), 'entry').length);
-    });
-
-    test('typing into the host field comes back in the tree', () {
-      final t = core.dispatch('host.change', 'localhost');
-      final host =
-          find(t, 'entry').firstWhere((e) => e.prop('key', '') == 'host');
-      expect(host.prop('text', ''), 'localhost');
-    });
-
-    test('the TLS tick carries the port with it', () {
-      var t = core.dispatch('tls.toggle');
-      var port =
-          find(t, 'entry').firstWhere((e) => e.prop('key', '') == 'port');
-      expect(port.prop('text', ''), '6667');
-      t = core.dispatch('tls.toggle');
-      port = find(t, 'entry').firstWhere((e) => e.prop('key', '') == 'port');
-      expect(port.prop('text', ''), '6697');
-    });
-
-    test('switching mode changes the fields', () {
-      final keys = find(core.dispatch('mode.bluesky'), 'entry')
-          .map((e) => e.prop('key', ''))
-          .toList();
-      expect(keys, contains('handle'));
-      expect(keys, isNot(contains('nick')));
-    });
-
-    test('connecting swaps the button for a spinner', () {
-      expect(find(core.render(), 'spinner'), isEmpty);
-      expect(find(core.dispatch('connect'), 'spinner').length, 1);
-    });
-
-    test('an empty host is refused and the error is dismissable', () {
-      core.dispatch('host.change', '  ');
-      var t = core.dispatch('connect');
-      expect(find(t, 'card').any((c) => find(c, 'label')
-          .any((l) => l.prop('label', '').contains('required'))), isTrue);
-      t = core.dispatch('error.dismiss');
-      expect(
-          find(t, 'button').map((b) => b.prop('label', '')), isNot(contains('Dismiss')));
-    });
-
-    test('an unknown event is ignored rather than fatal', () {
-      final before = core.render().toString();
-      expect(core.dispatch('no.such.event').toString(), before);
-    });
-
-    test('non-ASCII survives the tree round trip', () {
-      // Bluesky mode first: guest renders no handle field, so the text would
-      // have nowhere to appear and the assertion would fail for the wrong
-      // reason. It did, on the way in.
-      core.dispatch('mode.bluesky');
-      final t = core.dispatch('handle.change', 'ünïcøde😀.bsky.social');
-      expect(
-          find(t, 'entry').any((e) => e.prop('text', '') == 'ünïcøde😀.bsky.social'),
-          isTrue);
-    });
   });
 }

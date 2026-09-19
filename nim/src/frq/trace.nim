@@ -5,8 +5,8 @@
 ## thing to remember rather than a thing to use.
 ##
 ## To stderr and not stdout: stdout is a bundle's own, and a Flutter app on
-## Linux prints to the terminal it was launched from. `just nim-spike` shows
-## these inline.
+## Linux prints to the terminal it was launched from. `just nim-app run`
+## shows these inline.
 ##
 ## Cheap when off. The check is a `let` read once at load rather than a getEnv
 ## per call, and every `trace` call site guards on it before doing any of the

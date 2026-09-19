@@ -1,6 +1,6 @@
 /// The real frq, with the Nim core as its transport.
 ///
-/// Not to be confused with `main_nim.dart`, which is the earlier spike where
-/// Nim owned the screens too. This one keeps every screen, every cell and
-/// every action exactly as they are and swaps only what is underneath them.
+/// Every screen, every cell and every action exactly as they are; only the
+/// transport underneath them is Nim. `frq.main-nim` is `frq.main` with one
+/// line changed.
 export "cljd-out/frq/main-nim.dart" show main;

@@ -19,13 +19,16 @@
 ## version skew that segfaults rather than one that fails; JSON costs a parse
 ## per call, which is nothing against the network round trip that produced the
 ## line being parsed.
+##
+## There was a second half to this ABI once — `frq_ui_render`, `frq_ui_dispatch`
+## and a state machine and screens behind them — from an experiment where Nim
+## owned the UI as well. It is gone: it meant reimplementing screens that
+## already exist and are far better, and the seam that actually wanted Nim
+## under it was `frq.net`.
 
 import std/json
-import frq/[ircparse, ui, state, irc]
+import frq/[ircparse, trace]
 import frq/conn as tr
-import frq/trace
-import frq/screens/connect as connectScreen
-import frq/screens/chat as chatScreen
 
 proc NimMain() {.importc.}
 
@@ -98,68 +101,6 @@ proc frq_irc_escape_tag_value*(v: cstring): cstring {.exportc, dynlib.} =
 proc frq_irc_nick_of*(prefix: cstring): cstring {.exportc, dynlib.} =
   if prefix == nil: return nil
   dup(nickOf($prefix))
-
-# ------------------------------------------------------------------- the UI
-#
-# The spike's real claim: Nim owns the state and the screen, Dart owns the
-# pixels, and the only things crossing are a tree going out and an event id
-# coming back. See `frq/ui.nim`.
-
-proc currentTree(): string =
-  maybeAutoconnect()
-  ## Whichever screen the state says. `drain` first, so the tree Dart gets is
-  ## built after every line that had arrived when it asked — that is the whole
-  ## of the polling model, and it is why there is no callback into Dart.
-  drain()
-  case app.screen
-  of scChat: $chatScreen.chatScreen(app).toJson
-  else: $connectScreen.connectScreen(app).toJson
-
-proc frq_ui_render*(): cstring {.exportc, dynlib.} =
-  ## The current screen as a widget tree, in JSON.
-  ##
-  ## No longer pure, and the change is worth naming: it drains the socket's
-  ## queue first, so two calls with no dispatch between can differ when a line
-  ## arrived in the gap. That is the point — it is how the room fills — but it
-  ## means the renderer must be free to call this whenever it likes, which is
-  ## what the Dart side's poll timer does.
-  dup(currentTree())
-
-proc frq_ui_dispatch*(event: cstring): cstring {.exportc, dynlib.} =
-  ## Apply an event and answer with the tree it produced.
-  ##
-  ## One call rather than dispatch-then-render, and not to save a crossing:
-  ## it makes the pair atomic. Two calls leave a window in which Dart could
-  ## render a state nothing asked for, which is the sort of thing that shows
-  ## up once a week and never in a test.
-  ##
-  ## A malformed event is ignored rather than fatal — it arrives from a tree
-  ## the renderer may have been holding for a frame, which is a normal race.
-  if event != nil:
-    try:
-      dispatch(parseJson($event))
-    except JsonParsingError:
-      discard
-  dup(currentTree())
-
-proc frq_ui_poll*(): cstring {.exportc, dynlib.} =
-  ## The tree, for a renderer that is asking because time passed rather than
-  ## because anything happened. Identical to `frq_ui_render` — named
-  ## separately so the Dart side reads as what it means.
-  dup(currentTree())
-
-proc frq_ui_offline*() {.exportc, dynlib.} =
-  ## Stop `connect` from opening a socket, for a test that wants the screens
-  ## without the network. There is no way back — a process that has asked for
-  ## this is a test process.
-  goOffline()
-
-proc frq_ui_reset*() {.exportc, dynlib.} =
-  ## Back to a fresh state. For tests, and for a renderer that wants a known
-  ## starting point rather than whatever the last run left.
-  irc.stop()
-  app = initState()
-
 
 # --------------------------------------------------------------- transport
 #
