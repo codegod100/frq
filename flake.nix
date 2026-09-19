@@ -595,6 +595,14 @@
             # pure Dart over the XDG directories.
             buildInputs = [ pkgs.gtk3 pkgs.glib ];
 
+            # Where libfrqcore.so's OpenSSL lives. A named variable and NOT
+            # LD_LIBRARY_PATH, deliberately: this shell also runs Flutter
+            # through nixGL, which does its own careful things to the loader
+            # path, and a blanket LD_LIBRARY_PATH here is the sort of thing
+            # that breaks GL on one machine and not another. The `nim-spike`
+            # recipe prepends this for the app it launches and nothing else.
+            FRQ_OPENSSL_LIB = lib.makeLibraryPath [ pkgs.openssl ];
+
             # Flutter paints through GL, and off NixOS the driver that can do
             # that is the host's, not the store's.
             NIXGL = "${nixGLFor pkgs}/bin/nixGLIntel";

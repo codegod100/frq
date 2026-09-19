@@ -39,5 +39,5 @@ func chatScreen*(s: State): Node =
         n("vbox", %*{"spacing": 4}, rows))),
     hbox(%*{"spacing": 8},
       entry("draft", s.draft, "Message " & s.channel, "draft.change",
-            width = 460),
+            width = 460, onSubmit = "send"),
       button("Send", "send", "primary")))

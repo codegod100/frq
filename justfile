@@ -454,6 +454,10 @@ nim-spike action="run":
     fi
     cd flutter
     flutter pub get
+    # The Nim core links OpenSSL for the TLS on :6697, and the process that
+    # dlopens it has to be able to find one. Prepended here rather than set in
+    # the shell, so nixGL's own loader path is left alone.
+    export LD_LIBRARY_PATH="${FRQ_OPENSSL_LIB:-}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     runner=()
     [ -e /run/current-system ] || runner=("$NIXGL")
     case "{{action}}" in

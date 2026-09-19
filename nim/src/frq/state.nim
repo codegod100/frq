@@ -11,7 +11,7 @@
 ## function of this record; an event is the only way it changes; nothing else
 ## crosses the boundary. That is what lets the renderer stay dumb.
 
-import std/[json, strutils]
+import std/[json, os, strutils]
 import trace, ircparse, irc
 
 type
@@ -220,3 +220,27 @@ proc drain*() =
     else:
       # Everything else is the MOTD and friends — traced, not shown.
       trace("irc.skip", p.command & " " & $p.params)
+
+
+# -------------------------------------------------------------- autoconnect
+#
+# `FRQ_AUTOCONNECT=1` presses Connect as soon as the first screen is asked
+# for. In the same spirit as FRQ_TRACE and for the same reason: a GUI on
+# Wayland cannot be clicked from a script, so without this the only way to
+# check that the window connects is to sit in front of it. It also makes
+# `just nim-spike` a one-command demo.
+#
+# `FRQ_NICK` overrides the nickname, because two runs with the same one
+# collide on the server and the second is refused.
+
+var autoconnectDone = false
+
+proc maybeAutoconnect*() =
+  if autoconnectDone: return
+  autoconnectDone = true
+  let want = getEnv("FRQ_AUTOCONNECT")
+  if want.len == 0 or want == "0": return
+  let nick = getEnv("FRQ_NICK")
+  if nick.len > 0: app.formNick = nick
+  trace("auto", "FRQ_AUTOCONNECT set — connecting as " & app.formNick)
+  dispatch(%*{"id": "connect"})

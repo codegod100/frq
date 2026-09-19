@@ -51,14 +51,26 @@ class _NimAppState extends State<NimApp> {
   // comment survives three languages now.
   final _controllers = <String, TextEditingController>{};
 
-  void _send(String id, [String value = '']) =>
-      setState(() => _tree = core.dispatch(id, value));
+  // One focus node per keyed entry, for the same reason as the controllers.
+  // Without it, sending with Enter drops focus and the next line is typed
+  // into nothing — the field is rebuilt from a fresh tree every time.
+  final _focus = <String, FocusNode>{};
+
+  void _send(String id, [String value = '']) {
+    setState(() => _tree = core.dispatch(id, value));
+    // Enter in the compose box clears the draft in Nim and rebuilds the
+    // field; putting focus back is what makes a second line typeable.
+    if (id == 'send') _focus['draft']?.requestFocus();
+  }
 
   @override
   void dispose() {
     _poll?.cancel();
     for (final c in _controllers.values) {
       c.dispose();
+    }
+    for (final f in _focus.values) {
+      f.dispose();
     }
     super.dispose();
   }
@@ -193,12 +205,17 @@ class _NimAppState extends State<NimApp> {
         }
         final field = TextField(
           controller: c,
+          focusNode: _focus.putIfAbsent(key, FocusNode.new),
           decoration: InputDecoration(
             hintText: n.prop('placeholder', ''),
             isDense: true,
             border: const OutlineInputBorder(),
           ),
           onChanged: (v) => _send(n.prop('onChange', ''), v),
+          onSubmitted: (_) {
+            final submit = n.prop('onSubmit', '');
+            if (submit.isNotEmpty) _send(submit);
+          },
         );
         final w = n.prop('widthRequest', 0);
         // A width request is a minimum in the screens' vocabulary, but here it

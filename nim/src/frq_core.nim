@@ -104,6 +104,7 @@ proc frq_irc_nick_of*(prefix: cstring): cstring {.exportc, dynlib.} =
 # coming back. See `frq/ui.nim`.
 
 proc currentTree(): string =
+  maybeAutoconnect()
   ## Whichever screen the state says. `drain` first, so the tree Dart gets is
   ## built after every line that had arrived when it asked — that is the whole
   ## of the polling model, and it is why there is no callback into Dart.

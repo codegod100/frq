@@ -69,7 +69,8 @@ func button*(text: string, onClick: string, kind = "default"): Node =
   ## `onClick` is an event id, not a closure. See the module comment.
   n("button", %*{"label": text, "kind": kind, "onClick": onClick})
 
-func entry*(key, text, placeholder, onChange: string, width = 0): Node =
+func entry*(key, text, placeholder, onChange: string, width = 0,
+            onSubmit = ""): Node =
   ## Every entry carries a key, and for the reason the Clojure's comment
   ## gives: a renderer that keeps a text controller per field needs a stable
   ## name for it, and without one the host and the port shared a controller
@@ -77,6 +78,9 @@ func entry*(key, text, placeholder, onChange: string, width = 0): Node =
   var p = %*{"key": key, "text": text, "placeholder": placeholder,
              "onChange": onChange}
   if width > 0: p["widthRequest"] = %width
+  # Enter, where the field has something to do with it. A compose box that
+  # only sends on a button click is one nobody can type into at speed.
+  if onSubmit.len > 0: p["onSubmit"] = %onSubmit
   n("entry", p)
 
 func checkbutton*(text: string, active: bool, onToggled: string): Node =

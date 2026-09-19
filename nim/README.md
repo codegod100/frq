@@ -88,12 +88,25 @@ the chat screen caps the backlog at fifty rows for exactly this reason, and
 nothing has measured what a real one costs.
 
 ```bash
-just nim-spike        # the window
+just nim-spike        # the window; click Connect
+FRQ_TRACE=1 FRQ_AUTOCONNECT=1 just nim-spike   # ...connecting on its own
 just nim-spike-test   # 7 widget tests: real taps, real widgets
 just nim-live         # connect to a real freeq and say a line
 just nim-bench        # what the boundary costs
 FRQ_TRACE=1 just nim-live    # ...and every line on the wire
 ```
+
+Two switches, both for the same reason — a GUI on Wayland cannot be clicked
+from a script, so without them the only way to check the window connects is to
+sit in front of it. `FRQ_AUTOCONNECT=1` presses Connect on the first render and
+`FRQ_NICK` overrides the nickname, because two runs with the same one collide
+on the server and the second is refused.
+
+The GUI needs OpenSSL on its loader path, which the `flutter-desktop` shell
+provides as `FRQ_OPENSSL_LIB` and the `nim-spike` recipe prepends for the app
+alone. Not set as `LD_LIBRARY_PATH` in the shell itself: that shell also runs
+Flutter through nixGL, which does its own careful things to the loader path,
+and a blanket setting there breaks GL on some machines and not others.
 
 ## Status
 
