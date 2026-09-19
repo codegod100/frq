@@ -14,7 +14,7 @@
 import std/[json, options, strutils, tables]
 import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
-           atproto, handshake, textruns, members, msgsig]
+           atproto, handshake, textruns, members, msgsig, profile]
 import frq/conn as tr
 
 proc split2(id: string): (string, string) =
@@ -328,6 +328,19 @@ proc dispatch*(event: JsonNode) =
       openRoom(app.overviewReturn)
       app.overviewReturn = ""
 
+  of "profile.open":
+    # `nick:actor`, and the actor may be empty — a guest has no identity to
+    # fetch, and the panel says so rather than spinning.
+    let (nick, who) = split2(arg)
+    if nick.len > 0:
+      app.profileViewing = ProfileView(has: true, nick: nick, actor: who)
+      # Blocking, and this is the one place that can afford it: the render
+      # path must not, the socket threads have their own work, and the reader
+      # pressed a face and is already waiting.
+      if who.len > 0: fetch(who)
+
+  of "profile.close": app.profileViewing = ProfileView()
+
   of "lightbox":
     app.lightbox = Lightbox(has: true, url: arg, path: arg)
   of "lightbox.close": app.lightbox = Lightbox()
@@ -420,6 +433,7 @@ proc drain*() =
         # for the sender: the target is our own nick and is nobody's room.
         let room = if target.startsWith("#"): target else: who
         var m = Message(id: msgid, frm: who, text: p.params[^1], at: at)
+        if p.hasAccount: m.account = p.account
         # The picture link out of the text, which is what draws the inline
         # preview. This was hardcoded to "" — assigning a field its own
         # default — so `firstImageUrl` was ported, tested and never called,

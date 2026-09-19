@@ -15,7 +15,7 @@
 import std/[algorithm, json, strutils, tables]
 import std/options
 import frq/[ui, cells, model, clock, reactions, textruns, members,
-           glyphs, emoji, rooms]
+           glyphs, emoji, rooms, profile]
 from frq/screens/connect import errorNote
 
 const
@@ -137,9 +137,14 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
     if m.at > 0:
       who.children.add dimLabel(clockTime(m.at))
   else:
+    # A face is a way in to who someone is, so it takes the press that opens
+    # them — and so does the name beside it, since a name is the thing a
+    # reader is actually looking at.
+    let senderActor = actorFor(m.account, m.frm)
+    let open = "profile.open:" & m.frm & ":" & senderActor
     var row = hbox(%*{"spacing": 6},
-      avatar("", m.frm, size = faceSize),
-      label(m.frm))
+      avatar(m.avatar, m.frm, size = faceSize, onClick = open),
+      n("button", %*{"label": m.frm, "kind": "plain", "onClick": open}))
     if m.at > 0:
       row.children.add dimLabel(clockTime(m.at))
     if m.edited:
@@ -273,6 +278,51 @@ proc lightboxPane(s: State): Node =
     image(s.lightbox.url, maxWidth = 640, maxHeight = 480),
     dimLabel(s.lightbox.url))
 
+proc profilePane(s: State): Node =
+  ## Who someone is, behind the nick on a line.
+  let nick = s.profileViewing.nick
+  let actor = s.profileViewing.actor
+
+  result = card(
+    hbox(%*{"spacing": 8},
+      title2(nick),
+      button("Close", "profile.close")))
+
+  if actor.len == 0:
+    # A guest has no identity to fetch. The honest answer, rather than a
+    # spinner that never lands.
+    result.children.add dimLabel(
+      "A guest — no Bluesky identity to look up.")
+    return
+
+  let (p, known) = entry(actor)
+  if not known or p.status == psLoading:
+    result.children.add spinner()
+    return
+  if p.status == psFailed:
+    result.children.add dimLabel("Could not look " & actor & " up.")
+    return
+
+  var head = hbox(%*{"spacing": 8})
+  head.children.add avatar(p.avatar, nick, size = 64)
+  var who = vbox(%*{"spacing": 2})
+  if p.displayName.len > 0: who.children.add label(p.displayName)
+  if p.handle.len > 0: who.children.add dimLabel("@" & p.handle)
+  if p.did.len > 0: who.children.add dimLabel(p.did)
+  head.children.add who
+  result.children.add head
+
+  if p.description.len > 0:
+    result.children.add text(truncate(p.description, 280))
+
+  let stats = statsLine(p)
+  if stats.len > 0:
+    result.children.add dimLabel(stats)
+
+  let url = webUrl(p)
+  if url.len > 0:
+    result.children.add link("Open on bsky.app", url)
+
 proc chatScreen*(s: State, connected: bool): Node =
   let room = s.currentRoom
   let name = if room.name.len > 0: room.name else: "Chat"
@@ -351,6 +401,10 @@ proc chatScreen*(s: State, connected: bool): Node =
   if s.overview:
     overview.children.add overviewPane(s)
 
+  var profile = vbox(%*{"key": "profile-pane"})
+  if s.profileViewing.has:
+    profile.children.add profilePane(s)
+
   var lightbox = vbox(%*{"key": "lightbox-pane"})
   if s.lightbox.has:
     lightbox.children.add lightboxPane(s)
@@ -409,6 +463,7 @@ proc chatScreen*(s: State, connected: bool): Node =
     n("hbox", %*{"spacing": 8, "wrap": false, "expand": true},
       @[messages, peoplePane]),
     overview,
+    profile,
     lightbox,
     returnRow,
     jump,

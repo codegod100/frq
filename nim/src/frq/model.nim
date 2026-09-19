@@ -37,6 +37,11 @@ type
     replyTo*: string      ## the id this answers, "" for a line answering none
     reactions*: seq[Reaction]
     imageUrl*: string     ## the first picture link in the text, "" for none
+    account*: string
+      ## The sender's DID, off the `account` tag. The only identity a client
+      ## is given: a nick is whatever someone chose today, and the hostmask
+      ## carries eight characters of a DID, too few to resolve.
+    avatar*: string       ## their thumbnail, once a profile has been fetched
     pending*: bool        ## sent, not yet echoed
     room*: string
       ## Which room this was said in. Empty on a stored message — a room

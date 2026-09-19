@@ -130,6 +130,15 @@ void main() {
       expectLaidOut(tester, 'chat with the lightbox');
     });
 
+    testWidgets('lays out with a profile open', (tester) async {
+      core.demoUi();
+      // A guest: no identity to fetch, so the panel says so rather than
+      // spinning — and it lays out without a network.
+      core.dispatch('profile.open:alice:');
+      await layOut(tester, sizes['phone']!);
+      expectLaidOut(tester, 'chat with a guest profile');
+    });
+
     testWidgets('lays out when scrolled off the present', (tester) async {
       core.demoUi();
       core.dispatch('jump.present');

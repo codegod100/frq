@@ -106,6 +106,16 @@ proc pdsFor*(did: string): string =
         if ep.len > 0: return ep
   raise newException(AtprotoError, "No PDS endpoint for " & did)
 
+proc getProfile*(actor: string): JsonNode =
+  ## `app.bsky.actor.getProfile` for a DID or a handle.
+  ##
+  ## The actor goes in unescaped, as it always has: a handle is a domain name
+  ## and a DID is `did:` and base32, and neither carries a character a query
+  ## string would mind.
+  getJson("https://" & directoryHost &
+          "/xrpc/app.bsky.actor.getProfile?actor=" & actor,
+          "Could not look up " & actor)
+
 proc createSession*(handle, password: string): Session =
   ## Sign in to the PDS with an app password.
   ##

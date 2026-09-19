@@ -126,11 +126,13 @@ func image*(src: string, maxWidth = 0, maxHeight = 0, onClick = ""): Node =
   if onClick.len > 0: p["onClick"] = %onClick
   n("image", p)
 
-func avatar*(url, fallback: string, size = 24): Node =
+func avatar*(url, fallback: string, size = 24, onClick = ""): Node =
   ## A profile picture, or the letter to draw where there is none. The
   ## fallback is here rather than in the renderer because which letter is a
   ## question about the nick, and the nick is the tree's business.
-  n("avatar", %*{"url": url, "fallback": fallback, "size": size})
+  var p = %*{"url": url, "fallback": fallback, "size": size}
+  if onClick.len > 0: p["onClick"] = %onClick
+  n("avatar", p)
 
 func reaction*(emoji: string, count: int, mine: bool, onClick: string): Node =
   ## A pill under a message. `mine` is what makes it look pressed, and is why

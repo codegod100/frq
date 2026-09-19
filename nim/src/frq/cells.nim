@@ -143,7 +143,6 @@ type
 
     imagePicker*: string
     profileViewing*: ProfileView
-    profileTick*: int
 
     # The window, polled from the host.
     windowWidth*, windowHeight*: int

@@ -376,6 +376,16 @@ class _NimAppState extends State<NimApp> {
             return FilledButton(
                 onPressed: () => _send(onClick), child: label);
           }
+          // A sender's name: a way in to who someone is, but it sits in the
+          // middle of a line and must not look like a control. Text that
+          // takes a press, with no chrome at all.
+          if (kind == 'plain') {
+            return InkWell(
+              onTap: () => _send(onClick),
+              child: Text(n.prop('label', ''),
+                  style: _style(t.textBody, t.onBg)),
+            );
+          }
           if (kind == 'destructive') {
             return FilledButton(
               style: FilledButton.styleFrom(

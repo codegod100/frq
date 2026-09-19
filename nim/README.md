@@ -70,16 +70,16 @@ just build lib             # libfrqcore.so into build/nim
 
 ## What is not here
 
-`frq.profile` and `frq.replies` were never ported and went with the
-ClojureDart rather than moving: a Bluesky profile behind a nick, and asking
-freeq what a collapsed msgid was. Neither had a screen in this app to appear
-on.
+`frq.replies` was never ported and went with the ClojureDart: asking freeq
+what a collapsed msgid was, for a reply pointing at a line that arrived
+already collapsed. It had no screen in this app to appear on, and the chip
+says "an earlier message" where that happens.
 
-The profile card is state without a screen: `profileViewing` is moved by
-nothing and rendered by nothing, and `frq.profile` was never ported.
+`frq.profile` came back — recovered from the commit that deleted it and
+ported, since a face that opens nothing is worse than no face.
 
-The emoji picker, the overview strip and the lightbox used to be in that list.
-They have screens now — the picker under the message it is for, the overview
+The emoji picker, the overview strip, the lightbox and the profile card all
+have screens — the picker under the message it is for, the overview
 as a pane above the compose bar, the lightbox as a panel over the
 conversation — so the 🙂 chip, the Overview toggle and clicking a picture all
 do what they look like they do.

@@ -54,11 +54,13 @@ suite "the chat screen":
     e.current = "#empty"
     check "Nothing here yet." in cs.chatScreen(e, true).labels("dim-label")
 
-  test "every line names its sender":
+  test "every line names its sender, and the name opens them":
     # Not the first of a run only: answering the fourth line of a collapsed
-    # run quotes back a line with no name on it.
-    check cs.chatScreen(s, true).labels("label").countIt(it == "alice") == 1
-    check cs.chatScreen(s, true).labels("label").countIt(it == "frq-guest") == 1
+    # run quotes back a line with no name on it. The name is a button because
+    # it is a way in to who someone is, the same as the face beside it.
+    let names = cs.chatScreen(s, true).labels("button")
+    check names.countIt(it == "alice") == 1
+    check names.countIt(it == "frq-guest") == 1
 
   test "a day heading appears where the day changes, once":
     # `at` is milliseconds. Testing it with seconds put every message on the
@@ -177,7 +179,8 @@ suite "the chat screen":
     s.windowWidth = 1200
     let t = cs.chatScreen(s, true)
     check "People" in t.labels("title-2")
-    check "alice" in t.labels("label")
+    # With the mode prefix in front of the name, ops first.
+    check "@alice" in t.labels("label")
 
   test "Jump to present only when we are not at it":
     check "↓ Jump to present" notin cs.chatScreen(s, true).labels("button")
