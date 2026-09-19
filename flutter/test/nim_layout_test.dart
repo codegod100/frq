@@ -241,6 +241,42 @@ void main() {
     });
   });
 
+  group('identity', () {
+    // Duplicate keys among siblings are an error Flutter throws at build
+    // time, so this is mostly a guard on the tree the core emits: every
+    // message row names itself now, and two rows must never name themselves
+    // the same thing.
+    testWidgets('every screen builds with the keys the core gives it',
+        (tester) async {
+      for (final screen in ['chat', 'chats', 'discover', 'settings']) {
+        core.demoUi();
+        if (screen != 'chat') core.dispatch('screen.$screen');
+        await layOut(tester, sizes['desktop']!);
+        expectLaidOut(tester, '$screen with keys');
+      }
+    });
+
+    testWidgets('a row keeps its element when one above it goes away',
+        (tester) async {
+      // Hiding the joins and parts takes the system line off the top of the
+      // demo backlog, which renumbers every row under it. Keyed by position
+      // that is a teardown and rebuild of all of them; keyed by the message
+      // it is one row leaving.
+      //
+      // An arriving line would not show this — it lands at the bottom and
+      // renumbers nothing, which is how the first version of this test
+      // passed against both.
+      core.demoUi();
+      await layOut(tester, sizes['desktop']!);
+      final before = tester.element(find.text('alice').first);
+      core.dispatch('join-part.toggle');
+      await tester.pump(const Duration(milliseconds: 150));
+      expectLaidOut(tester, 'the backlog with the system lines hidden');
+      expect(tester.element(find.text('alice').first), same(before),
+          reason: 'the row was torn down rather than kept');
+    });
+  });
+
   group('emoji', () {
     // ✏️ is U+270F plus a variation selector asking for emoji presentation,
     // and DejaVu Sans claims U+270F — so ordinary fallback draws a monochrome

@@ -109,15 +109,26 @@ suite "the rooms file":
 
 suite "the prefs file":
   setup: clean()
-  test "the three display toggles outlive the run":
+  test "the display toggles outlive the run":
     restore()
     let wasJoinPart = app.hideJoinPart
     dispatch(%*{"id": "join-part.toggle"})
-    dispatch(%*{"id": "users.toggle"})
+    dispatch(%*{"id": "chat-list.toggle"})
     app = initState()
     restore()
     check app.hideJoinPart == not wasJoinPart
+    check app.hideChatList
+
+  test "but the member list does not":
+    # On a narrow window the people panel is the pane rather than something
+    # beside it, so a remembered "on" opens a room and shows a list of names
+    # instead of the room.
+    restore()
+    dispatch(%*{"id": "users.toggle"})
     check app.showUsers
+    app = initState()
+    restore()
+    check not app.showUsers
   test "the overview is not one of them":
     # It is a way of looking at the moment you are in rather than a
     # preference, and reopening into it would answer a question nobody asked

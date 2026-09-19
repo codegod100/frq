@@ -88,18 +88,22 @@ proc restoreRooms() =
   trace("store", $saved.len & " rooms remembered")
 
 proc restorePrefs() =
-  ## The display toggles. Three booleans, and every one of them is the
-  ## reader's answer to a question this client has no business re-asking on
-  ## every run — whether the comings and goings are worth seeing, whether the
-  ## member list is up, whether the room list is out of the way.
+  ## The display toggles that are a standing answer rather than a passing
+  ## one: whether the comings and goings are worth seeing, and whether the
+  ## room list is out of the way.
+  ##
+  ## The member list is NOT among them, though it was for a day. On a narrow
+  ## window the people panel is not beside the conversation, it *is* the
+  ## pane — so a saved "on" meant opening a room and being shown a list of
+  ## names instead of the room, every launch, having asked for it once. It is
+  ## a way of looking at the moment you are in, like the overview, and those
+  ## start off.
   let prefs = loadPrefs()
   app.hideJoinPart = prefs.getOrDefault("hideJoinPart", app.hideJoinPart)
-  app.showUsers = prefs.getOrDefault("showUsers", app.showUsers)
   app.hideChatList = prefs.getOrDefault("hideChatList", app.hideChatList)
 
 proc rememberPrefs() =
   discard savePrefs({"hideJoinPart": app.hideJoinPart,
-                     "showUsers": app.showUsers,
                      "hideChatList": app.hideChatList}.toTable)
 
 var
@@ -386,15 +390,15 @@ proc dispatch*(event: JsonNode) =
   of "search.clear": app.search = ""
 
   # ---------------------------------------------------------- chat chrome
-  # The three that outlive the run are written as they are pressed. There is
+  # The two that outlive the run are written as they are pressed. There is
   # no Save on this screen and no moment that is obviously the last one — the
   # window closes when it closes.
   of "chat-list.toggle":
     app.hideChatList = not app.hideChatList
     rememberPrefs()
   of "users.toggle":
+    # Not remembered; see `restorePrefs`.
     app.showUsers = not app.showUsers
-    rememberPrefs()
   of "overview.toggle":
     # Not kept: the overview is a way of looking at the moment you are in
     # rather than a preference, and a client that reopened into it would be

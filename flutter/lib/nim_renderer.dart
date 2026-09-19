@@ -222,6 +222,19 @@ class _NimAppState extends State<NimApp> {
   static const _column = 'column';
 
   Widget _build(core.UiNode n, [String axis = _noAxis]) {
+    // A node that names itself keeps its element across rebuilds.
+    //
+    // The tree is rebuilt wholesale from the core, so Flutter matches
+    // children by position unless something says otherwise — and a position
+    // is not an identity when a line can arrive above. Everything Flutter
+    // holds per element is at stake: text controllers, scroll offsets, and
+    // the selectables a live text selection is made of.
+    final key = n.prop('key', '');
+    final w = _buildNode(n, axis);
+    return key.isEmpty ? w : KeyedSubtree(key: ValueKey(key), child: w);
+  }
+
+  Widget _buildNode(core.UiNode n, String axis) {
     final spacing = _d(n.props['spacing'], 0);
     final flex = axis == _row || axis == _column;
 

@@ -210,7 +210,13 @@ proc messageRow(s: State, room: Room, i: int, m: Message): Node =
   ## on the sender's row, which a headerless line has nowhere to put.
   let rid = rowId(m)
   let highlit = rid.len > 0 and rid == s.highlight
-  n("vbox", %*{"key": $i, "spacing": 2, "margin": 0, "marginRight": 10,
+  # Keyed by the message and not by its position. A line arriving, or the
+  # join/part filter coming off, renumbers every row under it — and a key
+  # that renumbers is a row the renderer tears down and builds again, taking
+  # with it whatever state Flutter held for it. A live text selection is the
+  # loudest thing that state has been.
+  n("vbox", %*{"key": (if rid.len > 0: rid else: "row-" & $i),
+               "spacing": 2, "margin": 0, "marginRight": 10,
                "marginTop": 10,
                "scrollHere": rid.len > 0 and rid == s.jumpTo},
     @[messageBody(s, room, m, highlit)])
@@ -237,7 +243,7 @@ proc messageRows*(s: State, room: Room, messages: seq[Message]): seq[Node] =
     if m.at > 0:
       let d = day(m.at)
       if d != prevDay:
-        result.add daySeparator("day-" & $i, dayLabel(m.at))
+        result.add daySeparator("day-" & d, dayLabel(m.at))
       prevDay = d
     result.add messageRow(s, room, i, m)
 
