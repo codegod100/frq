@@ -15,8 +15,8 @@
 ## Threading as before: the socket thread shares nothing, and speaks in
 ## channels. See irc.nim's comment for why ORC makes that the sane choice.
 
-import std/[net, strutils]
-import trace
+import std/[net, os, strutils]
+import frq/[trace]
 
 type
   ConnConfig* = object
@@ -28,71 +28,85 @@ var
   inbound: Channel[string]
   outbound: Channel[string]
   events: Channel[string]   ## "open" | "close: reason" | "error: reason"
-  thread: Thread[ConnConfig]
+  reader: Thread[ConnConfig]
+  writer: Thread[int]
   running: bool
+  shared: Socket
+    ## The socket both threads use. One reader and one writer on the same
+    ## OpenSSL connection is supported and is what every IRC client does; what
+    ## is NOT supported is two of either, which is why there are exactly two
+    ## threads and neither of them is the caller's.
 
+# Opened once, at module init. If you ever see this run twice, something is
+# calling NimMain after the library constructor already has — see `frq_init`,
+# which is empty for exactly that reason.
 inbound.open()
 outbound.open()
 events.open()
 
+
+proc writerBody(unused: int) {.thread.} =
+  ## Blocks on the queue, not on the socket.
+  ##
+  ## A thread of its own because the alternative does not work: a single
+  ## thread has to both wait for the server and notice what the client wants
+  ## to say, and on a TLS socket there is no reliable way to wait for one with
+  ## a bound on the other. `recvLine(timeout)` and `recv(timeout)` both block
+  ## in SSL_read past their timeout — select fires on a TLS *record*, which
+  ## need not hold a complete line — so registration deadlocked: CAP/NICK/USER
+  ## sat in the queue while the reader waited for a server that had nothing to
+  ## say until we sent them.
+  {.gcsafe.}:
+    while true:
+      let line = outbound.recv()      # blocks until there is one
+      if not running: break
+      if shared.isNil: continue
+      try:
+        trace("conn.out", line)
+        shared.send(line & "\c\L")
+      except CatchableError as e:
+        events.send("error: " & e.msg)
+        break
+
 proc readerBody(cfg: ConnConfig) {.thread.} =
   {.gcsafe.}:
-    var sock: Socket
     try:
       trace("conn", "dialling " & cfg.host & ":" & $cfg.port &
                     (if cfg.tls: " over TLS" else: " plain"))
-      sock = newSocket(buffered = true)
+      var sock = newSocket(buffered = true)
       if cfg.tls:
         # CVerifyPeer: this carries a nick and, once SASL is wired, a token.
         let ctx = newContext(verifyMode = CVerifyPeer)
         ctx.wrapSocket(sock)
       sock.connect(cfg.host, Port(cfg.port))
+      shared = sock
+      createThread(writer, writerBody, 0)
       events.send("open")
       trace("conn", "connected")
 
       while running:
-        # Writes FIRST, and this is not a preference: the client speaks first
-        # in IRC. Draining after the read deadlocked exactly once and
-        # completely — CAP/NICK/USER were queued before the socket finished
-        # connecting, the loop went straight into a read, and the server had
-        # nothing to say because we had not registered. Both sides waited.
-        #
-        # It also bounds write latency by nothing instead of by the read
-        # timeout, which matters for a keystroke.
-        while true:
-          let (ok, pending) = outbound.tryRecv()
-          if not ok: break
-          trace("conn.out", pending)
-          sock.send(pending & "\c\L")
-
         var line: string
-        var timedOut = false
         try:
-          # A timeout rather than a second thread for the writer: it gives the
-          # outbound queue a look between lines at the price of one syscall
-          # every 200ms, and one thread is one thread to shut down cleanly.
-          line = sock.recvLine(timeout = 200)
-        except TimeoutError:
-          timedOut = true
-        except OSError as e:
-          events.send("error: " & e.msg)
+          line = sock.recvLine()
+        except CatchableError as e:
+          if running: events.send("error: " & e.msg)
           break
-
-        if not timedOut and line.len == 0:
-          # recvLine answering empty with no timeout is the peer going away.
-          events.send("close: ")
+        if line.len == 0:
+          if running: events.send("close: ")
           break
-
-        if line.len > 0:
-          trace("conn.in", line)
-          inbound.send(line)
+        trace("conn.in", line)
+        inbound.send(line)
 
     except CatchableError as e:
       trace("conn", "!! " & e.msg)
       events.send("error: " & e.msg)
     finally:
-      if not sock.isNil:
-        try: sock.close() except CatchableError: discard
+      running = false
+      # Unblock the writer, which is sitting in `outbound.recv()`.
+      outbound.send("")
+      if not shared.isNil:
+        try: shared.close() except CatchableError: discard
+        shared = nil
       trace("conn", "reader done")
 
 proc open*(cfg: ConnConfig) =
@@ -102,7 +116,7 @@ proc open*(cfg: ConnConfig) =
   while inbound.tryRecv()[0]: discard
   while events.tryRecv()[0]: discard
   running = true
-  createThread(thread, readerBody, cfg)
+  createThread(reader, readerBody, cfg)
 
 proc send*(line: string) =
   if running: outbound.send(line)
@@ -110,7 +124,11 @@ proc send*(line: string) =
 proc close*() =
   if not running: return
   running = false
-  joinThread(thread)
+  # The reader is blocked in recvLine; closing the socket is what wakes it.
+  if not shared.isNil:
+    try: shared.close() except CatchableError: discard
+  outbound.send("")
+  joinThread(reader)
   trace("conn", "closed")
 
 proc tryLine*(): (bool, string) = inbound.tryRecv()

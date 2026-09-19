@@ -9,7 +9,7 @@
 ## systematic difference between the two files.
 
 import std/json
-import ../ui, ../cells
+import frq/[ui, cells]
 
 const transportNote* =
   "TLS comes from dart:io, so :6697 works here; untick it for a plain :6667 listener."

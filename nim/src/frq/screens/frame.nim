@@ -5,7 +5,7 @@
 ## and neither screen owns them.
 
 import std/json
-import ../ui, ../cells
+import frq/[ui, cells]
 
 func tabBar*(s: State): Node =
   hbox(%*{"spacing": 8},

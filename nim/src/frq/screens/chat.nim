@@ -15,8 +15,8 @@
 import std/[algorithm, json, strutils, tables]
 from std/unicode import runeLen, runeSubStr
 import std/options
-import ../ui, ../cells, ../model, ../clock, ../reactions, ../textruns
-from connect import errorNote
+import frq/[ui, cells, model, clock, reactions, textruns]
+from frq/screens/connect import errorNote
 
 const
   faceSize = 32

@@ -382,10 +382,9 @@ nim-test file="":
 
 # The Nim core as a shared library, into build/nim.
 #
-# `--mm:orc` rather than the default: this is a library loaded by a Dart
-# process that owns its own lifetime, so reference counting with a cycle
-# collector is the memory model that does not need a GC thread of its own or a
-# stack it can scan.
+# `--mm:orc` and not refc, and it is not a preference: refc gives each thread
+# its own GC heap, so the Socket the reader and writer threads share is a ref
+# from another heap and dereferencing it segfaults. ORC's heap is shared.
 #
 # `-d:release` and not `-d:danger`: the bounds checks are what turn a
 # malformed line off a socket into an exception instead of a read past the end
@@ -428,7 +427,52 @@ dart-test:
     dart pub get
     dart test -r expanded
 
-# The real app, with the Nim core as its transport.
+# The whole Nim stack against a real freeq: socket, state and screens.
+#
+# Connects, waits for the room list, opens a room and prints what the tree
+# actually contains — through the FFI, so it is the path the window uses.
+# Not in any suite: it needs a network and a running freeq.
+nim-live *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_DART:-}" ]; then
+        just nim-lib
+        exec {{nix}} develop .#dart --max-jobs {{jobs}} --command just nim-live "$@"
+    fi
+    shift || true
+    cd dart/frq_core
+    dart pub get >/dev/null
+    exec dart run tool/live_ui.dart "$@"
+
+# frq with Nim owning the state and the screens, rendered by Flutter.
+#
+# No ClojureDart on this path. `lib/main_nim.dart` asks the Nim core for a
+# widget tree and paints it; the screens are ports of `common/frq/screens/`.
+#
+#   just nim-ui             build it
+#   just nim-ui run         open the window
+nim-ui action="build":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_FLUTTER_DESKTOP:-}" ]; then
+        just nim-lib
+        exec {{nix}} develop .#flutter-desktop --max-jobs {{jobs}} \
+            --command just nim-ui "$@"
+    fi
+    cd flutter
+    flutter pub get
+    export LD_LIBRARY_PATH="${FRQ_OPENSSL_LIB:-}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    runner=()
+    [ -e /run/current-system ] || runner=("$NIXGL")
+    case "{{action}}" in
+        build) exec "${runner[@]}" flutter build linux --debug -t lib/main_nim.dart ;;
+        run)   exec "${runner[@]}" flutter run -d linux -t lib/main_nim.dart ;;
+        *)     echo "usage: just nim-ui [build|run]" >&2; exit 1 ;;
+    esac
+
+# The ClojureDart app, with the Nim core as its transport only.
 #
 # This is the wiring that matters: `frq.main-nim` is `frq.main` with one line
 # changed — `frq.net.nim/install!` where it says `frq.net.dart/install!`. Every

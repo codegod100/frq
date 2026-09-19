@@ -3,7 +3,7 @@
 ## From `common/frq/edits.cljc`.
 
 import std/[strutils, tables]
-import model
+import frq/[model]
 
 type
   EditResult* = enum

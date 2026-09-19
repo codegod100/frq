@@ -4,8 +4,8 @@
 ## `common/frq/screens/settings.cljc`.
 
 import std/[json, tables]
-import ../ui, ../cells, ../model
-import frame, connect
+import frq/[ui, cells, model]
+import frq/screens/[frame, connect]
 
 func discoverScreen*(s: State): Node =
   var body = @[dimLabel("Popular channels on freeq."), errorNote(s)]

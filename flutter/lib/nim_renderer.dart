@@ -1,20 +1,23 @@
 /// The renderer: a Nim widget tree, walked into Flutter widgets.
 ///
-/// This is the Dart half of the spike's claim. It knows the tag vocabulary
-/// and nothing else — no screens, no state, no idea what "connect" means. Nim
-/// decides what the screen is; this decides what a `vbox` looks like.
+/// This knows the tag vocabulary and nothing else — no screens, no state, no
+/// idea what "connect" means. Nim decides what the screen is; this decides
+/// what a `vbox` looks like.
 ///
-/// The measure of whether the split is honest is how boring this file is. If
-/// a feature ever needs a change here AND in Nim, the boundary is in the
-/// wrong place.
+/// The measure of whether the split is honest is how boring this file is. If a
+/// feature ever needs a change here AND in Nim, the boundary is in the wrong
+/// place. The treatments are `flutter/src/frq/hiccup.cljd`'s, so a tree from
+/// Nim paints the way the same tree painted under ClojureDart.
+library;
+
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:frq_core/frq_core.dart' as core;
 
-/// Rebuilds from Nim on every event. One `setState` per dispatch, and the
-/// whole tree is rebuilt — which is what Flutter does anyway, and is why the
-/// Nim side does not need a reconciler of its own.
+import 'nim_theme.dart' as t;
+
 class NimApp extends StatefulWidget {
   const NimApp({super.key});
   @override
@@ -25,41 +28,33 @@ class _NimAppState extends State<NimApp> {
   late core.UiNode _tree = core.render();
   Timer? _poll;
 
+  // One controller and one focus node per keyed entry, kept across rebuilds.
+  //
+  // This is why `:key` is on every entry in both the Clojure and the Nim: a
+  // controller identified by position instead of name meant the host field and
+  // the port field shared one and both showed the port. The focus node is the
+  // same bug one layer up — the field is rebuilt from a fresh tree on every
+  // keystroke, so without a node held per key the caret goes nowhere after the
+  // first line.
+  final _controllers = <String, TextEditingController>{};
+  final _focus = <String, FocusNode>{};
+
   @override
   void initState() {
     super.initState();
     // Polling, because the socket lives on a Nim thread and there is no
-    // callback into Dart. A Dart callback invoked from a foreign thread has to
-    // be marshalled onto the main isolate — NativeCallable, ports, a whole
-    // mechanism — and at 70µs a render a 100ms timer does the same job for
-    // nothing. It is also why `render` is allowed to be impure.
+    // callback into Dart. At ~70µs a render a 100ms timer costs nothing.
     _poll = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      final t = core.poll();
-      // Only when it actually differs: a setState per tick would rebuild the
-      // whole tree ten times a second for a screen nobody is touching.
-      if (t.toString() != _tree.toString()) {
-        setState(() => _tree = t);
+      final next = core.poll();
+      if (next.toString() != _tree.toString()) {
+        setState(() => _tree = next);
       }
     });
   }
 
-  // One controller per keyed entry, kept across rebuilds.
-  //
-  // This is the whole reason `:key` is on every entry in both the Clojure and
-  // the Nim: a controller identified by position instead of name meant the
-  // host field and the port field shared one and both showed the port. The
-  // comment survives three languages now.
-  final _controllers = <String, TextEditingController>{};
-
-  // One focus node per keyed entry, for the same reason as the controllers.
-  // Without it, sending with Enter drops focus and the next line is typed
-  // into nothing — the field is rebuilt from a fresh tree every time.
-  final _focus = <String, FocusNode>{};
-
   void _send(String id, [String value = '']) {
+    if (id.isEmpty) return;
     setState(() => _tree = core.dispatch(id, value));
-    // Enter in the compose box clears the draft in Nim and rebuilds the
-    // field; putting focus back is what makes a second line typeable.
     if (id == 'send') _focus['draft']?.requestFocus();
   }
 
@@ -78,155 +73,459 @@ class _NimAppState extends State<NimApp> {
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'frq',
-        theme: ThemeData.dark(useMaterial3: true),
-        home: Scaffold(
-          body: SafeArea(child: SingleChildScrollView(child: _build(_tree))),
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: t.bg,
+          colorScheme: const ColorScheme.dark(
+            primary: t.accent,
+            onPrimary: t.onAccent,
+            surface: t.bg,
+            onSurface: t.onBg,
+            error: t.destructive,
+          ),
         ),
+        home: Scaffold(backgroundColor: t.bg, body: SafeArea(child: _build(_tree))),
       );
+
+  // ---------------------------------------------------------------- helpers
+
+  TextStyle _style(double size, Color color) =>
+      TextStyle(fontSize: size, color: color, height: 1.35);
+
+  double _d(dynamic v, double fallback) =>
+      v is num ? v.toDouble() : fallback;
+
+  /// Gaps between children, as real widgets rather than a `spacing:` — the
+  /// same layout on every Flutter version this might be built against.
+  List<Widget> _spaced(List<Widget> kids, double gap, {required bool vertical}) {
+    if (gap <= 0 || kids.length < 2) return kids;
+    final out = <Widget>[];
+    for (var i = 0; i < kids.length; i++) {
+      if (i > 0) {
+        out.add(vertical ? SizedBox(height: gap) : SizedBox(width: gap));
+      }
+      out.add(kids[i]);
+    }
+    return out;
+  }
+
+  /// A source that may be a bundled asset, a file on disk, or a URL — the
+  /// three the screens hand over, named apart by an `asset:` prefix so they
+  /// stay one property.
+  ImageProvider? _imageProvider(String src) {
+    if (src.isEmpty) return null;
+    if (src.startsWith('asset:')) return AssetImage(src.substring(6));
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      return NetworkImage(src);
+    }
+    return FileImage(File(src));
+  }
+
+  Widget _wrapTap(String onClick, Widget child, {BorderRadius? radius}) {
+    if (onClick.isEmpty) return child;
+    return InkWell(
+      onTap: () => _send(onClick),
+      borderRadius: radius,
+      child: child,
+    );
+  }
+
+  // ------------------------------------------------------------------ build
 
   Widget _build(core.UiNode n) {
     final kids = n.children.map(_build).toList();
+    final spacing = _d(n.props['spacing'], 0);
 
     switch (n.tag) {
       case 'page':
-        return Center(
-          child: ConstrainedBox(
-            constraints:
-                BoxConstraints(maxWidth: n.prop('maxWidth', 520).toDouble()),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start, children: kids),
+        return SingleChildScrollView(
+          child: Center(
+            child: ConstrainedBox(
+              constraints:
+                  BoxConstraints(maxWidth: _d(n.props['maxWidth'], 520)),
+              child: Padding(
+                padding: const EdgeInsets.all(t.spaceM),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _spaced(kids, spacing, vertical: true)),
+              ),
             ),
           ),
         );
 
       case 'vbox':
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: _spaced(kids, n.prop('spacing', 0), vertical: true),
-        );
+        {
+          Widget col = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: _spaced(kids, spacing, vertical: true),
+          );
+          col = _margins(n, col);
+          final w = _d(n.props['widthRequest'], 0);
+          if (w > 0) col = SizedBox(width: w, child: col);
+          // `fillHeight` is what keeps the compose bar at the bottom instead
+          // of wherever the backlog happens to end.
+          return n.prop('fillHeight', false) ? Expanded(child: col) : col;
+        }
 
       case 'hbox':
-        // Wrap and not Row, and this was a bug before it was a decision: the
-        // three mode buttons are wider than the 520-point page, and a Row
-        // answers that with a RenderFlex overflow rather than a second line.
-        // A `:hbox` in the screens means "these go together across", not "these
-        // fit"; the tree has no idea how wide the window is and should not.
-        final gap = n.prop('spacing', 0).toDouble();
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: kids,
-        );
-
-      case 'scroll':
-        return SizedBox(
-          height: n.prop('height', 300).toDouble(),
-          child: Scrollbar(
-            child: SingleChildScrollView(
-              reverse: true,
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: kids),
+        {
+          // Wrap and not Row: `:hbox` in the screens means "these go together
+          // across", not "these fit". The head row of the chat screen asks for
+          // more than 360 points has, and a Row answers that with an overflow
+          // rather than a second line.
+          final wrapping = n.prop('wrap', true);
+          final align = n.prop('align', 'center');
+          if (!wrapping) {
+            return _margins(
+              n,
+              Row(
+                crossAxisAlignment: align == 'end'
+                    ? CrossAxisAlignment.end
+                    : CrossAxisAlignment.center,
+                children: _spaced(kids, spacing, vertical: false),
+              ),
+            );
+          }
+          return _margins(
+            n,
+            Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
+              crossAxisAlignment: align == 'end'
+                  ? WrapCrossAlignment.end
+                  : WrapCrossAlignment.center,
+              children: kids,
             ),
-          ),
-        );
+          );
+        }
 
+      // Container::Card in the Clojure: padding 12, fills its width.
       case 'card':
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 8),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start, children: kids),
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
+          padding: const EdgeInsets.all(t.spaceXs),
+          decoration: BoxDecoration(
+            color: t.card,
+            borderRadius: BorderRadius.circular(t.radiusS),
           ),
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _spaced(kids, spacing > 0 ? spacing : t.spaceXxs,
+                  vertical: true)),
         );
 
       case 'title':
         return Text(n.prop('label', ''),
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold));
+            style: _style(t.textTitle3, t.onBg)
+                .copyWith(fontWeight: FontWeight.bold));
 
       case 'title-2':
         return Padding(
-          padding: const EdgeInsets.only(top: 8, bottom: 4),
+          padding: const EdgeInsets.only(top: t.spaceXxs, bottom: t.spaceXxxs),
           child: Text(n.prop('label', ''),
-              style:
-                  const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+              style: _style(t.textTitle4, t.onBg)
+                  .copyWith(fontWeight: FontWeight.w600)),
         );
 
       case 'label':
-        return Text(n.prop('label', ''));
+        return Text(n.prop('label', ''), style: _style(t.textBody, t.onBg));
 
       case 'dim-label':
-        return Opacity(
-            opacity: 0.7,
-            child: Text(n.prop('label', ''),
-                style: const TextStyle(fontSize: 12)));
+        return Text(n.prop('label', ''), style: _style(t.textCaption, t.dim));
+
+      /// Prose, as opposed to a label: this is what a message is, and it
+      /// wraps. Kept apart from `label` because a wrapping label in a row
+      /// lays out against the row's width rather than the column's.
+      case 'text':
+        return Text(n.prop('text', ''), style: _style(t.textBody, t.onBg));
+
+      case 'link':
+        return _wrapTap(
+          n.prop('onClick', ''),
+          Text(
+            n.prop('label', ''),
+            style: _style(t.textBody, t.accent)
+                .copyWith(decoration: TextDecoration.underline,
+                          decorationColor: t.accent),
+          ),
+        );
+
+      case 'separator':
+        return const Divider(height: 1, thickness: 1, color: t.divider);
+
+      case 'spacer':
+        {
+          final s = _d(n.props['size'], t.spaceXxs);
+          return SizedBox(width: s, height: s);
+        }
 
       case 'spinner':
-        return const SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(strokeWidth: 2));
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: t.accent)),
+            if (n.prop('label', '').isNotEmpty) ...[
+              const SizedBox(width: t.spaceXxs),
+              Text(n.prop('label', ''), style: _style(t.textCaption, t.dim)),
+            ],
+          ],
+        );
+
+      /// A dot that says whether the thing is live, and the words beside it.
+      case 'status':
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: n.prop('live', false) ? t.success : t.dim,
+                borderRadius: BorderRadius.circular(t.radiusXs),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(n.prop('label', ''), style: _style(t.textCaption, t.dim)),
+          ],
+        );
 
       case 'button':
-        final onClick = n.prop('onClick', '');
-        final label = Text(n.prop('label', ''));
-        // No padding of its own: spacing belongs to the container, which is
-        // the only thing that knows whether this is in a row or a column.
-        return n.prop('kind', 'default') == 'primary'
-            ? FilledButton(onPressed: () => _send(onClick), child: label)
-            : OutlinedButton(onPressed: () => _send(onClick), child: label);
+        {
+          final onClick = n.prop('onClick', '');
+          final kind = n.prop('kind', 'default');
+          final label = Text(n.prop('label', ''));
+          if (kind == 'primary') {
+            return FilledButton(
+                onPressed: () => _send(onClick), child: label);
+          }
+          if (kind == 'destructive') {
+            return FilledButton(
+              style: FilledButton.styleFrom(
+                  backgroundColor: t.destructive,
+                  foregroundColor: t.onDestructive),
+              onPressed: () => _send(onClick),
+              child: label,
+            );
+          }
+          return OutlinedButton(onPressed: () => _send(onClick), child: label);
+        }
 
       case 'checkbutton':
-        return Row(mainAxisSize: MainAxisSize.min, children: [
-          Checkbox(
-            value: n.prop('active', false),
-            onChanged: (_) => _send(n.prop('onToggled', '')),
-          ),
-          Text(n.prop('label', '')),
-        ]);
-
-      case 'entry':
-        final key = n.prop('key', '');
-        final text = n.prop('text', '');
-        final c = _controllers.putIfAbsent(
-            key, () => TextEditingController(text: text));
-        // Only when it actually differs: assigning unconditionally moves the
-        // caret to the end on every keystroke, which is the classic way to
-        // make a controlled text field unusable.
-        if (c.text != text) {
-          c.value = c.value.copyWith(
-            text: text,
-            selection: TextSelection.collapsed(offset: text.length),
+        {
+          // The label is part of the target. 20 logical pixels is a fine tick
+          // on a desktop pointer and a miss on a thumb, so the whole row taps.
+          final onToggled = n.prop('onToggled', '');
+          return InkWell(
+            onTap: () => _send(onToggled),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Checkbox(
+                  value: n.prop('active', false),
+                  onChanged: (_) => _send(onToggled),
+                ),
+                Text(n.prop('label', ''), style: _style(t.textBody, t.onBg)),
+              ],
+            ),
           );
         }
-        final field = TextField(
-          controller: c,
-          focusNode: _focus.putIfAbsent(key, FocusNode.new),
-          decoration: InputDecoration(
-            hintText: n.prop('placeholder', ''),
-            isDense: true,
-            border: const OutlineInputBorder(),
-          ),
-          onChanged: (v) => _send(n.prop('onChange', ''), v),
-          onSubmitted: (_) {
-            final submit = n.prop('onSubmit', '');
-            if (submit.isNotEmpty) _send(submit);
-          },
+
+      case 'emoji':
+        return _wrapTap(
+          n.prop('onClick', ''),
+          Text(n.prop('glyph', n.prop('emoji', '')),
+              style: TextStyle(fontSize: _d(n.props['size'], 16))),
         );
-        final w = n.prop('widthRequest', 0);
-        // A width request is a minimum in the screens' vocabulary, but here it
-        // has to be a maximum too: an unconstrained TextField inside a Wrap
-        // has no width at all to take.
-        return w > 0 ? SizedBox(width: w.toDouble(), child: field) : field;
+
+      /// A reaction pill: the glyph, and the tally beside it where there is
+      /// one to show. The same shape whether it is a reaction under a message,
+      /// a swatch in the picker, or a chip on the sender's row — which is the
+      /// point: what you press to react and what appears once you have should
+      /// look like one family.
+      ///
+      /// A count of zero is no count. The picker passes 0 for every swatch,
+      /// and a grid of little grey zeroes is noise where a reader is scanning
+      /// for a face. `mine` is the accent, because the only thing a pill has
+      /// to say at a glance is whether pressing it again takes yours off.
+      case 'reaction':
+        {
+          final size = _d(n.props['size'], 14);
+          final count = n.prop('count', 0);
+          final mine = n.prop('mine', false);
+          final pad = (0.25 * size).clamp(2.0, 8.0);
+          return _wrapTap(
+            n.prop('onClick', ''),
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: pad, vertical: pad / 2),
+              decoration: BoxDecoration(
+                color: mine ? t.accent : t.component,
+                borderRadius: BorderRadius.circular(t.radiusS),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(n.prop('emoji', ''), style: TextStyle(fontSize: size)),
+                  if (count > 0) ...[
+                    const SizedBox(width: 4),
+                    Text('$count',
+                        style: _style(t.textCaption,
+                            mine ? t.onAccent : t.dim)),
+                  ],
+                ],
+              ),
+            ),
+          );
+        }
+
+      /// A face is a way in to who someone is, so it takes the press that
+      /// opens their profile. A picture that will not load is a face that
+      /// stays its initial and nothing else.
+      case 'avatar':
+        {
+          final size = _d(n.props['size'], 32);
+          final provider = _imageProvider(n.prop('url', ''));
+          final fallback = n.prop('fallback', '');
+          final face = CircleAvatar(
+            radius: size / 2,
+            backgroundColor: t.component,
+            backgroundImage: provider,
+            onBackgroundImageError: provider == null ? null : (_, __) {},
+            child: provider == null
+                ? Text(
+                    fallback.isNotEmpty
+                        ? fallback.substring(0, 1).toUpperCase()
+                        : '?',
+                    style: _style(t.textBody, t.onBg))
+                : null,
+          );
+          final onClick = n.prop('onClick', '');
+          if (onClick.isEmpty) return face;
+          return InkWell(
+            onTap: () => _send(onClick),
+            customBorder: const CircleBorder(),
+            child: face,
+          );
+        }
+
+      case 'image':
+        {
+          final provider = _imageProvider(n.prop('src', ''));
+          if (provider == null) return const SizedBox.shrink();
+          final maxW = _d(n.props['maxWidth'], 0);
+          final maxH = _d(n.props['maxHeight'], 0);
+          Widget img = Image(
+            image: provider,
+            fit: BoxFit.contain,
+            // A half-written cache file, or one deleted under us: the decoder
+            // throws during the build, and an exception in a build is a red
+            // screen for the whole conversation rather than a gap where one
+            // picture was.
+            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+          );
+          if (maxW > 0 || maxH > 0) {
+            img = ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: maxW > 0 ? maxW : double.infinity,
+                maxHeight: maxH > 0 ? maxH : double.infinity,
+              ),
+              child: img,
+            );
+          }
+          return _wrapTap(n.prop('onClick', ''), img);
+        }
+
+      case 'entry':
+        {
+          final key = n.prop('key', '');
+          final value = n.prop('text', '');
+          final c = _controllers.putIfAbsent(
+              key, () => TextEditingController(text: value));
+          // Only when it actually differs: assigning unconditionally moves the
+          // caret to the end on every keystroke.
+          if (c.text != value) {
+            c.value = c.value.copyWith(
+              text: value,
+              selection: TextSelection.collapsed(offset: value.length),
+            );
+          }
+          final field = TextField(
+            controller: c,
+            focusNode: _focus.putIfAbsent(key, FocusNode.new),
+            style: _style(t.textBody, t.onBg),
+            decoration: InputDecoration(
+              hintText: n.prop('placeholder', ''),
+              hintStyle: _style(t.textBody, t.dim),
+              isDense: true,
+              filled: true,
+              fillColor: t.component,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(t.radiusS),
+                borderSide: BorderSide.none,
+              ),
+            ),
+            onChanged: (v) => _send(n.prop('onChange', ''), v),
+            onSubmitted: (_) => _send(n.prop('onSubmit', '')),
+          );
+          final w = _d(n.props['widthRequest'], 0);
+          // A width request is a minimum in the screens' vocabulary, but here
+          // it has to be a maximum too: an unconstrained TextField inside a
+          // Wrap has no width at all to take.
+          return w > 0 ? SizedBox(width: w, child: field) : Expanded(child: field);
+        }
+
+      case 'scroll':
+        {
+          Widget body = SingleChildScrollView(
+            // The backlog reads from the bottom; a settings list from the top.
+            reverse: n.prop('stickToBottom', false),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _spaced(kids, spacing, vertical: true)),
+          );
+          body = Scrollbar(child: body);
+          final h = _d(n.props['height'], 0);
+          if (h > 0) return SizedBox(height: h, child: body);
+          // No fixed height: take what the column has left. `reserve` is the
+          // Clojure's way of saying the same thing to a backend that could not
+          // do this, and is ignored here on purpose.
+          return Expanded(child: body);
+        }
+
+      /// A panel over the screen rather than a screen of its own.
+      case 'dialog':
+        return Card(
+          color: t.cardComponent,
+          child: Padding(
+            padding: const EdgeInsets.all(t.spaceS),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (n.prop('title', '').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: t.spaceXxs),
+                    child: Text(n.prop('title', ''),
+                        style: _style(t.textTitle4, t.onCard)
+                            .copyWith(fontWeight: FontWeight.w600)),
+                  ),
+                ..._spaced(kids, spacing, vertical: true),
+              ],
+            ),
+          ),
+        );
 
       default:
         // An unknown tag paints as itself rather than crashing or vanishing.
         // Nim can add one and see it before this file has heard of it, which
-        // is the behaviour that makes the boundary pleasant to work across.
+        // is what makes the boundary pleasant to work across.
         return Container(
           padding: const EdgeInsets.all(4),
           color: Colors.orange.withValues(alpha: 0.3),
@@ -235,17 +534,19 @@ class _NimAppState extends State<NimApp> {
     }
   }
 
-  List<Widget> _spaced(List<Widget> kids, num gap, {required bool vertical}) {
-    if (gap <= 0 || kids.length < 2) return kids;
-    final out = <Widget>[];
-    for (var i = 0; i < kids.length; i++) {
-      if (i > 0) {
-        out.add(vertical
-            ? SizedBox(height: gap.toDouble())
-            : SizedBox(width: gap.toDouble()));
-      }
-      out.add(kids[i]);
-    }
-    return out;
+  /// `margin`, `marginTop`, `marginBottom`, `marginRight` — the props the
+  /// screens use to buy air without a wrapper each time.
+  Widget _margins(core.UiNode n, Widget child) {
+    final all = _d(n.props['margin'], 0);
+    final top = _d(n.props['marginTop'], all);
+    final bottom = _d(n.props['marginBottom'], all);
+    final right = _d(n.props['marginRight'], all);
+    final left = _d(n.props['marginLeft'], all);
+    if (top == 0 && bottom == 0 && right == 0 && left == 0) return child;
+    return Padding(
+      padding: EdgeInsets.only(
+          top: top, bottom: bottom, right: right, left: left),
+      child: child,
+    );
   }
 }

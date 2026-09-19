@@ -9,8 +9,8 @@ import std/[json, strutils, tables]
 # `title` that is ambiguous against `ui.title`, which is the one this file
 # means every time it says it.
 from std/unicode import runeLen, runeSubStr
-import ../ui, ../cells, ../model, ../rooms
-import frame, connect
+import frq/[ui, cells, model, rooms]
+import frq/screens/[frame, connect]
 
 const listGutter = 16
   ## The scrollbar's room. Without it the cards sit under it and the last

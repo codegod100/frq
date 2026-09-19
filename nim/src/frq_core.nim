@@ -20,26 +20,32 @@
 ## per call, which is nothing against the network round trip that produced the
 ## line being parsed.
 ##
-## There was a second half to this ABI once — `frq_ui_render`, `frq_ui_dispatch`
-## and a state machine and screens behind them — from an experiment where Nim
-## owned the UI as well. It is gone: it meant reimplementing screens that
-## already exist and are far better, and the seam that actually wanted Nim
-## under it was `frq.net`.
+## The UI half of this ABI — `frq_ui_render` and `frq_ui_dispatch` — is Nim
+## owning the screens as well as the rules. The screens under it are ported
+## from `common/frq/screens/` rather than reimagined, which is the difference
+## between this and the experiment that was deleted for being a facsimile.
 
-import std/json
-import frq/[ircparse, trace]
+import std/[json, strutils]
+import frq/[ircparse, trace, ui, cells, reducer]
 import frq/conn as tr
-
-proc NimMain() {.importc.}
-
-var initialised = false
+import frq/screens/connect as scConnectScreen
+import frq/screens/chats as scChatsScreen
+import frq/screens/chat as scChatScreen
+import frq/screens/settings as scSettingsScreen
 
 proc frq_init*() {.exportc, dynlib.} =
-  ## Set Nim's runtime up. Idempotent, because a binding that guesses wrong
-  ## about whether it has been called should be harmless rather than fatal.
-  if not initialised:
-    NimMain()
-    initialised = true
+  ## Kept for the ABI, and deliberately empty.
+  ##
+  ## It used to call `NimMain()`. On Linux `--app:lib` already emits a library
+  ## constructor that runs Nim's module initialisers at dlopen, so calling it
+  ## again ran every module's top-level code a SECOND time — which for
+  ## `conn.nim` meant `outbound.open()` on channels that were already open,
+  ## quietly resetting them. The reader thread then drained a different queue
+  ## from the one the writer filled, and nothing this client sent ever left.
+  ##
+  ## Nothing to do here, then, but the symbol stays: a binding that calls it
+  ## should keep working, and one that does not should not have to care.
+  discard
 
 proc dup(s: string): cstring =
   ## A copy of `s` that outlives this call, for the caller to `frq_free`.
@@ -137,3 +143,54 @@ proc frq_conn_event*(): cstring {.exportc, dynlib.} =
   ## The next transport event — "open", "close: …", "error: …" — or null.
   let (ok, e) = tr.tryEvent()
   if ok: dup(e) else: nil
+
+
+# ------------------------------------------------------------------- the UI
+#
+# Nim owns the state and the screens; Dart owns the pixels. The only things
+# crossing are a tree going out and an event id coming back.
+
+proc currentTree(): string =
+  ## Whichever screen the state says. `drain` first, so the tree Dart gets is
+  ## built after every line that had arrived when it asked — that is the whole
+  ## of the polling model, and why there is no callback into Dart.
+  drain()
+  let connected = app.status.startsWith("Connected")
+  let node =
+    case app.screen
+    of scChat: scChatScreen.chatScreen(app, connected)
+    of scChats: scChatsScreen.chatsScreen(app, connected)
+    of scDiscover: scSettingsScreen.discoverScreen(app)
+    of scSettings: scSettingsScreen.settingsScreen(app, connected, true)
+    of scConnect: scConnectScreen.connectScreen(app)
+  $node.toJson
+
+proc frq_ui_render*(): cstring {.exportc, dynlib.} =
+  ## The current screen as a widget tree, in JSON.
+  ##
+  ## Not pure: it drains the socket's queue first, so two calls with no
+  ## dispatch between can differ when a line arrived in the gap. That is how
+  ## the room fills, and it is why the renderer polls.
+  dup(currentTree())
+
+proc frq_ui_dispatch*(event: cstring): cstring {.exportc, dynlib.} =
+  ## Apply an event and answer with the tree it produced.
+  ##
+  ## One call rather than dispatch-then-render, and not to save a crossing: it
+  ## makes the pair atomic, so there is no window in which Dart could render a
+  ## state nothing asked for.
+  if event != nil:
+    try:
+      dispatch(parseJson($event))
+    except JsonParsingError:
+      discard
+  dup(currentTree())
+
+proc frq_ui_poll*(): cstring {.exportc, dynlib.} =
+  ## The tree, for a renderer asking because time passed rather than because
+  ## anything happened. Same work as render; named for what the caller means.
+  dup(currentTree())
+
+proc frq_ui_reset*() {.exportc, dynlib.} =
+  tr.close()
+  app = initState()

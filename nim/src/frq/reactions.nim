@@ -6,7 +6,7 @@
 ## its map happens to preserve insertion for small maps.
 
 import std/[strutils, tables]
-import model
+import frq/[model]
 
 func parseTally*(encoded: string): seq[Reaction] =
   ## The server's tally of what is already on a message, as

@@ -11,7 +11,7 @@
 ## documentation of what it obviously holds.
 
 import std/tables
-import model
+import frq/[model]
 
 type
   Screen* = enum

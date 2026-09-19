@@ -247,3 +247,82 @@ String? connRecv() => _takeString(
 /// The next transport event — `open`, `close: …`, `error: …` — or null.
 String? connEvent() => _takeString(
     _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_conn_event')());
+
+
+// ---------------------------------------------------------------- the UI
+//
+// Nim owns the state and the screens; Dart owns the pixels. A tree goes out,
+// an event id comes back, and nothing else crosses.
+//
+// `UiNode` is deliberately a dumb bag — a tag, a props map, children. A class
+// per widget would put the tag vocabulary in two places and make every new tag
+// a change on both sides; the point is that Nim can grow a screen without this
+// file being touched.
+
+/// One node of the widget tree Nim emitted.
+class UiNode {
+  final String tag;
+  final Map<String, dynamic> props;
+  final List<UiNode> children;
+
+  const UiNode(this.tag, this.props, this.children);
+
+  factory UiNode.fromJson(Map<String, dynamic> j) => UiNode(
+        j['tag'] as String,
+        (j['props'] as Map?)?.cast<String, dynamic>() ?? const {},
+        ((j['children'] as List?) ?? const [])
+            .map((c) => UiNode.fromJson((c as Map).cast<String, dynamic>()))
+            .toList(growable: false),
+      );
+
+  /// A prop, or [fallback] when it is absent or the wrong shape. Tolerant on
+  /// purpose: a renderer should skip a prop it does not understand rather than
+  /// fail a whole screen over one.
+  T prop<T>(String name, T fallback) {
+    final v = props[name];
+    return v is T ? v : fallback;
+  }
+
+  /// Structural, and that matters: the poll loop compares two trees by this
+  /// string to decide whether to rebuild. A summary showing only tags and prop
+  /// NAMES would call two screens equal when a message had arrived, and the
+  /// room would never appear to fill.
+  @override
+  String toString() =>
+      '<$tag $props ${children.map((c) => c.toString()).join()}>';
+}
+
+UiNode _treeFrom(String? json) =>
+    UiNode.fromJson(jsonDecode(json ?? '{"tag":"vbox"}') as Map<String, dynamic>);
+
+/// The current screen.
+///
+/// Not pure: the Nim side drains the socket's queue first, so two calls with
+/// no [dispatch] between can differ when a line arrived in the gap. That is how
+/// the room fills, and why the renderer polls.
+UiNode render() => _treeFrom(
+    _takeString(_lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_render')()));
+
+/// The tree, asked for because time passed rather than because anything
+/// happened. Same work as [render]; named for what the caller means.
+UiNode poll() => _treeFrom(
+    _takeString(_lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_poll')()));
+
+/// Apply an event and get the tree it produced.
+///
+/// One call rather than dispatch-then-render, and not to save a crossing: it
+/// makes the pair atomic, so there is no window in which Dart could render a
+/// state nothing asked for.
+UiNode dispatch(String id, [String value = '']) {
+  final f = _lib.lookupFunction<_Str1Native, _Str1Dart>('frq_ui_dispatch');
+  final a = _toC(jsonEncode({'id': id, 'value': value}));
+  try {
+    return _treeFrom(_takeString(f(a)));
+  } finally {
+    _freeArg(a);
+  }
+}
+
+/// Back to a fresh state, for a caller that wants a known starting point.
+void resetUi() =>
+    _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_reset')();

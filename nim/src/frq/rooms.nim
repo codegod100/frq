@@ -12,7 +12,7 @@
 ## older than it and counts for nothing.
 
 import std/[algorithm, sequtils, strutils, tables]
-import model, clock
+import frq/[model, clock]
 
 const
   overviewLimit* = 100
