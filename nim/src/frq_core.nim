@@ -151,6 +151,7 @@ proc frq_conn_event*(): cstring {.exportc, dynlib.} =
 # crossing are a tree going out and an event id coming back.
 
 proc currentTree(): string =
+  maybeAutoconnect()
   ## Whichever screen the state says. `drain` first, so the tree Dart gets is
   ## built after every line that had arrived when it asked — that is the whole
   ## of the polling model, and why there is no callback into Dart.

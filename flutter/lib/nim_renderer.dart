@@ -134,9 +134,30 @@ class _NimAppState extends State<NimApp> {
 
   // ------------------------------------------------------------------ build
 
-  Widget _build(core.UiNode n) {
-    final kids = n.children.map(_build).toList();
+  /// The axis of the widget a node is being built *into*, because `Expanded`
+  /// is only legal inside a Flex and there is no way to ask Flutter after the
+  /// fact.
+  ///
+  /// Getting this wrong is what "Cannot hit test a render box that has never
+  /// been laid out" means, in a pile: an `Expanded` inside a `Wrap` fails the
+  /// layout, and every box under it is then asked to hit-test without ever
+  /// having been laid out. The chats screen did exactly that — two unsized
+  /// entries in an `hbox`, which is a Wrap.
+  static const _noAxis = '';
+  static const _row = 'row';
+  static const _column = 'column';
+
+  Widget _build(core.UiNode n, [String axis = _noAxis]) {
     final spacing = _d(n.props['spacing'], 0);
+    final flex = axis == _row || axis == _column;
+
+    // What this node's own children are being built into.
+    final childAxis = switch (n.tag) {
+      'page' || 'vbox' || 'card' || 'scroll' || 'dialog' => _column,
+      'hbox' => n.prop('wrap', true) ? _noAxis : _row,
+      _ => _noAxis,
+    };
+    final kids = n.children.map((c) => _build(c, childAxis)).toList();
 
     switch (n.tag) {
       case 'page':
@@ -166,8 +187,11 @@ class _NimAppState extends State<NimApp> {
           final w = _d(n.props['widthRequest'], 0);
           if (w > 0) col = SizedBox(width: w, child: col);
           // `fillHeight` is what keeps the compose bar at the bottom instead
-          // of wherever the backlog happens to end.
-          return n.prop('fillHeight', false) ? Expanded(child: col) : col;
+          // of wherever the backlog happens to end — but only a Flex can be
+          // told to expand into.
+          return (n.prop('fillHeight', false) && flex)
+              ? Expanded(child: col)
+              : col;
         }
 
       case 'hbox':
@@ -179,12 +203,18 @@ class _NimAppState extends State<NimApp> {
           final wrapping = n.prop('wrap', true);
           final align = n.prop('align', 'center');
           if (!wrapping) {
+            // A child asking to fill the height gets it from the row's cross
+            // axis, not from an Expanded — Expanded in a Row is about width.
+            final stretches =
+                n.children.any((c) => c.prop('fillHeight', false));
             return _margins(
               n,
               Row(
-                crossAxisAlignment: align == 'end'
-                    ? CrossAxisAlignment.end
-                    : CrossAxisAlignment.center,
+                crossAxisAlignment: stretches
+                    ? CrossAxisAlignment.stretch
+                    : (align == 'end'
+                        ? CrossAxisAlignment.end
+                        : CrossAxisAlignment.center),
                 children: _spaced(kids, spacing, vertical: false),
               ),
             );
@@ -475,10 +505,15 @@ class _NimAppState extends State<NimApp> {
             onSubmitted: (_) => _send(n.prop('onSubmit', '')),
           );
           final w = _d(n.props['widthRequest'], 0);
-          // A width request is a minimum in the screens' vocabulary, but here
-          // it has to be a maximum too: an unconstrained TextField inside a
-          // Wrap has no width at all to take.
-          return w > 0 ? SizedBox(width: w, child: field) : Expanded(child: field);
+          if (w > 0) return SizedBox(width: w, child: field);
+          // No width asked for: take the rest of the row where there is a row
+          // to take it from, and otherwise a definite width. NOT Expanded
+          // unconditionally — a TextField has no intrinsic width, so in a Wrap
+          // it is both illegal and unmeasurable, and that combination is what
+          // took the whole screen down rather than one field.
+          return axis == _row
+              ? Expanded(child: field)
+              : SizedBox(width: 320, child: field);
         }
 
       case 'scroll':
@@ -493,10 +528,10 @@ class _NimAppState extends State<NimApp> {
           body = Scrollbar(child: body);
           final h = _d(n.props['height'], 0);
           if (h > 0) return SizedBox(height: h, child: body);
-          // No fixed height: take what the column has left. `reserve` is the
-          // Clojure's way of saying the same thing to a backend that could not
-          // do this, and is ignored here on purpose.
-          return Expanded(child: body);
+          // No fixed height: take what the column has left, where there is a
+          // column. `reserve` is the Clojure's way of saying the same thing to
+          // a backend that could not do this, and is ignored here on purpose.
+          return flex ? Expanded(child: body) : SizedBox(height: 400, child: body);
         }
 
       /// A panel over the screen rather than a screen of its own.

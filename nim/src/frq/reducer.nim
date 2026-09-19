@@ -11,7 +11,7 @@
 ## payload: the alternative is a second serialisation to define and version,
 ## for arguments that are always one string.
 
-import std/[json, options, sequtils, strutils, tables]
+import std/[json, options, os, sequtils, strutils, tables]
 import std/sets
 import frq/[cells, model, rooms, reactions, edits, trace, ircparse, clock,
            atproto, handshake]
@@ -426,3 +426,25 @@ proc drain*() =
 
     else:
       trace("skip", p.command & " " & $p.params)
+
+
+# -------------------------------------------------------------- autoconnect
+#
+# `FRQ_AUTOCONNECT=1` presses Connect on the first render, and `FRQ_NICK`
+# overrides the nickname. In the same spirit as FRQ_TRACE and for the same
+# reason: a GUI on Wayland cannot be clicked from a script, so without this the
+# only way to check that the window gets past the connect screen is to sit in
+# front of it — which is not a check, and is how a layout error on the chats
+# screen went unnoticed while the connect screen looked fine.
+
+var autoconnectDone = false
+
+proc maybeAutoconnect*() =
+  if autoconnectDone: return
+  autoconnectDone = true
+  let want = getEnv("FRQ_AUTOCONNECT")
+  if want.len == 0 or want == "0": return
+  let nick = getEnv("FRQ_NICK")
+  if nick.len > 0: app.formNick = nick
+  trace("auto", "FRQ_AUTOCONNECT set — connecting as " & app.formNick)
+  connectNow()
