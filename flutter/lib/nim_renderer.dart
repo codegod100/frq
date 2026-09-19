@@ -115,7 +115,19 @@ class _NimAppState extends State<NimApp> {
             error: t.destructive,
           ),
         ),
-        home: Scaffold(backgroundColor: t.bg, body: SafeArea(child: _build(_tree))),
+        // Everything inside one SelectionArea, so a message can be selected
+        // and copied — and so can a nick, a timestamp, or a line of an error.
+        // Per-widget `SelectableText` was the alternative and is worse: it
+        // selects within one widget only, so a two-line answer and the name
+        // above it cannot be dragged across, which is most of what anyone
+        // wants to copy out of a chat.
+        //
+        // Taps still arrive: a selection starts on a drag, and the buttons,
+        // faces and reaction pills under here keep their gestures.
+        home: Scaffold(
+          backgroundColor: t.bg,
+          body: SafeArea(child: SelectionArea(child: _build(_tree))),
+        ),
       );
 
   // ---------------------------------------------------------------- helpers

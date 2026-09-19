@@ -215,6 +215,32 @@ void main() {
     }
   });
 
+  group('selection', () {
+    testWidgets('the whole tree sits in one SelectionArea', (tester) async {
+      // One, not one per Text: a selection has to be draggable across the
+      // nick, the time and the message, which is most of what anyone wants
+      // to copy out of a chat.
+      core.demoUi();
+      await layOut(tester, sizes['desktop']!);
+      expect(find.byType(SelectionArea), findsOneWidget);
+      expect(find.text('hello there'), findsOneWidget);
+    });
+
+    testWidgets('and taps still reach what is under it', (tester) async {
+      // The risk with wrapping everything: a selection gesture that eats the
+      // taps underneath. Opening a room from the list is the plainest one.
+      core.demoUi();
+      core.dispatch('screen.chats');
+      await layOut(tester, sizes['desktop']!);
+      // The row's "Open", not its name: the name is a label in this list.
+      await tester.tap(find.text('Open').first);
+      await tester.pump();
+      expect(find.text('hello there'), findsWidgets,
+          reason: 'tapping the room did not open it');
+      expectLaidOut(tester, 'the room the tap opened');
+    });
+  });
+
   group('emoji', () {
     // ✏️ is U+270F plus a variation selector asking for emoji presentation,
     // and DejaVu Sans claims U+270F — so ordinary fallback draws a monochrome
