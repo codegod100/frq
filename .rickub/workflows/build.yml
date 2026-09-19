@@ -156,14 +156,20 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        # Into a directory that already exists, which `modal volume get` then
+        # creates `web/` inside — the same shape `just web-local` uses. Naming
+        # `web` as the destination itself is what failed, with `[Errno 21] Is a
+        # directory`, after the Modal build had already succeeded.
         run: |
+          mkdir -p dist
           modal volume get --force devshell \
-            frq-flutter-web/flutter/build/web web
+            frq-flutter-web/flutter/build/web dist
 
       - uses: actions/upload-artifact@v4
         with:
           name: frq-web-${{ github.sha }}
-          path: web
+          path: dist/web
+          if-no-files-found: error
           if-no-files-found: error
 
       # Kept whether or not the build succeeded: a failed run's log is the
