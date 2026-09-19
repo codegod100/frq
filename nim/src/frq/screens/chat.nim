@@ -148,7 +148,10 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
       m.frm)
     let open = "profile.open:" & m.frm & ":" & senderActor
     var row = hbox(%*{"spacing": 6},
-      avatar(m.avatar, m.frm, size = faceSize, onClick = open),
+      # From the profile cache rather than the message: a face belongs to a
+      # person, not to a line they said, and a profile that arrives after
+      # their first message should appear on all of them.
+      avatar(avatarFor(senderActor), m.frm, size = faceSize, onClick = open),
       n("button", %*{"label": m.frm, "kind": "plain", "onClick": open}))
     if m.at > 0:
       row.children.add dimLabel(clockTime(m.at))

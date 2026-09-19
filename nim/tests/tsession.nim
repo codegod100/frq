@@ -10,7 +10,7 @@
 ## reads what went out. No socket at either end.
 
 import std/[json, sequtils, strutils, tables, unittest]
-import frq/[cells, model, reducer, rooms]
+import frq/[cells, model, profile, reducer, rooms]
 import frq/conn as tr
 
 proc sent(): seq[string] =
@@ -153,3 +153,28 @@ suite "opening a profile":
   test "and what the message itself knew still wins":
     dispatch(%*{"id": "profile.open:bob:did:plc:fromtheaccounttag"})
     check app.profileViewing.actor == "did:plc:fromtheaccounttag"
+
+suite "faces":
+  setup:
+    reset()
+    forgetProfiles()
+
+  test "learning a DID starts the face on its way, without waiting for it":
+    # `want` is not `fetch`: a room of twelve is twelve HTTPS round trips,
+    # and this is the thread that answers every keystroke.
+    say(":irc.freeq.at 352 alice #freeq ~u freeq/plc/ngokl2gn irc.freeq.at " &
+        "nandi.uk H :0 did:plc:ngokl2gnmpbvuvrfckja3g7p")
+    let (p, known) = entry("did:plc:ngokl2gnmpbvuvrfckja3g7p")
+    check known
+    check p.status == psLoading
+
+  test "and nothing is painted for one that has not arrived":
+    say(":irc.freeq.at 352 alice #freeq ~u freeq/plc/ngokl2gn irc.freeq.at " &
+        "nandi.uk H :0 did:plc:ngokl2gnmpbvuvrfckja3g7p")
+    check avatarFor("did:plc:ngokl2gnmpbvuvrfckja3g7p") == ""
+
+  test "an agent is never asked about":
+    # `did:key:` has no Bluesky profile, so a request for one can only 400.
+    say(":irc.freeq.at 352 alice #freeq ~u freeq/key/z6Mkp5we irc.freeq.at " &
+        "cartographer H :0 did:key:z6Mkp5wegrxZR62h54HwR329yz7TJ8Ccx4sh")
+    check not entry("did:key:z6Mkp5wegrxZR62h54HwR329yz7TJ8Ccx4sh")[1]

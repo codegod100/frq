@@ -524,7 +524,7 @@ proc dispatch*(event: JsonNode) =
       # pressed a face and is already waiting.
       # A `did:key:` agent has no Bluesky profile to fetch, and the panel
       # says so rather than showing a failure it caused itself.
-      if who.len > 0 and not isAgent(who): fetch(who)
+      if who.len > 0 and not isAgent(who): want(who)
 
   of "profile.close": app.profileViewing = ProfileView()
 
@@ -768,13 +768,19 @@ proc drain*() =
         let real = p.params[^1]
         let sp = real.find(' ')       # the hop count comes first
         let did = if sp >= 0: real[sp + 1 .. ^1].strip() else: ""
-        if did.startsWith("did:"): app.dids[who] = did
+        if did.startsWith("did:"):
+          app.dids[who] = did
+          # And their face, in the background. A room of twelve is twelve
+          # HTTPS round trips, which is affordable on a thread of its own and
+          # is not affordable here.
+          want(did)
 
     of "330":
       # WHOIS's `<nick> <account> :is authenticated as`. The same DID by a
       # different road — one nick rather than a room of them.
       if p.params.len >= 3 and p.params[2].startsWith("did:"):
         app.dids[p.params[1]] = p.params[2]
+        want(p.params[2])
 
     of "MODE":
       # A channel MODE, for the letters that change how someone is listed.
@@ -804,6 +810,9 @@ proc drain*() =
 
     else:
       trace("skip", p.command & " " & $p.params)
+
+  # Faces that have come back since the last frame.
+  discard collect()
 
   # A line arriving moves the marker in the room being looked at, and closing
   # the window is not a moment this client gets told about — so the saving
