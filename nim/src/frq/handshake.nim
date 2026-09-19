@@ -5,7 +5,7 @@
 ## say back — so it answers with lines and the caller writes them.
 
 import std/[sets, strutils]
-import frq/[ircparse, atproto]
+import frq/[ircparse, atproto, msgsig]
 
 const
   saslChunk* = 100_000
@@ -102,8 +102,14 @@ proc step*(session: Session, caps: HashSet[string], m: IrcLine): Step =
       result.send = saslLines(saslResponse(session, nonceOf(challenge)))
 
   of "903":
-    # Authenticated. Registration proceeds once CAP is ended.
-    result.send = @["CAP END"]
+    # Authenticated. Mint the signing key now, while the server is still in
+    # CAP — `freeq.at/msgsig` is what makes a signed-in account able to react
+    # at all, and an unsigned mutation comes back
+    # `FAIL TAGMSG SIGNATURE_REQUIRED`.
+    if "freeq.at/msgsig" in caps and session.did.len > 0:
+      result.send = @["MSGSIG " & generate(session.did), "CAP END"]
+    else:
+      result.send = @["CAP END"]
 
   of "904", "905", "906":
     # Refused. End CAP anyway and carry on as a guest rather than hanging —

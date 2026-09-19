@@ -14,7 +14,7 @@
 import std/[json, options, strutils, tables]
 import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
-           atproto, handshake, textruns, members]
+           atproto, handshake, textruns, members, msgsig]
 import frq/conn as tr
 
 proc split2(id: string): (string, string) =
@@ -166,6 +166,9 @@ proc dispatch*(event: JsonNode) =
   of "connect": connectNow()
 
   of "cancel", "disconnect":
+    # The key goes with the connection, so a reconnect signs with one the
+    # server has actually been told about.
+    msgsig.forget()
     tr.close()
     app.connecting = false
     app.screen = scConnect
@@ -264,8 +267,16 @@ proc dispatch*(event: JsonNode) =
     if mid.len > 0 and emoji.len > 0:
       let m = app.currentRoom.messageById(mid)
       let on = if m.isSome: not m.get.mine(emoji, app.formNick) else: true
-      send("@+draft/react=" & emoji & ";+draft/reply=" & mid &
-           " TAGMSG " & app.current)
+      # Signed where there is a key. freeq answers an unsigned mutation from
+      # an account with FAIL TAGMSG SIGNATURE_REQUIRED; a guest has no key and
+      # the server asks one for nothing.
+      var tags = "+draft/react=" & emoji & ";+draft/reply=" & mid
+      for k, v in mutationTags(if on: "react" else: "unreact",
+                               app.current, mid, emoji,
+                               peerDid(app.currentRoom, app.formNick),
+                               nowMs()):
+        tags.add ";" & k & "=" & v
+      send("@" & tags & " TAGMSG " & app.current)
       app.rooms.updateReaction(app.current, mid, emoji, app.formNick, on)
 
   of "goto":
