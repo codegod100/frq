@@ -225,13 +225,20 @@ class UiNode {
     return v is T ? v : fallback;
   }
 
+  /// Structural, and that matters: the poll loop compares two trees by this
+  /// string to decide whether to rebuild. A summary that showed only the tag
+  /// and the prop NAMES would call two screens equal when a message had
+  /// arrived, and the room would never appear to fill.
   @override
-  String toString() => '<$tag ${props.keys.join(",")} (${children.length})>';
+  String toString() =>
+      '<$tag $props ${children.map((c) => c.toString()).join()}>';
 }
 
-/// The current screen. Pure on the Nim side: calling it twice with no
-/// [dispatch] between gives the same tree, which is what lets Flutter rebuild
-/// whenever it likes rather than when Nim says so.
+/// The current screen.
+///
+/// Not pure: the Nim side drains the socket's queue first, so two calls with
+/// no [dispatch] between can differ when a line arrived in the gap. That is
+/// how the room fills, and it is why the renderer polls.
 UiNode render() {
   final f = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_render');
   final json = _takeString(f());
@@ -253,6 +260,26 @@ UiNode dispatch(String id, [String value = '']) {
     _freeArg(a);
   }
 }
+
+/// The tree, asked for because time passed rather than because anything
+/// happened.
+///
+/// Identical to [render] — the Nim side drains the socket queue on both — but
+/// named for what the caller means. A renderer polls this; it does not poll
+/// "render".
+UiNode poll() {
+  final f = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_poll');
+  final json = _takeString(f());
+  return UiNode.fromJson(jsonDecode(json!) as Map<String, dynamic>);
+}
+
+/// Stop `connect` from opening a socket.
+///
+/// For tests that build the real screens and tap the real Connect button. A
+/// widget test that dials irc.freeq.at is one that fails on a train, and this
+/// suite did exactly that before this existed. One way only.
+void goOffline() =>
+    _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_offline')();
 
 /// Back to a fresh state, for a caller that wants a known starting point.
 void resetUi() =>

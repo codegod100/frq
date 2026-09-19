@@ -8,8 +8,17 @@ import std/sequtils
 
 import std/[json, strutils]
 import std/unittest
-import frq/[ui, state]
+import frq/[ui, state, irc]
 import frq/screens/connect as cs
+
+# The reducer calls `irc.start` on a Connect, and a unit test has no business
+# opening a socket to irc.freeq.at — it did, before this stub, and the suite
+# failed on a machine with no network for reasons that had nothing to do with
+# the code. The stub records what it was asked for so the tests can assert on
+# it, which is more than the real one would have told them.
+var dialled: seq[ConnConfig]
+irc.connector = proc(cfg: ConnConfig) {.nimcall, gcsafe.} =
+  {.cast(gcsafe).}: dialled.add cfg
 
 proc find(node: Node, tag: string): seq[Node] =
   ## Every node with this tag, depth first.
@@ -54,6 +63,7 @@ suite "the connect screen":
 suite "dispatch":
   setup:
     app = initState()
+    dialled = @[]
 
   test "switching mode changes which fields are shown":
     dispatch(%*{"id": "mode.bluesky"})
@@ -103,3 +113,41 @@ suite "dispatch":
     let before = $cs.connectScreen(app).toJson
     dispatch(%*{"id": "no.such.event"})
     check $cs.connectScreen(app).toJson == before
+
+suite "connecting":
+  setup:
+    app = initState()
+    dialled = @[]
+
+  test "Connect dials the host and port on the form":
+    dispatch(%*{"id": "host.change", "value": "irc.example.org"})
+    dispatch(%*{"id": "connect"})
+    check dialled.len == 1
+    check dialled[0].host == "irc.example.org"
+    check dialled[0].port == 6697
+    check dialled[0].tls
+    check dialled[0].nick == "frq-guest"
+
+  test "unticking TLS dials the plain port":
+    dispatch(%*{"id": "tls.toggle"})
+    dispatch(%*{"id": "connect"})
+    check dialled[0].port == 6667
+    check not dialled[0].tls
+
+  test "a blank nickname is refused before anything is dialled":
+    dispatch(%*{"id": "nick.change", "value": "   "})
+    dispatch(%*{"id": "connect"})
+    check dialled.len == 0
+    check app.hasError
+
+  test "a nonsense port falls back to the one the tick implies":
+    dispatch(%*{"id": "port.change", "value": "not-a-port"})
+    dispatch(%*{"id": "connect"})
+    check dialled[0].port == 6697
+
+  test "sending before registration does not queue a line":
+    dispatch(%*{"id": "draft.change", "value": "hello"})
+    dispatch(%*{"id": "send"})
+    # Still in the box: nothing was sent, and the text was not eaten.
+    check app.draft == "hello"
+    check app.messages.len == 0

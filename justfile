@@ -497,3 +497,28 @@ nim-bench:
     cd dart/frq_core
     dart pub get >/dev/null
     dart run test/bench.dart
+
+# The spike, end to end, against a real freeq.
+#
+# Connects, registers, joins #test and says a line — all of it through the
+# FFI, so what it proves is Nim's socket, Nim's TLS, Nim's IRC registration
+# and the Dart boundary over the lot.
+#
+# Not in any test suite, and not in CI: it needs a network and it sends a
+# message to a public channel. Run it when you mean to.
+#
+#   just nim-live                                 irc.freeq.at, a random nick
+#   just nim-live irc.freeq.at mynick "a line"
+#   FRQ_TRACE=1 just nim-live                     ...and every line on the wire
+nim-live *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_DART:-}" ]; then
+        just nim-lib
+        exec {{nix}} develop .#dart --max-jobs {{jobs}} --command just nim-live "$@"
+    fi
+    shift || true
+    cd dart/frq_core
+    dart pub get >/dev/null
+    exec dart run tool/live_send.dart "$@"

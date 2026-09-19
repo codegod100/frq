@@ -42,7 +42,14 @@ func serverFields(s: State): Node =
 
 func connectAction(s: State): Node =
   if s.connecting:
-    hbox(%*{"spacing": 8}, spinner(), dimLabel(s.status))
+    # Cancel, and not just a spinner. Without it a connection that never
+    # completes — a host that does not answer, a TLS handshake that hangs — is
+    # a spinner with no way out but killing the window, which is exactly what
+    # the first run of this spike did.
+    hbox(%*{"spacing": 8},
+      spinner(),
+      dimLabel(s.status),
+      button("Cancel", "cancel"))
   else:
     hbox(%*{"spacing": 8},
       button("Connect", "connect", "primary"),

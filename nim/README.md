@@ -55,6 +55,46 @@ yet, and until it is, **the web build must keep using the ClojureDart
 originals**. This is why the originals stay in `common/` rather than being
 deleted as each module lands: they are the web's implementation, not dead code.
 
+## The spike
+
+`just nim-spike` opens a window with no ClojureDart on the path, connects to
+irc.freeq.at over TLS, joins `#test` and sends a message. Nim owns the state,
+the screens, the socket and the IRC protocol; Dart owns the pixels.
+
+```
+src/frq/ui.nim              the widget tree, in the screens' own tag vocabulary
+src/frq/state.nim           the record, the reducer, and drain()
+src/frq/irc.nim             the socket, on its own thread, behind two channels
+src/frq/screens/            connect and chat, as pure functions of the state
+src/frq/trace.nim           FRQ_TRACE=1, the same switch the rest of frq uses
+```
+
+Three decisions worth knowing before changing any of it:
+
+* **Nothing is shared with the socket thread.** Nim's ORC is thread-local for
+  ref types, so sharing the state would mean a lock per field and a heap two
+  threads both collect. The reader speaks only in channels, and `drain()` turns
+  its output into state on whichever thread Dart called in on.
+* **Dart polls; Nim never calls back.** A Dart callback from a foreign thread
+  has to be marshalled onto the main isolate — `NativeCallable`, ports, a whole
+  mechanism — and at 70µs a render a 100ms timer does the same job for free.
+* **A prop holds an event id, not a closure.** That is the one thing hiccup has
+  that a C ABI cannot, and substituting it is what makes this an architecture
+  rather than a rendering trick.
+
+Cost, measured: a full screen rebuild is 70–105µs, or 0.4–0.6% of a 60fps
+frame, for a 1.6KB tree. The caveat is the tree size rather than the number —
+the chat screen caps the backlog at fifty rows for exactly this reason, and
+nothing has measured what a real one costs.
+
+```bash
+just nim-spike        # the window
+just nim-spike-test   # 7 widget tests: real taps, real widgets
+just nim-live         # connect to a real freeq and say a line
+just nim-bench        # what the boundary costs
+FRQ_TRACE=1 just nim-live    # ...and every line on the wire
+```
+
 ## Status
 
 `frq/ircparse.nim` is ported and tested — 29 cases, `just nim-test` — and the
@@ -71,8 +111,10 @@ core exists to have less Clojure in the tree, and `lookupFunction` takes two
 type arguments, so it meant fighting generic interop to write more of the
 thing being removed. In Dart it is a typedef. See `dart/README.md`.
 
-What is **not** done is the wiring: nothing imports `frq_core`, so
-`common/frq/irc/parse.cljc` is still what every target runs. That step is its
+The spike above is wired up and runs. What is **not** done is replacing
+anything: the shipping app is still the ClojureDart one, `common/frq/irc/parse.cljc`
+is still what it runs, and the spike is a second entry point beside it
+(`lib/main_nim.dart`) rather than a replacement for `frq.main`. That step is its
 own piece of work — the Flutter app takes the package as a path dependency
 (which means a `pubspec.lock` regeneration and widening the nix build's source
 root), the library has to reach each target (`jniLibs` for the APK, beside the

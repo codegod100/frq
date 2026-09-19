@@ -81,3 +81,8 @@ func entry*(key, text, placeholder, onChange: string, width = 0): Node =
 
 func checkbutton*(text: string, active: bool, onToggled: string): Node =
   n("checkbutton", %*{"label": text, "active": active, "onToggled": onToggled})
+
+func scroll*(props: JsonNode, children: varargs[Node]): Node =
+  ## A list that is taller than the room it has. The renderer decides how that
+  ## is done; the tree only says that it is expected.
+  n("scroll", props, @children)

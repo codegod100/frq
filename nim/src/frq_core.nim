@@ -21,8 +21,9 @@
 ## line being parsed.
 
 import std/json
-import frq/[ircparse, ui, state]
+import frq/[ircparse, ui, state, irc]
 import frq/screens/connect as connectScreen
+import frq/screens/chat as chatScreen
 
 proc NimMain() {.importc.}
 
@@ -102,11 +103,24 @@ proc frq_irc_nick_of*(prefix: cstring): cstring {.exportc, dynlib.} =
 # pixels, and the only things crossing are a tree going out and an event id
 # coming back. See `frq/ui.nim`.
 
+proc currentTree(): string =
+  ## Whichever screen the state says. `drain` first, so the tree Dart gets is
+  ## built after every line that had arrived when it asked — that is the whole
+  ## of the polling model, and it is why there is no callback into Dart.
+  drain()
+  case app.screen
+  of scChat: $chatScreen.chatScreen(app).toJson
+  else: $connectScreen.connectScreen(app).toJson
+
 proc frq_ui_render*(): cstring {.exportc, dynlib.} =
-  ## The current screen as a widget tree, in JSON. Pure: calling it twice with
-  ## no dispatch between gives the same answer, which is what lets the
-  ## renderer rebuild whenever Flutter asks rather than when Nim says so.
-  dup($connectScreen.connectScreen(app).toJson)
+  ## The current screen as a widget tree, in JSON.
+  ##
+  ## No longer pure, and the change is worth naming: it drains the socket's
+  ## queue first, so two calls with no dispatch between can differ when a line
+  ## arrived in the gap. That is the point — it is how the room fills — but it
+  ## means the renderer must be free to call this whenever it likes, which is
+  ## what the Dart side's poll timer does.
+  dup(currentTree())
 
 proc frq_ui_dispatch*(event: cstring): cstring {.exportc, dynlib.} =
   ## Apply an event and answer with the tree it produced.
@@ -123,9 +137,22 @@ proc frq_ui_dispatch*(event: cstring): cstring {.exportc, dynlib.} =
       dispatch(parseJson($event))
     except JsonParsingError:
       discard
-  dup($connectScreen.connectScreen(app).toJson)
+  dup(currentTree())
+
+proc frq_ui_poll*(): cstring {.exportc, dynlib.} =
+  ## The tree, for a renderer that is asking because time passed rather than
+  ## because anything happened. Identical to `frq_ui_render` — named
+  ## separately so the Dart side reads as what it means.
+  dup(currentTree())
+
+proc frq_ui_offline*() {.exportc, dynlib.} =
+  ## Stop `connect` from opening a socket, for a test that wants the screens
+  ## without the network. There is no way back — a process that has asked for
+  ## this is a test process.
+  goOffline()
 
 proc frq_ui_reset*() {.exportc, dynlib.} =
   ## Back to a fresh state. For tests, and for a renderer that wants a known
   ## starting point rather than whatever the last run left.
+  irc.stop()
   app = initState()

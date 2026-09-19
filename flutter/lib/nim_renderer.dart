@@ -7,6 +7,8 @@
 /// The measure of whether the split is honest is how boring this file is. If
 /// a feature ever needs a change here AND in Nim, the boundary is in the
 /// wrong place.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:frq_core/frq_core.dart' as core;
 
@@ -21,6 +23,25 @@ class NimApp extends StatefulWidget {
 
 class _NimAppState extends State<NimApp> {
   late core.UiNode _tree = core.render();
+  Timer? _poll;
+
+  @override
+  void initState() {
+    super.initState();
+    // Polling, because the socket lives on a Nim thread and there is no
+    // callback into Dart. A Dart callback invoked from a foreign thread has to
+    // be marshalled onto the main isolate — NativeCallable, ports, a whole
+    // mechanism — and at 70µs a render a 100ms timer does the same job for
+    // nothing. It is also why `render` is allowed to be impure.
+    _poll = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      final t = core.poll();
+      // Only when it actually differs: a setState per tick would rebuild the
+      // whole tree ten times a second for a screen nobody is touching.
+      if (t.toString() != _tree.toString()) {
+        setState(() => _tree = t);
+      }
+    });
+  }
 
   // One controller per keyed entry, kept across rebuilds.
   //
@@ -35,6 +56,7 @@ class _NimAppState extends State<NimApp> {
 
   @override
   void dispose() {
+    _poll?.cancel();
     for (final c in _controllers.values) {
       c.dispose();
     }
@@ -85,6 +107,19 @@ class _NimAppState extends State<NimApp> {
           runSpacing: gap,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: kids,
+        );
+
+      case 'scroll':
+        return SizedBox(
+          height: n.prop('height', 300).toDouble(),
+          child: Scrollbar(
+            child: SingleChildScrollView(
+              reverse: true,
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: kids),
+            ),
+          ),
         );
 
       case 'card':

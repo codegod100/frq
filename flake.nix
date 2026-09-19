@@ -469,6 +469,13 @@
           dart = pkgs.mkShellNoCC {
             name = "frq-dart";
             packages = [ pkgs.dart pkgs.just ];
+
+            # libfrqcore.so is linked against OpenSSL, and the process that
+            # dlopens it has to be able to find one. Named here rather than
+            # left to the host: a machine whose libssl is a different soname
+            # fails at `frq_init` with a message about the wrong library.
+            LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.openssl ];
+
             FRQ_DART = "1";
           };
 
@@ -482,6 +489,17 @@
           nim = pkgs.mkShell {
             name = "frq-nim";
             packages = [ pkgs.nim pkgs.just ];
+
+            # OpenSSL, because `-d:ssl` in nim/nim.cfg makes std/net link
+            # -lssl and -lcrypto: the IRC connection is TLS on :6697, which is
+            # the only port freeq actually listens on.
+            buildInputs = [ pkgs.openssl ];
+
+            # And on the loader path as well as the linker's. Nim resolves the
+            # OpenSSL entry points through dynlib at run time, so without this
+            # `newContext` finds nothing behind the symbol and dies with a
+            # SIGSEGV that says nothing about SSL at all.
+            LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.openssl ];
 
             # The recipe's re-entry test, the way FRQ_FLUTTER_DESKTOP is the
             # desktop one's.

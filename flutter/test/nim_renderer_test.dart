@@ -13,6 +13,9 @@ import 'package:frq_core/frq_core.dart' as core;
 import 'package:cljd_flutter/nim_renderer.dart';
 
 void main() {
+  // No sockets from a widget test. `connect` otherwise opens a real TLS
+  // connection to irc.freeq.at, which these tests did until this line.
+  setUpAll(core.goOffline);
   setUp(core.resetUi);
 
   /// The TextField currently showing [text].
@@ -119,5 +122,8 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(find.text('Connect'), findsNothing);
     expect(find.textContaining('irc.freeq.at:6697'), findsOneWidget);
+    // And a way out of it, which the first run of the spike did not have:
+    // a connection that never completes was a spinner with no escape.
+    expect(find.text('Cancel'), findsOneWidget);
   });
 }
