@@ -30,28 +30,53 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 tools/check-common.py common
 
-  # The Nim core's tests. No Flutter, no Dart, no Android SDK — which is the
-  # reason the logic is moving there: a rule about the IRC wire format gets
-  # checked in seconds rather than behind a toolchain.
+  # The Nim core: its own suite, and the library the Dart job needs.
+  #
+  # Debian and not the Alpine image this used to name. `libfrqcore.so` links
+  # OpenSSL and is glibc, so it has to be built somewhere its runtime can load
+  # it — a musl build would not load in `dart:*` at all.
+  #
+  # `libssl-dev` because `nim/nim.cfg` sets `-d:ssl`: std/net links -lssl and
+  # -lcrypto for the TLS on :6697, and `frq.atproto` uses httpclient over the
+  # same. Without it the compile fails on a missing -lcrypto, which reads as
+  # nothing to do with TLS.
   nim-test:
     runs-on: ubuntu-latest
-    container: nimlang/nim:2.2.0-alpine
+    container: nimlang/nim:2.2.10
     steps:
       - uses: actions/checkout@v4
-      - run: cd nim && for t in tests/t*.nim; do nim c -r --hints:off --path:src "$t"; done
+      - run: apt-get update -qq && apt-get install -y -qq libssl-dev
+      - name: The Nim suite
+        run: cd nim && for t in tests/t*.nim; do nim c -r --hints:off --path:src "$t"; done
+      - name: Build libfrqcore.so
+        run: |
+          cd nim && nim c --app:lib --mm:orc -d:release --hints:off --path:src \
+            --out:../build/nim/libfrqcore.so src/frq_core.nim
+          # Diagnostic, not a gate: prints what the .so will want at
+          # runtime, so a missing libssl in the Dart job is obvious
+          # from this log rather than from a StateError in that one.
+          objdump -p ../build/nim/libfrqcore.so | grep NEEDED || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libfrqcore
+          path: build/nim/libfrqcore.so
+          if-no-files-found: error
 
-  # The Dart side of the Nim boundary, on the plain VM. Builds the library
-  # first — the test dlopens a real .so, and there is no point reporting that
-  # it could not find one.
+  # The Dart side of the same boundary, on the plain VM — no Flutter, no
+  # emulator, which is what makes it a second to run. It dlopens the library
+  # the job above built, so `libssl3` has to be there: the Dart SDK carries
+  # its own BoringSSL and does not bring OpenSSL with it.
   dart-test:
     runs-on: ubuntu-latest
     container: dart:3.13
+    needs: [nim-test]
     steps:
       - uses: actions/checkout@v4
-      - run: apt-get update -qq && apt-get install -y -qq nim
-      - run: |
-          cd nim && nim c --app:lib --mm:orc -d:release --hints:off --path:src \
-            --out:../build/nim/libfrqcore.so src/frq_core.nim
+      - run: apt-get update -qq && apt-get install -y -qq libssl3
+      - uses: actions/download-artifact@v4
+        with:
+          name: libfrqcore
+          path: build/nim
       - run: cd dart/frq_core && dart pub get && dart test -r expanded
 
   web:
