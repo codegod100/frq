@@ -32,30 +32,51 @@ jobs:
 
   # The Nim core: its own suite, and the library the Dart job needs.
   #
-  # Debian and not the Alpine image this used to name. `libfrqcore.so` links
-  # OpenSSL and is glibc, so it has to be built somewhere its runtime can load
-  # it — a musl build would not load in `dart:*` at all.
+  # NOT in a `container:`, and that is the whole reason this job is shaped the
+  # way it is. `actions/upload-artifact` is a node20 action and JS actions run
+  # inside the job container, so `nimlang/nim` — which carries no node — failed
+  # the upload step with `node: command not found` after everything real had
+  # already passed. The runner image has node; Nim is what it lacks, and Nim is
+  # the easier of the two to bring.
   #
-  # `libssl-dev` because `nim/nim.cfg` sets `-d:ssl`: std/net links -lssl and
-  # -lcrypto for the TLS on :6697, and `frq.atproto` uses httpclient over the
-  # same. Without it the compile fails on a missing -lcrypto, which reads as
-  # nothing to do with TLS.
+  # Pinned by sha256 rather than taken from apt, which is this repo's habit
+  # elsewhere — see `tools/toolchain.sh`, which fetches Flutter, a JDK and the
+  # Clojure CLI the same way. An apt Nim is whatever the distro froze, and
+  # `nim/nim.cfg` needs >= 2.0.
   nim-test:
     runs-on: ubuntu-latest
-    container: nimlang/nim:2.2.10
+    env:
+      NIM_VERSION: "2.2.10"
+      NIM_SHA256: "0a3a38752e97e9d44aa479b3a7b37336dfe0176daf22ee5b5218ad0991ecd211"
     steps:
       - uses: actions/checkout@v4
-      - run: apt-get update -qq && apt-get install -y -qq libssl-dev
+
+      # libssl-dev because `nim/nim.cfg` sets `-d:ssl`: std/net wants OpenSSL
+      # for the TLS on :6697 and `frq.atproto` uses httpclient over the same.
+      - name: OpenSSL headers
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl-dev
+
+      - name: Nim ${{ env.NIM_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://nim-lang.org/download/nim-${NIM_VERSION}-linux_x64.tar.xz"
+          curl -fsSL -o /tmp/nim.tar.xz "$url"
+          echo "${NIM_SHA256}  /tmp/nim.tar.xz" | sha256sum -c -
+          mkdir -p /opt/nim && tar -xJf /tmp/nim.tar.xz -C /opt/nim --strip-components=1
+          echo "/opt/nim/bin" >> "$GITHUB_PATH"
+
       - name: The Nim suite
         run: cd nim && for t in tests/t*.nim; do nim c -r --hints:off --path:src "$t"; done
+
       - name: Build libfrqcore.so
         run: |
           cd nim && nim c --app:lib --mm:orc -d:release --hints:off --path:src \
             --out:../build/nim/libfrqcore.so src/frq_core.nim
-          # Diagnostic, not a gate: prints what the .so will want at
-          # runtime, so a missing libssl in the Dart job is obvious
-          # from this log rather than from a StateError in that one.
+          # Diagnostic, not a gate. Worth reading: Nim resolves OpenSSL through
+          # dlopen rather than a link-time NEEDED, so libssl will not appear
+          # here and the Dart job still has to have one installed.
           objdump -p ../build/nim/libfrqcore.so | grep NEEDED || true
+
       - uses: actions/upload-artifact@v4
         with:
           name: libfrqcore
@@ -63,16 +84,35 @@ jobs:
           if-no-files-found: error
 
   # The Dart side of the same boundary, on the plain VM — no Flutter, no
-  # emulator, which is what makes it a second to run. It dlopens the library
-  # the job above built, so `libssl3` has to be there: the Dart SDK carries
-  # its own BoringSSL and does not bring OpenSSL with it.
+  # emulator, which is what makes it a second to run.
+  #
+  # No container here either, for the same node reason: `download-artifact` is
+  # a JS action too. Dart comes from its own setup action instead.
+  #
+  # `libssl3` because the .so dlopens OpenSSL at startup and the Dart SDK
+  # carries its own BoringSSL rather than bringing one.
   dart-test:
     runs-on: ubuntu-latest
-    container: dart:3.13
     needs: [nim-test]
+    env:
+      DART_VERSION: "3.13.4"
+      DART_SHA256: "6487a10df5eab890d746d14a55f4c70bec3c1c0633f51804eb504cbc0fc395bb"
     steps:
       - uses: actions/checkout@v4
-      - run: apt-get update -qq && apt-get install -y -qq libssl3
+
+      # The SDK by sha256 rather than `dart-lang/setup-dart`, for the reason
+      # the Nim job pins its tarball: a third-party action is one more thing
+      # that has to resolve on this host, and this one does not have to.
+      - name: Dart ${{ env.DART_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://storage.googleapis.com/dart-archive/channels/stable/release/${DART_VERSION}/sdk/dartsdk-linux-x64-release.zip"
+          curl -fsSL -o /tmp/dart.zip "$url"
+          echo "${DART_SHA256}  /tmp/dart.zip" | sha256sum -c -
+          sudo unzip -q /tmp/dart.zip -d /opt
+          echo "/opt/dart-sdk/bin" >> "$GITHUB_PATH"
+
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libssl3
       - uses: actions/download-artifact@v4
         with:
           name: libfrqcore

@@ -46,9 +46,10 @@ nim-test:
     - cd nim && for t in tests/t*.nim; do nim c -r --hints:off --path:src "$t"; done
     - nim c --app:lib --mm:orc -d:release --hints:off --path:src
         --out:../build/nim/libfrqcore.so src/frq_core.nim
-    # Diagnostic, not a gate: prints what the .so will want at runtime, so a
-    # missing libssl in the Dart job is obvious from this log rather than from
-    # a StateError in that one.
+    # Diagnostic, not a gate. Worth reading rather than skimming: Nim resolves
+    # OpenSSL through dlopen rather than a link-time NEEDED, so libssl does NOT
+    # appear here and the Dart job still has to install one. A build that did
+    # link it would show libssl.so.3 and libcrypto.so.3.
     - objdump -p ../build/nim/libfrqcore.so | grep NEEDED || true
   artifacts:
     paths: [build/nim/libfrqcore.so]
