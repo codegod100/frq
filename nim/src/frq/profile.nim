@@ -18,7 +18,7 @@
 ## The Clojure has a fetch seam here because the two compilers disagreed about
 ## HTTP. Nim has one client, so the seam is gone and `fetch` simply asks.
 
-import std/[json, re, strutils, tables]
+import std/[json, strutils, tables]
 from std/unicode import runeLen, runeSubStr
 import frq/[atproto, trace]
 
@@ -33,11 +33,39 @@ type
 
 var cache: Table[string, Profile]
 
-let handlePattern = re"^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)*\.[A-Za-z]{2,}$"
-
-proc isHandle*(nick: string): bool =
+func isHandle*(nick: string): bool =
   ## Whether this nick is an AT Protocol handle, and so worth a lookup.
-  nick.len > 0 and nick.match(handlePattern)
+  ##
+  ## Domain shape, per the handle grammar: dot-separated labels that begin
+  ## with a letter or digit and may then carry hyphens, and a final label of
+  ## letters only. Scanned rather than matched: `std/re` is PCRE, which means
+  ## a `libpcre.so` the machine running this may not have — and it did not,
+  ## the first time this shipped. `ircparse` and `clock` scan for the same
+  ## reason.
+  if nick.len == 0: return false
+  var
+    labels = 0
+    labelLen = 0
+    lastAllAlpha = true
+  for i, c in nick:
+    if c == '.':
+      if labelLen == 0: return false     # empty label: leading, doubled or trailing dot
+      labels.inc
+      labelLen = 0
+      lastAllAlpha = true
+    elif c in {'A'..'Z', 'a'..'z'}:
+      labelLen.inc
+    elif c in {'0'..'9'}:
+      labelLen.inc
+      lastAllAlpha = false
+    elif c == '-':
+      if labelLen == 0: return false     # a label may not open with a hyphen
+      labelLen.inc
+      lastAllAlpha = false
+    else:
+      return false
+  # The last label is the TLD: at least two characters, and all letters.
+  labels > 0 and labelLen >= 2 and lastAllAlpha
 
 proc actorFor*(did, nick: string): string =
   ## The identity to look a profile up by, or "" when there is none.

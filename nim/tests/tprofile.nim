@@ -17,6 +17,20 @@ suite "isHandle":
   test "nor is something with no TLD":
     check not isHandle("alice.")
     check not isHandle("")
+  test "a hyphen is fine inside a label, not at its start":
+    check isHandle("my-host.example.com")
+    check not isHandle("-host.example.com")
+    check not isHandle("host.-example.com")
+  test "the TLD is two or more letters, and only letters":
+    check not isHandle("alice.c")
+    check not isHandle("alice.c0m")
+    check not isHandle("alice.com-")
+  test "no empty labels":
+    check not isHandle(".alice.com")
+    check not isHandle("alice..com")
+  test "nor anything a domain cannot hold":
+    check not isHandle("alice bob.com")
+    check not isHandle("alice@bsky.social")
 
 suite "actorFor":
   test "a DID wins, because it is the identity itself":
