@@ -11,6 +11,8 @@
 /// and asserts on widgets passes while the screen is broken. These fail.
 ///
 ///   just test layout
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frq_core/frq_core.dart' as core;

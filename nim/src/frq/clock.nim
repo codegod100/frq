@@ -12,16 +12,13 @@
 ## because the offset moves twice a year, and a backlog read in November
 ## carries messages from August.
 
-import std/[strutils, times]
+import std/[math, strutils, times]
 
-func floorDiv*(a, b: int64): int64 =
-  ## Rounds down where `div` rounds toward zero, which for a day number before
-  ## 1970 is a different day.
-  let q = a div b
-  let r = a mod b
-  if r == 0 or (r < 0) == (b < 0): q else: q - 1
-
-func floorMod*(a, b: int64): int64 = a - b * floorDiv(a, b)
+# `floorDiv` and `floorMod` come from std/math. They round down where `div`
+# and `mod` round toward zero, which for a day number before 1970 is a
+# different day — this module had its own copies until it turned out the
+# stdlib's have exactly these semantics.
+export floorDiv, floorMod
 
 func daysFromCivil*(y0, m, d: int64): int64 =
   ## Hinnant's algorithm: a civil date to a day number since the epoch.
@@ -45,7 +42,15 @@ func civilFromDays*(days: int64): (int64, int64, int64) =
   let m = mp + (if mp < 10: 3 else: -9)
   ((if m <= 2: y + 1 else: y), m, d)
 
-proc nowMs*(): int64 = getTime().toUnix * 1000 + getTime().nanosecond div 1_000_000
+proc nowMs*(): int64 =
+  # One `getTime()`, not two: the old form called it twice and could straddle
+  # a second boundary between the halves.
+  let t = getTime()
+  t.toUnix * 1000 + t.nanosecond div 1_000_000
+
+var
+  offsetDay = int64.low   ## which UTC day `offsetCache` was computed for
+  offsetCache: int64
 
 proc localOffsetSeconds*(epochSecs: int64): int64 =
   ## How far the reader's zone is from UTC at this instant, DST included.
@@ -53,8 +58,18 @@ proc localOffsetSeconds*(epochSecs: int64): int64 =
   ## Nim has a zone database where the ClojureDart version had to ask the host
   ## through `frq.io` — so this is the one function that got simpler in the
   ## move rather than merely moving.
-  let t = fromUnix(epochSecs)
-  t.local.utcOffset.int64 * -1
+  ##
+  ## Memoised per UTC day, because `.local` is a `localtime_r` and that stats
+  ## /etc/localtime. Every timestamp on screen asks for this three times, and
+  ## the whole tree is rebuilt ten times a second: a busy room was making tens
+  ## of thousands of zone lookups a second to render times that had not
+  ## changed. The offset moves twice a year and never inside a day, so a
+  ## day-granular cache is exact rather than approximate.
+  let day = floorDiv(epochSecs, 86400)
+  if day != offsetDay:
+    offsetDay = day
+    offsetCache = fromUnix(epochSecs).local.utcOffset.int64 * -1
+  offsetCache
 
 func parseTimeTag*(tags: string): (int64, bool) =
   ## The `time=` value of an IRCv3 tag string as epoch milliseconds.

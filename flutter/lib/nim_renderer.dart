@@ -27,7 +27,8 @@ class NimApp extends StatefulWidget {
 }
 
 class _NimAppState extends State<NimApp> {
-  late core.UiNode _tree = core.render();
+  late core.UiFrame _frame = core.renderFrame();
+  core.UiNode get _tree => _frame.tree;
   Timer? _poll;
 
   // One controller and one focus node per keyed entry, kept across rebuilds.
@@ -52,16 +53,18 @@ class _NimAppState extends State<NimApp> {
     // Polling, because the socket lives on a Nim thread and there is no
     // callback into Dart. At ~70µs a render a 100ms timer costs nothing.
     _poll = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      final next = core.poll();
-      if (next.toString() != _tree.toString()) {
-        setState(() => _tree = next);
-      }
+      // Compared as the JSON Nim already produced, and decoded only when it
+      // differs. Stringifying both trees to answer "did anything change" was
+      // ~1MB of string churn per poll in a busy room, ten times a second, for
+      // an answer that is almost always no.
+      final next = core.pollIfChanged(_frame.json);
+      if (next != null) setState(() => _frame = next);
     });
   }
 
   void _send(String id, [String value = '']) {
     if (id.isEmpty) return;
-    setState(() => _tree = core.dispatch(id, value));
+    setState(() => _frame = core.dispatchFrame(id, value));
     if (id == 'send') _focus['draft']?.requestFocus();
   }
 
@@ -153,6 +156,15 @@ class _NimAppState extends State<NimApp> {
   /// layout, and every box under it is then asked to hit-test without ever
   /// having been laid out. The chats screen did exactly that — two unsized
   /// entries in an `hbox`, which is a Wrap.
+  /// What an unsized entry or a stranded scroll falls back to.
+  ///
+  /// Both are only reachable when the tree has put one outside a Flex, which
+  /// is a tree bug rather than a rendering choice. The numbers exist so that
+  /// bug renders as something a person can see and a test can catch, not so
+  /// that it renders correctly.
+  static const _unsizedEntry = 320.0;
+  static const _strandedScroll = 400.0;
+
   static const _noAxis = '';
   static const _row = 'row';
   static const _column = 'column';
@@ -164,10 +176,24 @@ class _NimAppState extends State<NimApp> {
     // What this node's own children are being built into.
     final childAxis = switch (n.tag) {
       'page' || 'vbox' || 'card' || 'scroll' || 'dialog' => _column,
+      // Wrapping unless the row says otherwise. Flipping this default was
+      // tried and reverted: only 4 of 15 `hbox` call sites state `wrap` at
+      // all, so the other 11 became Rows and overflowed — the tree's habit is
+      // to wrap, and the default has to match it.
       'hbox' => n.prop('wrap', true) ? _noAxis : _row,
       _ => _noAxis,
     };
-    final kids = n.children.map((c) => _build(c, childAxis)).toList();
+    // A paragraph's children are spans, not widgets — building them as
+    // widgets and throwing them away is what the `inline` special case did.
+    final kids = n.tag == 'paragraph'
+        ? const <Widget>[]
+        : n.children.map((c) => _build(c, childAxis)).toList();
+
+    // One rule for "take the remaining main-axis extent", stated by the node
+    // that expands. It used to be three: a vbox prop, a scroll with no
+    // height, and a row peering at its children's props to infer it.
+    Widget expanded(Widget w) =>
+        (n.prop('expand', false) && flex) ? Expanded(child: w) : w;
 
     switch (n.tag) {
       case 'page':
@@ -196,24 +222,14 @@ class _NimAppState extends State<NimApp> {
           col = _margins(n, col);
           final w = _d(n.props['widthRequest'], 0);
           if (w > 0) col = SizedBox(width: w, child: col);
-          // `fillHeight` is what keeps the compose bar at the bottom instead
-          // of wherever the backlog happens to end — but only a Flex can be
-          // told to expand into.
-          return (n.prop('fillHeight', false) && flex)
-              ? Expanded(child: col)
-              : col;
+          return expanded(col);
         }
 
-      // A paragraph: the words and the links of one message, wrapping as text
-      // rather than as boxes.
-      //
-      // NOT a Wrap, which is what this was. Children of a Wrap are given
+      // Prose with links in it. NOT a Wrap: children of a Wrap are given
       // unbounded width, so a long URL or a long word can never wrap — it
       // overflows, the layout fails, and every box under it is then hit-tested
-      // having never been laid out. That is the pile of "Cannot hit test"
-      // errors the chat screen produced. Spans in one RichText wrap the way
-      // the Clojure's `:inline` row always meant.
-      case 'hbox' when n.prop('inline', false):
+      // having never been laid out. Spans in one RichText wrap properly.
+      case 'paragraph':
         return Text.rich(
           TextSpan(children: n.children.map(_span).toList()),
           softWrap: true,
@@ -228,28 +244,20 @@ class _NimAppState extends State<NimApp> {
           final wrapping = n.prop('wrap', true);
           final align = n.prop('align', 'center');
           if (!wrapping) {
-            // A child asking to fill the height gets it from the row's cross
-            // axis, not from an Expanded — Expanded in a Row is about width.
-            //
-            // But stretch needs a bounded height to stretch to, and a Row in a
-            // Column has none of its own: it is as tall as its tallest child.
-            // So the row that holds a filling child has to take the column's
-            // remaining height itself, or the stretch resolves to infinity and
-            // the assertion reads `BoxConstraints forces an infinite height`.
-            final stretches =
-                n.children.any((c) => c.prop('fillHeight', false));
+            // An expanding row stretches on its cross axis, which is where a
+            // child's height comes from — Expanded in a Row is about width.
+            // Stretch needs a bounded height, and `expanded()` below is what
+            // gives the row one; without it the stretch resolves to infinity.
+            final fills = n.prop('expand', false);
             final row = Row(
-              crossAxisAlignment: stretches
+              crossAxisAlignment: fills
                   ? CrossAxisAlignment.stretch
                   : (align == 'end'
                       ? CrossAxisAlignment.end
                       : CrossAxisAlignment.center),
               children: _spaced(kids, spacing, vertical: false),
             );
-            if (stretches && axis == _column) {
-              return Expanded(child: _margins(n, row));
-            }
-            return _margins(n, row);
+            return expanded(_margins(n, row));
           }
           return _margins(
             n,
@@ -465,7 +473,7 @@ class _NimAppState extends State<NimApp> {
             radius: size / 2,
             backgroundColor: t.component,
             backgroundImage: provider,
-            onBackgroundImageError: provider == null ? null : (_, __) {},
+            onBackgroundImageError: provider == null ? null : (_, _) {},
             child: provider == null
                 ? Text(
                     fallback.isNotEmpty
@@ -496,7 +504,7 @@ class _NimAppState extends State<NimApp> {
             // throws during the build, and an exception in a build is a red
             // screen for the whole conversation rather than a gap where one
             // picture was.
-            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
           );
           if (maxW > 0 || maxH > 0) {
             img = ConstrainedBox(
@@ -551,7 +559,7 @@ class _NimAppState extends State<NimApp> {
           // took the whole screen down rather than one field.
           return axis == _row
               ? Expanded(child: field)
-              : SizedBox(width: 320, child: field);
+              : SizedBox(width: _unsizedEntry, child: field);
         }
 
       case 'scroll':
@@ -564,12 +572,13 @@ class _NimAppState extends State<NimApp> {
                 children: _spaced(kids, spacing, vertical: true)),
           );
           body = Scrollbar(child: body);
-          final h = _d(n.props['height'], 0);
-          if (h > 0) return SizedBox(height: h, child: body);
-          // No fixed height: take what the column has left, where there is a
-          // column. `reserve` is the Clojure's way of saying the same thing to
-          // a backend that could not do this, and is ignored here on purpose.
-          return flex ? Expanded(child: body) : SizedBox(height: 400, child: body);
+          // A scroll takes what the column has left. Outside a Flex there is
+          // nothing to take, and the tree is malformed — `_strandedScroll` is
+          // a visible size rather than a correct one, so the layout tests see
+          // a screen instead of an exception.
+          return flex
+              ? Expanded(child: body)
+              : const SizedBox(height: _strandedScroll);
         }
 
       /// A panel over the screen rather than a screen of its own.
@@ -637,7 +646,7 @@ class _NimAppState extends State<NimApp> {
     }
   }
 
-  /// `margin`, `marginTop`, `marginBottom`, `marginRight` — the props the
+  /// `margin` and its four sides — the props the
   /// screens use to buy air without a wrapper each time.
   Widget _margins(core.UiNode n, Widget child) {
     final all = _d(n.props['margin'], 0);

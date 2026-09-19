@@ -12,8 +12,7 @@
 ## dead buttons in ClojureDart and dead buttons here. When Flutter's camera
 ## and audio plugins arrive this is the file they come back to.
 
-import std/[algorithm, json, strutils, tables]
-from std/unicode import runeLen, runeSubStr
+import std/[algorithm, json, strutils]
 import std/options
 import frq/[ui, cells, model, clock, reactions, textruns]
 from frq/screens/connect import errorNote
@@ -24,23 +23,7 @@ const
   chipGap = 4
   overviewLines* = 8
 
-func summarise*(text: string, n: int): string =
-  ## What a reply chip quotes back. One line, cut to fit.
-  var line = newStringOfCap(text.len)
-  var inSpace = false
-  for c in text:
-    if c in {' ', '\t', '\n', '\r'}:
-      if not inSpace: line.add ' '
-      inSpace = true
-    else:
-      line.add c
-      inSpace = false
-  line = line.strip()
-  # Runes, not bytes: a byte slice lands inside a multi-byte character and
-  # makes mojibake where an ellipsis was wanted.
-  if line.runeLen > n: line.runeSubStr(0, n - 1) & "…" else: line
-
-func actionChips(room: string, m: Message, mine: bool): Node =
+func actionChips(m: Message, mine: bool): Node =
   ## Answering and reacting, on the sender's row above the message.
   ##
   ## Both are things done *to* a message rather than parts of it, so they ride
@@ -90,13 +73,14 @@ func runNodes(m: Message): Node =
   ## line of its own, and a plain wrapping row measures each label against the
   ## row's width rather than the column's, which is what drags long URLs off
   ## the left edge.
-  result = n("hbox", %*{"key": "runs", "wrap": true, "inline": true})
+  result = paragraph()
+  result.props["key"] = %"runs"
   for r in textRuns(m.text):
     case r.kind
     of rkText: result.children.add text(r.value)
     of rkLink: result.children.add link(r.value, r.value)
 
-proc messageBody(s: State, m: Message, highlit: bool): Node =
+proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
   ## A message without its face: the sender's line, the words, and what hangs
   ## under them.
   var who = vbox(%*{"key": "who"})
@@ -112,7 +96,7 @@ proc messageBody(s: State, m: Message, highlit: bool): Node =
     if m.edited:
       row.children.add dimLabel("(edited)")
     if m.id.len > 0:
-      row.children.add actionChips(s.current, m, m.frm == s.formNick)
+      row.children.add actionChips(m, m.frm == s.formNick)
     else:
       # A spacer where the chips would be, so a line with no msgid is a row of
       # the same shape rather than a row with a hole in it.
@@ -123,7 +107,7 @@ proc messageBody(s: State, m: Message, highlit: bool): Node =
   # error note is: a child that comes and goes renumbers the row.
   var chip = vbox(%*{"key": "reply-chip"})
   if m.replyTo.len > 0:
-    let target = s.currentRoom.messageById(m.replyTo)
+    let target = room.messageById(m.replyTo)
     if target.isSome:
       chip.children.add replyChip(target.get)
     else:
@@ -150,7 +134,7 @@ proc messageBody(s: State, m: Message, highlit: bool): Node =
        "spacing": 2, "margin": 0},
     @[who, body, images, pills])
 
-proc messageRow(s: State, i: int, m: Message): Node =
+proc messageRow(s: State, room: Room, i: int, m: Message): Node =
   ## One message: who said it, when, what you can do to it, and the words.
   ##
   ## Every line names its sender, rather than the first of a run only. A run
@@ -162,24 +146,33 @@ proc messageRow(s: State, i: int, m: Message): Node =
   n("vbox", %*{"key": $i, "spacing": 2, "margin": 0, "marginRight": 10,
                "marginTop": 10,
                "scrollHere": rid.len > 0 and rid == s.jumpTo},
-    @[messageBody(s, m, highlit)])
+    @[messageBody(s, room, m, highlit)])
 
 func daySeparator(key, label0: string): Node =
   n("hbox", %*{"key": key, "spacing": 8}, @[separator(), dimLabel(label0)])
 
-proc messageRows*(s: State, messages: seq[Message]): seq[Node] =
+proc messageRows*(s: State, room: Room, messages: seq[Message]): seq[Node] =
   ## The messages, with a heading wherever the day changes.
+  ##
+  ## `room` is passed down rather than read from `s` where it is wanted, and
+  ## that is not tidiness: `State.currentRoom` returns a Room **by value**, and
+  ## a Room owns its whole backlog, so every call deep-copies every message in
+  ## it. Resolving a reply that way — once per replying line, per render —
+  ## was 100 × 500 message copies a frame in a busy room, ten times a second.
   ##
   ## A backlog can reach back weeks, and `11:04 AM` says nothing about which
   ## day it was. The heading is what makes the time above it mean something.
+  # `prevDay` is carried rather than recomputed: asking `day()` for the
+  # previous message repeated the work the previous iteration had already
+  # done, doubling the zone lookups for the whole backlog.
+  var prevDay = ""
   for i, m in messages:
     if m.at > 0:
       let d = day(m.at)
-      let prevDay = if i > 0 and messages[i - 1].at > 0: day(messages[i - 1].at)
-                    else: ""
       if d != prevDay:
         result.add daySeparator("day-" & $i, dayLabel(m.at))
-    result.add messageRow(s, i, m)
+      prevDay = d
+    result.add messageRow(s, room, i, m)
 
 proc visible(s: State, messages: seq[Message]): seq[Message] =
   ## The lines this reader wants to see. Comings and goings are the room
@@ -237,7 +230,7 @@ proc chatScreen*(s: State, connected: bool): Node =
 
   # The backlog. Not a page — a page scrolls everything, which would carry the
   # compose bar off the bottom with the messages.
-  var messages = vbox(%*{"key": "messages", "fillHeight": not narrowPeople})
+  var messages = vbox(%*{"key": "messages", "expand": not narrowPeople})
   if not narrowPeople:
     var sc = scroll(%*{"scrollKey": "messages-" & room.name,
                        "orientation": "vertical",
@@ -245,7 +238,7 @@ proc chatScreen*(s: State, connected: bool): Node =
                        "scrollToBottom": s.jumpTick})
     let shown = visible(s, room.messages)
     if shown.len > 0:
-      for node in messageRows(s, shown):
+      for node in messageRows(s, room, shown):
         sc.children.add node
     else:
       sc.children.add dimLabel("Nothing here yet.")
@@ -299,10 +292,14 @@ proc chatScreen*(s: State, connected: bool): Node =
           width = 260, onSubmit = "send"),
     button("Send", "send", "primary"))
 
-  vbox(%*{"spacing": 8, "margin": 12, "fillHeight": true},
+  vbox(%*{"spacing": 8, "margin": 12, "expand": true},
     headRow,
     errorNote(s),
-    hbox(%*{"spacing": 8, "wrap": false}, messages, peoplePane),
+    # `expand` on the row itself: it is the thing that takes the column's
+    # remaining height. The renderer used to infer that by looking at this
+    # row's children, which is the prop being on the wrong node.
+    n("hbox", %*{"spacing": 8, "wrap": false, "expand": true},
+      @[messages, peoplePane]),
     jump,
     banners,
     separator(),

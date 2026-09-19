@@ -11,10 +11,10 @@
 ## payload: the alternative is a second serialisation to define and version,
 ## for arguments that are always one string.
 
-import std/[json, options, os, sequtils, strutils, tables]
+import std/[json, options, sequtils, strutils, tables]
 import std/sets
-import frq/[cells, model, rooms, reactions, edits, trace, ircparse, clock,
-           atproto, handshake]
+import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
+           atproto, handshake, textruns]
 import frq/conn as tr
 
 proc split2(id: string): (string, string) =
@@ -364,7 +364,11 @@ proc drain*() =
         # for the sender: the target is our own nick and is nobody's room.
         let room = if target.startsWith("#"): target else: who
         var m = Message(id: msgid, frm: who, text: p.params[^1], at: at)
-        m.imageUrl = ""
+        # The picture link out of the text, which is what draws the inline
+        # preview. This was hardcoded to "" — assigning a field its own
+        # default — so `firstImageUrl` was ported, tested and never called,
+        # and no received message ever showed a preview.
+        m.imageUrl = firstImageUrl(m.text)
         let (rep, hasRep) = tagValue(p.tags, "+reply")
         if hasRep: m.replyTo = rep
         let (tally, hasTally) = tagValue(p.tags, "+freeq.at/reacts")
@@ -428,23 +432,3 @@ proc drain*() =
       trace("skip", p.command & " " & $p.params)
 
 
-# -------------------------------------------------------------- autoconnect
-#
-# `FRQ_AUTOCONNECT=1` presses Connect on the first render, and `FRQ_NICK`
-# overrides the nickname. In the same spirit as FRQ_TRACE and for the same
-# reason: a GUI on Wayland cannot be clicked from a script, so without this the
-# only way to check that the window gets past the connect screen is to sit in
-# front of it — which is not a check, and is how a layout error on the chats
-# screen went unnoticed while the connect screen looked fine.
-
-var autoconnectDone = false
-
-proc maybeAutoconnect*() =
-  if autoconnectDone: return
-  autoconnectDone = true
-  let want = getEnv("FRQ_AUTOCONNECT")
-  if want.len == 0 or want == "0": return
-  let nick = getEnv("FRQ_NICK")
-  if nick.len > 0: app.formNick = nick
-  trace("auto", "FRQ_AUTOCONNECT set — connecting as " & app.formNick)
-  connectNow()

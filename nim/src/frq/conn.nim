@@ -15,7 +15,7 @@
 ## Threading as before: the socket thread shares nothing, and speaks in
 ## channels. See irc.nim's comment for why ORC makes that the sane choice.
 
-import std/[net, os, strutils]
+import std/net
 import frq/[trace]
 
 type

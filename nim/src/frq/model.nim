@@ -10,7 +10,7 @@
 ## and a missing key and a null key are the same thing on the other side. An
 ## Option would have to be unwrapped at every boundary anyway.
 
-import std/[options, strutils, tables]
+import std/[options, strutils]
 
 type
   Reaction* = object

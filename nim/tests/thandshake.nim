@@ -1,7 +1,7 @@
 ## CAP negotiation and the SASL payload. No network: every case here is a
 ## line in and lines out.
 
-import std/[base64, json, sets, strutils, unittest]
+import std/[json, sets, strutils, unittest]
 import frq/[ircparse, atproto, handshake]
 
 proc caps0(): HashSet[string] = initHashSet[string]()

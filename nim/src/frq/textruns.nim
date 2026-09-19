@@ -11,6 +11,7 @@
 ## drags long URLs off the left edge.
 
 import std/strutils
+from std/unicode import runeLen, runeSubStr
 
 type
   RunKind* = enum rkText, rkLink
@@ -92,3 +93,27 @@ func firstImageUrl*(text: string): string =
       if low.endsWith(".png") or low.contains("/media/"):
         return r.value
   ""
+
+
+func summarise*(text: string, n: int): string =
+  ## One line of `text`, cut to `n` characters with an ellipsis.
+  ##
+  ## Two callers with the same need: a reply chip quoting what it answers, and
+  ## a room's last line in the conversation list. A pasted shell script or a
+  ## long link is a card's worth of text otherwise, and the cards stop reading
+  ## as a list of rooms.
+  ##
+  ## Runes and not bytes. A byte slice lands inside a multi-byte character and
+  ## makes mojibake where an ellipsis was wanted, which both copies of this got
+  ## wrong before a test with a hundred emoji in it found them.
+  var line = newStringOfCap(text.len)
+  var inSpace = false
+  for c in text:
+    if c in {' ', '\t', '\n', '\r'}:
+      if not inSpace: line.add ' '
+      inSpace = true
+    else:
+      line.add c
+      inSpace = false
+  line = line.strip()
+  if line.runeLen > n: line.runeSubStr(0, n - 1) & "…" else: line

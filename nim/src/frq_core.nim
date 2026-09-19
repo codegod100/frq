@@ -26,7 +26,7 @@
 ## between this and the experiment that was deleted for being a facsimile.
 
 import std/[json, strutils, tables]
-import frq/[ircparse, trace, ui, cells, reducer, model, rooms, reactions]
+import frq/[ircparse, trace, ui, cells, reducer, model, rooms]
 import frq/conn as tr
 import frq/screens/connect as scConnectScreen
 import frq/screens/chats as scChatsScreen
@@ -151,7 +151,6 @@ proc frq_conn_event*(): cstring {.exportc, dynlib.} =
 # crossing are a tree going out and an event id coming back.
 
 proc currentTree(): string =
-  maybeAutoconnect()
   ## Whichever screen the state says. `drain` first, so the tree Dart gets is
   ## built after every line that had arrived when it asked — that is the whole
   ## of the polling model, and why there is no callback into Dart.

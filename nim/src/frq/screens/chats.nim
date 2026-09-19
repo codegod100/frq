@@ -4,12 +4,8 @@
 ## dropped rather than translated — there is no terminal frontend any more, so
 ## `conversation-row`'s two layouts collapse to the one a window uses.
 
-import std/[json, strutils, tables]
-# `runeLen` and `runeSubStr` only: a plain `import std/unicode` brings a
-# `title` that is ambiguous against `ui.title`, which is the one this file
-# means every time it says it.
-from std/unicode import runeLen, runeSubStr
-import frq/[ui, cells, model, rooms]
+import std/[json, strutils]
+import frq/[ui, cells, model, rooms, textruns]
 import frq/screens/[frame, connect]
 
 const listGutter = 16
@@ -17,23 +13,12 @@ const listGutter = 16
   ## character of a preview is behind the thumb.
 
 func previewLine*(text: string): string =
-  ## The last line of a conversation, as one line.
+  ## The last line of a conversation, as one line, cut to fit a card.
   ##
-  ## A pasted shell script or a long link is a card's worth of text otherwise,
-  ## and the cards stop reading as a list of rooms.
-  var line = newStringOfCap(text.len)
-  var inSpace = false
-  for c in text:
-    if c in {' ', '\t', '\n', '\r'}:
-      if not inSpace: line.add ' '
-      inSpace = true
-    else:
-      line.add c
-      inSpace = false
-  # Runes and not bytes. Clojure's `count` and `subs` are characters, and a
-  # byte slice at 59 can land in the middle of one — which for a preview full
-  # of emoji is a truncation that produces mojibake rather than an ellipsis.
-  if line.runeLen > 60: line.runeSubStr(0, 59) & "…" else: line
+  ## 60 characters is the card's width; the truncating itself is
+  ## `textruns.summarise`, which the reply chip in the chat screen uses for
+  ## the same job.
+  summarise(text, 60)
 
 func conversationRow(r: Room): Node =
   var badges = vbox(%*{"key": "badges"})
@@ -88,11 +73,10 @@ func chatsScreen*(s: State, connected: bool): Node =
     body = n("vbox", %*{"marginRight": listGutter}, @[
       card(dimLabel("No conversations yet — join a channel."))])
 
-  vbox(%*{"spacing": 8, "margin": 12, "fillHeight": true},
+  vbox(%*{"spacing": 8, "margin": 12, "expand": true},
     head,
-    vbox(%*{"key": "list", "fillHeight": true},
-      scroll(%*{"scrollKey": "chats-list", "orientation": "vertical",
-                "reserve": belowList(s)}, body)),
+    vbox(%*{"key": "list", "expand": true},
+      scroll(%*{"scrollKey": "chats-list", "orientation": "vertical"}, body)),
     vbox(%*{"key": "foot", "spacing": 8},
       separator(),
       tabBar(s)))

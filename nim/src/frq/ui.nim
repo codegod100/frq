@@ -102,6 +102,16 @@ func separator*(): Node = n("separator")
 
 func spacer*(size: int): Node = n("spacer", %*{"size": size})
 
+func paragraph*(children: varargs[Node]): Node =
+  ## Prose with links in it, wrapping as text rather than as boxes.
+  ##
+  ## Its own tag rather than an `hbox` with an `inline` flag, which is what it
+  ## was: a row and a paragraph share no layout at all — not the gaps, not the
+  ## alignment, not even how a child is built — so saying "row" and then
+  ## contradicting it with a prop meant the renderer had to check the
+  ## contradiction before every row it drew.
+  n("paragraph", newJObject(), @children)
+
 func text*(body: string): Node =
   ## Prose, as opposed to a `label`: wraps, and is the thing a message is.
   n("text", %*{"text": body})

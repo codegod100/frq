@@ -12,7 +12,9 @@ import std/json
 import frq/[ui, cells]
 
 const transportNote* =
-  "TLS comes from dart:io, so :6697 works here; untick it for a plain :6667 listener."
+  # Was "TLS comes from dart:io", which stopped being true when the socket
+  # moved to Nim's std/net — and this is on the screen, not in a comment.
+  "TLS on :6697; untick it for a server's plain :6667 listener."
 
 func errorNote*(s: State): Node =
   ## Always a node, never nothing.

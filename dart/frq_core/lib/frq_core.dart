@@ -91,7 +91,27 @@ final DynamicLibrary _lib = () {
   return lib;
 }();
 
+// Every entry point resolved once, here, rather than on each call.
+//
+// `lookupFunction` is a dlsym plus a freshly built trampoline closure every
+// time it runs. At 10Hz for `poll` and once per keystroke for `dispatch` that
+// is measurable and, more to the point, free to avoid — these are `final`, so
+// they cost one lookup for the life of the process.
 final _free = _lib.lookupFunction<_FreeNative, _FreeDart>('frq_free');
+final _version = _lib.lookupFunction<_VersionNative, _VersionDart>('frq_version');
+final _tagValue = _lib.lookupFunction<_Str2Native, _Str2Dart>('frq_irc_tag_value');
+final _traceFn = _lib.lookupFunction<_Str2Native, _Str2Dart>('frq_trace');
+final _connOpen = _lib.lookupFunction<_ConnOpenNative, _ConnOpenDart>('frq_conn_open');
+final _connSend = _lib.lookupFunction<_Str1Native, _Str1Dart>('frq_conn_send');
+final _connCloseFn = _lib.lookupFunction<_VoidNative, _VoidDart>('frq_conn_close');
+final _connRecvFn = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_conn_recv');
+final _connEventFn = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_conn_event');
+final _uiRender = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_render');
+final _uiPoll = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_poll');
+final _uiDispatch = _lib.lookupFunction<_Str1Native, _Str1Dart>('frq_ui_dispatch');
+final _uiDemo = _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_demo');
+final _uiReset = _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_reset');
+final _str1 = <String, _Str1Dart>{};
 
 /// The bytes at [p] as a string, with [p] freed afterwards. Null in, null out.
 String? _takeString(Pointer<Uint8> p) {
@@ -133,9 +153,26 @@ final _malloc = _libc
 final _freeArg =
     _libc.lookupFunction<Void Function(Pointer<Uint8>), void Function(Pointer<Uint8>)>('free');
 
+/// Call a two-strings-in, one-string-out entry point.
+///
+/// The mirror of [_call1], and it exists for the same reason: the
+/// `_toC`/`try`/`finally`/`_freeArg` dance is four lines of ownership
+/// bookkeeping that no call site should repeat.
+String? _call2(_Str2Dart f, String x, String y) {
+  final a = _toC(x);
+  final b = _toC(y);
+  try {
+    return _takeString(f(a, b));
+  } finally {
+    _freeArg(a);
+    _freeArg(b);
+  }
+}
+
 /// Call a one-string-in, one-string-out entry point.
 String? _call1(String symbol, String arg) {
-  final f = _lib.lookupFunction<_Str1Native, _Str1Dart>(symbol);
+  final f = _str1.putIfAbsent(
+      symbol, () => _lib.lookupFunction<_Str1Native, _Str1Dart>(symbol));
   final a = _toC(arg);
   try {
     return _takeString(f(a));
@@ -150,7 +187,7 @@ String? _call1(String symbol, String arg) {
 /// is the one it was built against. Static storage on the Nim side: the one
 /// return value that is NOT freed.
 String get version {
-  final p = _lib.lookupFunction<_VersionNative, _VersionDart>('frq_version')();
+  final p = _version();
   var len = 0;
   while (p[len] != 0) {
     len++;
@@ -172,15 +209,7 @@ Map<String, dynamic> parseLine(String line) {
 /// One IRCv3 tag's value, unescaped — null where the tag is absent OR empty,
 /// which IRCv3 says are the same thing.
 String? tagValue(String tags, String key) {
-  final f = _lib.lookupFunction<_Str2Native, _Str2Dart>('frq_irc_tag_value');
-  final a = _toC(tags);
-  final b = _toC(key);
-  try {
-    return _takeString(f(a, b));
-  } finally {
-    _freeArg(a);
-    _freeArg(b);
-  }
+  return _call2(_tagValue, tags, key);
 }
 
 String unescapeTag(String v) => _call1('frq_irc_unescape_tag', v) ?? '';
@@ -194,15 +223,7 @@ String nickOf(String prefix) => _call1('frq_irc_nick_of', prefix) ?? '';
 /// Log through the Nim core's trace facility, so `FRQ_TRACE=1` gives one
 /// interleaved story rather than two half-ones in different places.
 void trace(String topic, String msg) {
-  final f = _lib.lookupFunction<_Str2Native, _Str2Dart>('frq_trace');
-  final a = _toC(topic);
-  final b = _toC(msg);
-  try {
-    f(a, b);
-  } finally {
-    _freeArg(a);
-    _freeArg(b);
-  }
+  _call2(_traceFn, topic, msg);
 }
 
 // --------------------------------------------------------------- transport
@@ -217,7 +238,7 @@ typedef _ConnOpenDart = void Function(Pointer<Uint8>, int, int);
 /// Dial. Non-blocking: the socket runs on a Nim thread and progress arrives
 /// through [connEvent].
 void connOpen(String host, int port, {bool tls = true}) {
-  final f = _lib.lookupFunction<_ConnOpenNative, _ConnOpenDart>('frq_conn_open');
+  final f = _connOpen;
   final a = _toC(host);
   try {
     f(a, port, tls ? 1 : 0);
@@ -228,7 +249,7 @@ void connOpen(String host, int port, {bool tls = true}) {
 
 /// Queue a line. The transport adds the CRLF.
 void connSend(String line) {
-  final f = _lib.lookupFunction<_Str1Native, _Str1Dart>('frq_conn_send');
+  final f = _connSend;
   final a = _toC(line);
   try {
     f(a);
@@ -237,16 +258,13 @@ void connSend(String line) {
   }
 }
 
-void connClose() =>
-    _lib.lookupFunction<_VoidNative, _VoidDart>('frq_conn_close')();
+void connClose() => _connCloseFn();
 
 /// The next line, or null when none is waiting. Never blocks.
-String? connRecv() => _takeString(
-    _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_conn_recv')());
+String? connRecv() => _takeString(_connRecvFn());
 
 /// The next transport event — `open`, `close: …`, `error: …` — or null.
-String? connEvent() => _takeString(
-    _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_conn_event')());
+String? connEvent() => _takeString(_connEventFn());
 
 
 // ---------------------------------------------------------------- the UI
@@ -293,7 +311,23 @@ class UiNode {
 }
 
 UiNode _treeFrom(String? json) =>
-    UiNode.fromJson(jsonDecode(json ?? '{"tag":"vbox"}') as Map<String, dynamic>);
+    UiNode.fromJson(jsonDecode(json ?? _emptyTree) as Map<String, dynamic>);
+
+/// A tree and the JSON it came from.
+///
+/// The raw string is kept because it is the cheapest possible change
+/// detector: Nim already produced it, and comparing two strings is free
+/// beside decoding one. The renderer polls ten times a second and the answer
+/// is almost always "nothing changed" — doing a `jsonDecode` and two
+/// recursive `toString()`s to discover that was most of the idle cost of the
+/// app in a busy room.
+const _emptyTree = '{"tag":"vbox"}';
+
+class UiFrame {
+  final String json;
+  final UiNode tree;
+  const UiFrame(this.json, this.tree);
+}
 
 /// The current screen.
 ///
@@ -301,23 +335,46 @@ UiNode _treeFrom(String? json) =>
 /// no [dispatch] between can differ when a line arrived in the gap. That is how
 /// the room fills, and why the renderer polls.
 UiNode render() => _treeFrom(
-    _takeString(_lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_render')()));
+    _takeString(_uiRender()));
 
 /// The tree, asked for because time passed rather than because anything
 /// happened. Same work as [render]; named for what the caller means.
 UiNode poll() => _treeFrom(
-    _takeString(_lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_poll')()));
+    _takeString(_uiPoll()));
+
+/// The current screen, with the JSON it came from. The starting point for
+/// [pollIfChanged].
+UiFrame renderFrame() {
+  final json = _takeString(_uiRender()) ?? _emptyTree;
+  return UiFrame(json, _treeFrom(json));
+}
+
+/// The tree, decoded only when it differs from [since] — otherwise null,
+/// meaning "the screen you already have is current".
+///
+/// This is what the renderer polls with. The comparison is the JSON Nim
+/// already produced, so an unchanged frame costs one string compare rather
+/// than a decode and two recursive `toString()`s.
+UiFrame? pollIfChanged(String since) {
+  final json = _takeString(_uiPoll()) ?? _emptyTree;
+  if (json == since) return null;
+  return UiFrame(json, _treeFrom(json));
+}
 
 /// Apply an event and get the tree it produced.
 ///
 /// One call rather than dispatch-then-render, and not to save a crossing: it
 /// makes the pair atomic, so there is no window in which Dart could render a
 /// state nothing asked for.
-UiNode dispatch(String id, [String value = '']) {
-  final f = _lib.lookupFunction<_Str1Native, _Str1Dart>('frq_ui_dispatch');
+UiNode dispatch(String id, [String value = '']) => dispatchFrame(id, value).tree;
+
+/// As [dispatch], but keeping the JSON so the poll loop can compare against
+/// it without re-stringifying the tree it just built.
+UiFrame dispatchFrame(String id, [String value = '']) {
   final a = _toC(jsonEncode({'id': id, 'value': value}));
   try {
-    return _treeFrom(_takeString(f(a)));
+    final json = _takeString(_uiDispatch(a)) ?? '{"tag":"vbox"}';
+    return UiFrame(json, _treeFrom(json));
   } finally {
     _freeArg(a);
   }
@@ -325,9 +382,7 @@ UiNode dispatch(String id, [String value = '']) {
 
 /// Fill a room with a representative conversation, so a test can lay the chat
 /// screen out without a server. See the Nim side for why it exists.
-void demoUi() =>
-    _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_demo')();
+void demoUi() => _uiDemo();
 
 /// Back to a fresh state, for a caller that wants a known starting point.
-void resetUi() =>
-    _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_reset')();
+void resetUi() => _uiReset();

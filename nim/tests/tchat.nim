@@ -1,7 +1,7 @@
 ## The conversation screen.
 
 import std/[json, sequtils, strutils, tables, unicode, unittest]
-import frq/[ui, cells, model, reactions]
+import frq/[ui, cells, model, textruns]
 import frq/screens/chat as cs
 
 proc find(node: Node, tag: string): seq[Node] =
@@ -29,11 +29,11 @@ proc withRoom(): State =
 
 suite "summarise":
   test "collapses whitespace and cuts to fit":
-    check cs.summarise("a\n  b", 36) == "a b"
-    check cs.summarise("x".repeat(50), 10).runeLen == 10
-    check cs.summarise("x".repeat(50), 10).endsWith("…")
+    check summarise("a\n  b", 36) == "a b"
+    check summarise("x".repeat(50), 10).runeLen == 10
+    check summarise("x".repeat(50), 10).endsWith("…")
   test "leaves a short line alone":
-    check cs.summarise("short", 36) == "short"
+    check summarise("short", 36) == "short"
 
 suite "the chat screen":
   setup:
