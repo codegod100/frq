@@ -10,7 +10,7 @@
 ## and a missing key and a null key are the same thing on the other side. An
 ## Option would have to be unwrapped at every boundary anyway.
 
-import std/[options, strutils]
+import std/[options, strutils, tables]
 
 type
   Reaction* = object
@@ -49,7 +49,13 @@ type
     mention*: bool
     joined*: bool
     joining*: bool
-    users*: seq[string]
+    users*: Table[string, string]
+      ## nick → mode prefix ("" for none). A table and not a list because the
+      ## people panel sorts ops first and a MODE has to find one person.
+    namesAcc*: Table[string, string]
+      ## The 353 replies so far. Pending rather than live: NAMES arrives over
+      ## as many lines as it takes and ends with 366, and replacing `users` on
+      ## each would empty the panel and refill it a name at a time.
     topic*: string
     accessed*: int64      ## when this reader last opened it
     lastActivity*: int64

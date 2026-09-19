@@ -107,6 +107,7 @@ test suite="all" *args:
         all)    just test common && just test nim && just test dart \
                   && just test layout ;;
         common) exec python3 tools/check-common.py common ;;
+        emoji)  exec python3 tools/emoji2nim.py ;;
         layout) just _nim-lib
                 just _flutter layout test ;;
         nim)    just _nim-test "$@" ;;

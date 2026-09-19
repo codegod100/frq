@@ -11,10 +11,10 @@
 ## payload: the alternative is a second serialisation to define and version,
 ## for arguments that are always one string.
 
-import std/[json, options, sequtils, strutils, tables]
+import std/[json, options, strutils, tables]
 import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
-           atproto, handshake, textruns]
+           atproto, handshake, textruns, members]
 import frq/conn as tr
 
 proc split2(id: string): (string, string) =
@@ -384,8 +384,8 @@ proc drain*() =
         if who == app.formNick:
           r.joined = true
           r.joining = false
-        elif who notin r.users:
-          r.users.add who
+        elif not r.users.hasKey(who):
+          r.users[who] = ""
         app.rooms[room] = r
         note(room, Message(frm: "*", text: who & " joined " & room,
                            at: at, system: true))
@@ -395,20 +395,40 @@ proc drain*() =
       let room = if p.params.len >= 1: p.params[0] else: app.current
       if app.rooms.hasKey(room):
         var r = app.rooms[room]
-        r.users = r.users.filterIt(it != who)
+        r.users.del(who)
         app.rooms[room] = r
         note(room, Message(frm: "*", text: who & " left", at: at,
                            system: true))
 
     of "353":
-      # NAMES: the membership, as a space-separated list in the trailing.
+      # NAMES, into the PENDING list. It arrives over as many lines as it
+      # takes and ends with 366; replacing `users` on each would empty the
+      # panel and refill it a name at a time.
       if p.params.len >= 2:
         let room = p.params[^2]
         if app.rooms.hasKey(room):
           var r = app.rooms[room]
-          for u in p.params[^1].split(' '):
-            let nick = u.strip(chars = {'@', '+', '~', '&', '%', ' '})
-            if nick.len > 0 and nick notin r.users: r.users.add nick
+          r.namesAcc.withNames(p.params[^1])
+          app.rooms[room] = r
+
+    of "366":
+      # End of NAMES: the pending list becomes the list.
+      if p.params.len >= 1:
+        let room = p.params[^2]
+        if app.rooms.hasKey(room):
+          var r = app.rooms[room]
+          if r.namesAcc.len > 0:
+            r.users = r.namesAcc
+            r.namesAcc.clear()
+          app.rooms[room] = r
+
+    of "MODE":
+      # A channel MODE, for the letters that change how someone is listed.
+      if p.params.len >= 2 and p.params[0].startsWith("#"):
+        let room = p.params[0]
+        if app.rooms.hasKey(room):
+          var r = app.rooms[room]
+          r.users.withMode(p.params[1], p.params[2 .. ^1])
           app.rooms[room] = r
 
     of "332":

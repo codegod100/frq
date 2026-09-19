@@ -19,7 +19,7 @@ proc withRoom(): State =
   result = initState()
   var r = initRoom("#test")
   r.joined = true
-  r.users = @["alice", "bob"]
+  r.users = {"alice": "@", "bob": ""}.toTable
   r.messages = @[
     Message(id: "1", frm: "alice", text: "hello", at: 1_700_000_000_000),
     Message(id: "2", frm: "frq-guest", text: "hi back", at: 1_700_000_060_000)]

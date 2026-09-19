@@ -206,7 +206,7 @@ proc frq_ui_demo*() {.exportc, dynlib.} =
   app.rooms.ensureRoom("#test")
   var r = app.rooms["#test"]
   r.joined = true
-  r.users = @["me", "alice", "bob"]
+  r.users = {"me": "", "alice": "@", "bob": ""}.toTable
   r.topic = "a room"
   let t0 = 1_700_000_000_000'i64
   r.messages = @[

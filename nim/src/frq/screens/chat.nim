@@ -12,9 +12,9 @@
 ## dead buttons in ClojureDart and dead buttons here. When Flutter's camera
 ## and audio plugins arrive this is the file they come back to.
 
-import std/[algorithm, json, strutils]
+import std/[algorithm, json, strutils, tables]
 import std/options
-import frq/[ui, cells, model, clock, reactions, textruns]
+import frq/[ui, cells, model, clock, reactions, textruns, members]
 from frq/screens/connect import errorNote
 
 const
@@ -248,8 +248,10 @@ proc chatScreen*(s: State, connected: bool): Node =
   if showUsers:
     var panel = vbox(%*{"spacing": 4, "widthRequest": 150},
       title2("People"))
-    for u in room.users:
-      panel.children.add label(u)
+    # Ops first, then alphabetically, with the mode prefix in front of the
+    # name — the order every other client lists them in.
+    for m in memberList(room.users):
+      panel.children.add label(m.prefix & m.nick)
     peoplePane.children.add panel
 
   var jump = vbox(%*{"key": "jump"})
