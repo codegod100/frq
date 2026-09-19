@@ -17,7 +17,7 @@
 
 import std/net
 import std/posix as p   ## for `shutdown(2)`; see `close`
-import frq/[trace]
+import frq/[trace, eintr]
 
 type
   ConnConfig* = object
@@ -64,7 +64,8 @@ proc writerBody(unused: int) {.thread.} =
       if shared.isNil: continue
       try:
         trace("conn.out", line)
-        shared.send(line & "\c\L")
+        retrying 5:
+          shared.send(line & "\c\L")
       except CatchableError as e:
         events.send("error: " & e.msg)
         break
@@ -90,6 +91,11 @@ proc readerBody(cfg: ConnConfig) {.thread.} =
         try:
           line = sock.recvLine()
         except CatchableError as e:
+          # A signal arriving while we waited is not the server going away.
+          # The Dart VM profiles every thread in the process, this one
+          # included, so a read that is interrupted and then reported as a
+          # broken connection is a disconnect several times a minute.
+          if interrupted(e) and running: continue
           if running: events.send("error: " & e.msg)
           break
         if line.len == 0:

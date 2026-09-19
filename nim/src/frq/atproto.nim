@@ -10,7 +10,7 @@
 ## JSON and neither could be depended on; one language has one JSON.
 
 import std/[base64, httpclient, json, net, strutils]
-import frq/trace
+import frq/[trace, eintr]
 
 const
   directoryHost* = "public.api.bsky.app"
@@ -52,7 +52,11 @@ proc getJson(url, whatFor: string): JsonNode =
   trace("atproto", "GET " & url)
   let c = newClient()
   try:
-    parseJson(c.getContent(url))
+    var body: string
+    # Retried where a signal cut the round trip short; see `frq/eintr`.
+    retrying 3:
+      body = c.getContent(url)
+    parseJson(body)
   except JsonParsingError:
     raise newException(AtprotoError, whatFor & " — the server's answer was not JSON.")
   except CatchableError as e:
@@ -129,9 +133,11 @@ proc createSession*(handle, password: string): Session =
   try:
     c.headers = newHttpHeaders({"Content-Type": "application/json"})
     let payload = $(%*{"identifier": handle.strip(), "password": password})
-    let res = c.request("https://" & hostOf(pds) &
-                        "/xrpc/com.atproto.server.createSession",
-                        httpMethod = HttpPost, body = payload)
+    var res: Response
+    retrying 3:
+      res = c.request("https://" & hostOf(pds) &
+                      "/xrpc/com.atproto.server.createSession",
+                      httpMethod = HttpPost, body = payload)
     # Read the body whatever the status: the PDS puts the reason in it, and a
     # wrong app password is a 401 whose message is the useful part.
     let body = try: parseJson(res.body)

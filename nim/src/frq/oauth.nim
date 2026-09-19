@@ -25,7 +25,7 @@
 
 import std/[base64, httpclient, json, nativesockets, net, osproc,
             strutils, times]
-import frq/trace
+import frq/[trace, eintr]
 
 const
   defaultBroker* = "https://auth.freeq.at"
@@ -119,9 +119,11 @@ proc refreshSession*(broker, brokerToken: string): Tokens =
                         sslContext = newContext(verifyMode = CVerifyPeer))
   try:
     c.headers = newHttpHeaders({"Content-Type": "application/json"})
-    let res = c.request("https://" & brokerHost(broker) & "/session",
-                        httpMethod = HttpPost,
-                        body = $(%*{"broker_token": brokerToken}))
+    var res: Response
+    retrying 3:
+      res = c.request("https://" & brokerHost(broker) & "/session",
+                      httpMethod = HttpPost,
+                      body = $(%*{"broker_token": brokerToken}))
     # The body whatever the status: an expired token is a 401 whose message
     # is the part worth showing.
     let j = try: parseJson(res.body)
@@ -247,6 +249,8 @@ proc workerBody(req: LoginReq) {.thread.} =
 
       var client: Socket
       try:
+        # A signal during accept or the read that follows is not the browser
+        # failing to arrive; the wait goes on. See `frq/eintr`.
         server.accept(client)
         let (head, body) = readRequest(client)
         if head.startsWith("POST"):
@@ -269,6 +273,9 @@ proc workerBody(req: LoginReq) {.thread.} =
         else:
           client.send(httpResponse("200 OK", "text/html; charset=utf-8",
                                    captureHtml()))
+      except CatchableError as e:
+        if not interrupted(e): raise
+        trace("oauth", "a signal cut a request short; still waiting")
       finally:
         try: client.close() except CatchableError: discard
 
