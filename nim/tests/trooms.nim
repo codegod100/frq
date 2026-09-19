@@ -146,3 +146,51 @@ suite "recentEverywhere":
     let got = recentEverywhere(chans, "")
     check got.anyIt(it.text.startsWith("#a"))
     check got.len <= overviewLimit
+
+suite "adoptEcho":
+  setup:
+    var r = initRoom("#test")
+    r.messages = @[msg("alice", "hello", at = 100, id = "1")]
+    # What `sendDraft` leaves behind: shown at once, no msgid yet.
+    r.messages.add Message(frm: "me", text: "hi there", at: 200,
+                           localId: "local-1", pending: true)
+
+  test "our own line coming back folds onto the copy we showed":
+    # This is the bug: without it every sent message appeared twice, because
+    # echo-message is negotiated and the server sends it back with an id.
+    check r.adoptEcho("me", "hi there", "srv-9", 250, "did:plc:me")
+    check r.messages.len == 2
+    check r.messages[1].id == "srv-9"
+    check not r.messages[1].pending
+
+  test "and that is how the client learns the msgid":
+    # Which is the whole point of asking for the cap: a reaction or a reply
+    # aimed at our own line has nothing to name until this happens.
+    discard r.adoptEcho("me", "hi there", "srv-9", 250, "")
+    check r.messages[1].answersTo("srv-9")
+    check rowId(r.messages[1]) == "srv-9"
+
+  test "the server's timestamp wins over ours":
+    discard r.adoptEcho("me", "hi there", "srv-9", 250, "")
+    check r.messages[1].at == 250
+
+  test "a line that is not ours is not adopted":
+    check not r.adoptEcho("alice", "hello", "srv-9", 250, "")
+
+  test "nor is one we have already seen back":
+    check r.adoptEcho("me", "hi there", "srv-9", 250, "")
+    # A second "hi there" from this client is a real event, not an echo.
+    check not r.adoptEcho("me", "hi there", "srv-10", 260, "")
+
+  test "the same text sent twice adopts oldest first":
+    # The server echoes in the order it received.
+    r.messages.add Message(frm: "me", text: "hi there", at: 300,
+                           localId: "local-2", pending: true)
+    check r.adoptEcho("me", "hi there", "srv-A", 310, "")
+    check r.messages[1].id == "srv-A"
+    check r.messages[2].id == ""
+    check r.adoptEcho("me", "hi there", "srv-B", 320, "")
+    check r.messages[2].id == "srv-B"
+
+  test "different text is not adopted":
+    check not r.adoptEcho("me", "something else", "srv-9", 250, "")

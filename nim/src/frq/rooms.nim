@@ -160,6 +160,33 @@ func afterMarker*(ch: Room): seq[Message] =
         return if i + 1 <= ch.messages.high: ch.messages[i + 1 .. ^1] else: @[]
   ch.messages.filterIt(it.at > ch.lastReadAt)
 
+func adoptEcho*(r: var Room, frm, text, id: string, at: int64,
+                account: string): bool =
+  ## Our own line, coming back from the server, folded onto the copy we
+  ## already showed.
+  ##
+  ## `echo-message` is negotiated, so every line this client sends arrives
+  ## again with a msgid on it — which is the point of asking for the cap, and
+  ## is the only way this client learns what the server called something it
+  ## said. Appending it is what showed every sent message twice.
+  ##
+  ## `seenMessage` deliberately will not catch this: it refuses to treat our
+  ## own untagged lines as replays, because a second "ok" from this client is
+  ## a real event rather than an echo. The difference is `pending` — a line we
+  ## sent and have not seen back yet — and only a pending one is adopted.
+  ##
+  ## Oldest first, because the server echoes in the order it received, so the
+  ## same text sent twice adopts onto the earlier copy.
+  for i in 0 ..< r.messages.len:
+    if r.messages[i].pending and r.messages[i].id.len == 0 and
+       r.messages[i].frm == frm and r.messages[i].text == text:
+      r.messages[i].id = id
+      r.messages[i].pending = false
+      if at > 0: r.messages[i].at = at
+      if account.len > 0: r.messages[i].account = account
+      return true
+  false
+
 func mentionsMe*(m: Message, me: string): bool =
   ## Whether a line is addressed at the reader by name. Our own lines do not
   ## count — saying your own nick is not being called.

@@ -92,6 +92,26 @@ Future<void> main(List<String> args) async {
   walk(tree);
   print('✓ tags in use: ${(tags.toList()..sort()).join(", ")}');
 
+  // Send a line, and count how many times it comes back on screen.
+  //
+  // echo-message is negotiated, so the server returns every line this client
+  // sends — and showing both that and the local copy is what put every sent
+  // message on screen twice.
+  final marker = 'frq echo check ${DateTime.now().millisecondsSinceEpoch}';
+  core.dispatch('draft.change', marker);
+  core.dispatch('send');
+  await Future<void>.delayed(const Duration(seconds: 3));
+  tree = core.poll();
+  final copies = find(tree, 'text')
+      .where((e) => e.prop('text', '') == marker)
+      .length;
+  if (copies == 1) {
+    print('✓ sent line appears once');
+  } else {
+    print('✗ sent line appears $copies times');
+    exit(1);
+  }
+
   core.dispatch('disconnect');
   print('✓ disconnected');
 }

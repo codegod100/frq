@@ -432,6 +432,16 @@ proc drain*() =
         # A message to us rather than to a channel belongs in a buffer named
         # for the sender: the target is our own nick and is nobody's room.
         let room = if target.startsWith("#"): target else: who
+        # Our own line coming back is the copy we already showed, with the
+        # msgid the server gave it — not a new message.
+        if who == app.formNick and app.rooms.hasKey(room):
+          var r = app.rooms[room]
+          let adopted = r.adoptEcho(who, p.params[^1], msgid, at,
+                                    if p.hasAccount: p.account else: "")
+          if adopted:
+            app.rooms[room] = r
+            continue
+
         var m = Message(id: msgid, frm: who, text: p.params[^1], at: at)
         if p.hasAccount: m.account = p.account
         # The picture link out of the text, which is what draws the inline
