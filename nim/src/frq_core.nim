@@ -21,7 +21,8 @@
 ## line being parsed.
 
 import std/json
-import frq/ircparse
+import frq/[ircparse, ui, state]
+import frq/screens/connect as connectScreen
 
 proc NimMain() {.importc.}
 
@@ -94,3 +95,37 @@ proc frq_irc_escape_tag_value*(v: cstring): cstring {.exportc, dynlib.} =
 proc frq_irc_nick_of*(prefix: cstring): cstring {.exportc, dynlib.} =
   if prefix == nil: return nil
   dup(nickOf($prefix))
+
+# ------------------------------------------------------------------- the UI
+#
+# The spike's real claim: Nim owns the state and the screen, Dart owns the
+# pixels, and the only things crossing are a tree going out and an event id
+# coming back. See `frq/ui.nim`.
+
+proc frq_ui_render*(): cstring {.exportc, dynlib.} =
+  ## The current screen as a widget tree, in JSON. Pure: calling it twice with
+  ## no dispatch between gives the same answer, which is what lets the
+  ## renderer rebuild whenever Flutter asks rather than when Nim says so.
+  dup($connectScreen.connectScreen(app).toJson)
+
+proc frq_ui_dispatch*(event: cstring): cstring {.exportc, dynlib.} =
+  ## Apply an event and answer with the tree it produced.
+  ##
+  ## One call rather than dispatch-then-render, and not to save a crossing:
+  ## it makes the pair atomic. Two calls leave a window in which Dart could
+  ## render a state nothing asked for, which is the sort of thing that shows
+  ## up once a week and never in a test.
+  ##
+  ## A malformed event is ignored rather than fatal — it arrives from a tree
+  ## the renderer may have been holding for a frame, which is a normal race.
+  if event != nil:
+    try:
+      dispatch(parseJson($event))
+    except JsonParsingError:
+      discard
+  dup($connectScreen.connectScreen(app).toJson)
+
+proc frq_ui_reset*() {.exportc, dynlib.} =
+  ## Back to a fresh state. For tests, and for a renderer that wants a known
+  ## starting point rather than whatever the last run left.
+  app = initState()

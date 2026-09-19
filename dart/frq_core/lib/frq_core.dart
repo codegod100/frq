@@ -46,6 +46,12 @@ typedef _Str1Dart = Pointer<Uint8> Function(Pointer<Uint8>);
 typedef _Str2Native = Pointer<Uint8> Function(Pointer<Uint8>, Pointer<Uint8>);
 typedef _Str2Dart = Pointer<Uint8> Function(Pointer<Uint8>, Pointer<Uint8>);
 
+typedef _Str0Native = Pointer<Uint8> Function();
+typedef _Str0Dart = Pointer<Uint8> Function();
+
+typedef _VoidNative = Void Function();
+typedef _VoidDart = void Function();
+
 /// Where to look for the library, in order.
 ///
 /// Android resolves a bare soname out of the APK's `lib/<abi>/`. A desktop
@@ -65,7 +71,8 @@ DynamicLibrary _open() {
   for (final p in [
     'libfrqcore.so',
     'build/nim/libfrqcore.so',
-    '../../build/nim/libfrqcore.so',
+    '../build/nim/libfrqcore.so',     // `flutter test`, from flutter/
+    '../../build/nim/libfrqcore.so',  // `dart test`, from dart/frq_core/
   ]) {
     try {
       return DynamicLibrary.open(p);
@@ -182,3 +189,71 @@ String escapeTagValue(String v) => _call1('frq_irc_escape_tag_value', v) ?? '';
 
 /// The nick half of a `nick!user@host` prefix.
 String nickOf(String prefix) => _call1('frq_irc_nick_of', prefix) ?? '';
+
+
+// ---------------------------------------------------------------- the UI
+//
+// The spike's claim: Nim owns the state and the screen, Dart owns the pixels.
+// A tree goes out, an event id comes back, and nothing else crosses.
+//
+// `UiNode` is deliberately a dumb bag — a tag, a props map, children. Giving
+// it a class per widget would put the tag vocabulary in two places and make
+// every new tag a change on both sides of the boundary; the whole point is
+// that Nim can grow a screen without Dart being recompiled.
+
+/// One node of the widget tree Nim emitted.
+class UiNode {
+  final String tag;
+  final Map<String, dynamic> props;
+  final List<UiNode> children;
+
+  const UiNode(this.tag, this.props, this.children);
+
+  factory UiNode.fromJson(Map<String, dynamic> j) => UiNode(
+        j['tag'] as String,
+        (j['props'] as Map?)?.cast<String, dynamic>() ?? const {},
+        ((j['children'] as List?) ?? const [])
+            .map((c) => UiNode.fromJson((c as Map).cast<String, dynamic>()))
+            .toList(growable: false),
+      );
+
+  /// A prop, or [fallback] when it is absent or the wrong shape. Tolerant on
+  /// purpose: the renderer should skip a prop it does not understand rather
+  /// than fail a whole screen over one.
+  T prop<T>(String name, T fallback) {
+    final v = props[name];
+    return v is T ? v : fallback;
+  }
+
+  @override
+  String toString() => '<$tag ${props.keys.join(",")} (${children.length})>';
+}
+
+/// The current screen. Pure on the Nim side: calling it twice with no
+/// [dispatch] between gives the same tree, which is what lets Flutter rebuild
+/// whenever it likes rather than when Nim says so.
+UiNode render() {
+  final f = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_render');
+  final json = _takeString(f());
+  return UiNode.fromJson(jsonDecode(json!) as Map<String, dynamic>);
+}
+
+/// Apply an event and get the tree it produced.
+///
+/// One call rather than dispatch-then-render, and not to save a crossing: it
+/// makes the pair atomic, so there is no window in which Dart could render a
+/// state nothing asked for.
+UiNode dispatch(String id, [String value = '']) {
+  final f = _lib.lookupFunction<_Str1Native, _Str1Dart>('frq_ui_dispatch');
+  final a = _toC(jsonEncode({'id': id, 'value': value}));
+  try {
+    final json = _takeString(f(a));
+    return UiNode.fromJson(jsonDecode(json!) as Map<String, dynamic>);
+  } finally {
+    _freeArg(a);
+  }
+}
+
+/// Back to a fresh state, for a caller that wants a known starting point.
+void resetUi() =>
+    _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_reset')();

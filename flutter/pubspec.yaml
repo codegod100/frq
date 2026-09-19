@@ -45,6 +45,16 @@ dependencies:
   # picture chosen, so the app needs no permission over the reader's pictures
   # at all — which is also why browsing for one finds almost nothing here.
   image_picker: ^1.1.2
+
+  # The Dart side of the Nim core, by path — see `dart/README.md`. A plain
+  # Dart package and not a Flutter one, so its own tests run without a Flutter
+  # toolchain; the dependency goes this way and never the other.
+  #
+  # Only `lib/main_nim.dart` imports it today. The ClojureDart entry points do
+  # not, which is deliberate: the web build has no dart:ffi, and a require on
+  # the shared path would break the two targets that work to serve the spike.
+  frq_core:
+    path: ../dart/frq_core
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -427,3 +427,73 @@ dart-test:
     cd dart/frq_core
     dart pub get
     dart test -r expanded
+
+# The Nim spike: a Flutter window whose screens come from Nim.
+#
+# No ClojureDart on this path at all — not `frq.main`, not `common/`, not a
+# `.cljd` file. `lib/main_nim.dart` asks the Nim core for a widget tree and
+# paints it, and every tap goes back as an event id. See `nim/src/frq/ui.nim`.
+#
+# Impure and deliberately so: this is a spike, so it runs `flutter` directly
+# out of the desktop shell rather than going through the nix build, and
+# `flutter pub get` resolves the path dependency on `dart/frq_core` in place.
+# Nothing here is on the way to a release.
+#
+#   just nim-spike          open the window
+#   just nim-spike build    just build it
+nim-spike action="run":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_FLUTTER_DESKTOP:-}" ]; then
+        # The library first, in its own shell — the app dlopens it at startup
+        # and a missing .so is a blank window with a StateError behind it.
+        just nim-lib
+        exec {{nix}} develop .#flutter-desktop --max-jobs {{jobs}} \
+            --command just nim-spike "$@"
+    fi
+    cd flutter
+    flutter pub get
+    runner=()
+    [ -e /run/current-system ] || runner=("$NIXGL")
+    case "{{action}}" in
+        build) exec "${runner[@]}" flutter build linux --debug -t lib/main_nim.dart ;;
+        run)   exec "${runner[@]}" flutter run -d linux -t lib/main_nim.dart ;;
+        *)     echo "usage: just nim-spike [run|build]" >&2; exit 1 ;;
+    esac
+
+# The spike's widget tests: Nim's tree, as Flutter widgets, driven by taps.
+#
+# Headless — no GL, no window — which is what makes this the proof rather than
+# a screenshot. A screenshot shows that something painted; this shows the round
+# trip closes: a tap reaches Nim, its state moves, the new tree comes back and
+# the widgets change to match.
+nim-spike-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_FLUTTER_DESKTOP:-}" ]; then
+        just nim-lib
+        exec {{nix}} develop .#flutter-desktop --max-jobs {{jobs}} \
+            --command just nim-spike-test
+    fi
+    cd flutter
+    flutter pub get
+    flutter test test/nim_renderer_test.dart
+
+# What the Nim boundary costs per frame.
+#
+# The spike rebuilds the whole screen in Nim and ships it as JSON on every
+# event, which is the obvious objection to the design. This is the number that
+# answers it — or doesn't.
+nim-bench:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_DART:-}" ]; then
+        just nim-lib
+        exec {{nix}} develop .#dart --max-jobs {{jobs}} --command just nim-bench
+    fi
+    cd dart/frq_core
+    dart pub get >/dev/null
+    dart run test/bench.dart

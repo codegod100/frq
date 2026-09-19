@@ -192,6 +192,13 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  frq_core:
+    dependency: "direct main"
+    description:
+      path: "../dart/frq_core"
+      relative: true
+    source: path
+    version: "0.1.0"
   hooks:
     dependency: transitive
     description:
