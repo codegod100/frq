@@ -191,6 +191,63 @@ String escapeTagValue(String v) => _call1('frq_irc_escape_tag_value', v) ?? '';
 String nickOf(String prefix) => _call1('frq_irc_nick_of', prefix) ?? '';
 
 
+/// Log through the Nim core's trace facility, so `FRQ_TRACE=1` gives one
+/// interleaved story rather than two half-ones in different places.
+void trace(String topic, String msg) {
+  final f = _lib.lookupFunction<_Str2Native, _Str2Dart>('frq_trace');
+  final a = _toC(topic);
+  final b = _toC(msg);
+  try {
+    f(a, b);
+  } finally {
+    _freeArg(a);
+    _freeArg(b);
+  }
+}
+
+// --------------------------------------------------------------- transport
+//
+// `frq.net`'s three operations, with a Nim socket behind them. This is the
+// wiring that leaves the existing ClojureDart screens, cells and actions
+// alone: only the transport underneath them is Nim.
+
+typedef _ConnOpenNative = Void Function(Pointer<Uint8>, Int32, Int32);
+typedef _ConnOpenDart = void Function(Pointer<Uint8>, int, int);
+
+/// Dial. Non-blocking: the socket runs on a Nim thread and progress arrives
+/// through [connEvent].
+void connOpen(String host, int port, {bool tls = true}) {
+  final f = _lib.lookupFunction<_ConnOpenNative, _ConnOpenDart>('frq_conn_open');
+  final a = _toC(host);
+  try {
+    f(a, port, tls ? 1 : 0);
+  } finally {
+    _freeArg(a);
+  }
+}
+
+/// Queue a line. The transport adds the CRLF.
+void connSend(String line) {
+  final f = _lib.lookupFunction<_Str1Native, _Str1Dart>('frq_conn_send');
+  final a = _toC(line);
+  try {
+    f(a);
+  } finally {
+    _freeArg(a);
+  }
+}
+
+void connClose() =>
+    _lib.lookupFunction<_VoidNative, _VoidDart>('frq_conn_close')();
+
+/// The next line, or null when none is waiting. Never blocks.
+String? connRecv() => _takeString(
+    _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_conn_recv')());
+
+/// The next transport event — `open`, `close: …`, `error: …` — or null.
+String? connEvent() => _takeString(
+    _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_conn_event')());
+
 // ---------------------------------------------------------------- the UI
 //
 // The spike's claim: Nim owns the state and the screen, Dart owns the pixels.

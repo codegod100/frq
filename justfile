@@ -526,3 +526,37 @@ nim-live *args:
     cd dart/frq_core
     dart pub get >/dev/null
     exec dart run tool/live_send.dart "$@"
+
+# The real app, with the Nim core as its transport.
+#
+# This is the wiring that matters: `frq.main-nim` is `frq.main` with one line
+# changed — `frq.net.nim/install!` where it says `frq.net.dart/install!`. Every
+# screen, every cell and every action is the one that was already there. Nim
+# owns the socket, the TLS and the line framing, and nothing else.
+#
+# Not to be confused with `nim-spike`, which is the earlier experiment where
+# Nim owned the screens too. That one reimplemented a 1,518-line chat screen in
+# forty lines and lost everything in between; this one reimplements nothing.
+#
+#   just nim-app            build it
+#   just nim-app run        open the window
+nim-app action="build":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    if [ -z "${FRQ_FLUTTER_DESKTOP:-}" ]; then
+        just nim-lib
+        exec {{nix}} develop .#flutter-desktop --max-jobs {{jobs}} \
+            --command just nim-app "$@"
+    fi
+    cd flutter
+    flutter pub get
+    export LD_LIBRARY_PATH="${FRQ_OPENSSL_LIB:-}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    clojure -M:cljd compile frq.main-nim
+    runner=()
+    [ -e /run/current-system ] || runner=("$NIXGL")
+    case "{{action}}" in
+        build) exec "${runner[@]}" flutter build linux --debug -t lib/main_nim_app.dart ;;
+        run)   exec "${runner[@]}" flutter run -d linux -t lib/main_nim_app.dart ;;
+        *)     echo "usage: just nim-app [build|run]" >&2; exit 1 ;;
+    esac

@@ -22,6 +22,8 @@
 
 import std/json
 import frq/[ircparse, ui, state, irc]
+import frq/conn as tr
+import frq/trace
 import frq/screens/connect as connectScreen
 import frq/screens/chat as chatScreen
 
@@ -157,3 +159,40 @@ proc frq_ui_reset*() {.exportc, dynlib.} =
   ## starting point rather than whatever the last run left.
   irc.stop()
   app = initState()
+
+
+# --------------------------------------------------------------- transport
+#
+# `frq.net`'s three operations, for `frq.net.nim` to install. This is the
+# wiring that matters: the existing ClojureDart screens, cells and actions are
+# untouched, and only the socket underneath them becomes Nim.
+#
+# Polled rather than callback-driven, for the reason the UI is: a Dart callback
+# invoked from a foreign thread has to be marshalled onto the main isolate, and
+# a timer on the Dart side does the same job with no mechanism at all.
+
+proc frq_trace*(topic, msg: cstring) {.exportc, dynlib.} =
+  ## Let the Dart side log through the same facility, so one FRQ_TRACE=1 gives
+  ## one interleaved story instead of two half-ones in different places.
+  if topic != nil and msg != nil:
+    trace($topic, $msg)
+
+proc frq_conn_open*(host: cstring, port: cint, tls: cint) {.exportc, dynlib.} =
+  if host == nil: return
+  tr.open(tr.ConnConfig(host: $host, port: port.int, tls: tls != 0))
+
+proc frq_conn_send*(line: cstring) {.exportc, dynlib.} =
+  if line != nil: tr.send($line)
+
+proc frq_conn_close*() {.exportc, dynlib.} =
+  tr.close()
+
+proc frq_conn_recv*(): cstring {.exportc, dynlib.} =
+  ## The next line, or null when there is none waiting. Never blocks.
+  let (ok, line) = tr.tryLine()
+  if ok: dup(line) else: nil
+
+proc frq_conn_event*(): cstring {.exportc, dynlib.} =
+  ## The next transport event — "open", "close: …", "error: …" — or null.
+  let (ok, e) = tr.tryEvent()
+  if ok: dup(e) else: nil

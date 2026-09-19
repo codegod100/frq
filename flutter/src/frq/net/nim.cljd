@@ -1,0 +1,95 @@
+(ns frq.net.nim
+  "`frq.net`, over the Nim core's socket.
+
+  The third transport beside `frq.net.dart` and `frq.net.web`, answering the
+  same three questions they do — so the screens, `frq.cells`, `frq.actions`
+  and every line of `frq.main` above it are untouched. That is the point of
+  putting Nim *here* rather than higher up: the screens are the part of this
+  client worth keeping, and a transport is the part that was always platform
+  code.
+
+  Deliberately narrow. Nim owns the socket, the TLS and the line framing, and
+  nothing else: the line is handed to `frq.irc.parse` exactly as the other two
+  transports hand it, so `on-msg` receives the same map from the same parser
+  and nothing upstairs can tell which transport it is talking to. Nim has a
+  parser of its own that is tested against the same cases, and swapping to it
+  is a later change with its own way of being wrong — one at a time.
+
+  What differs from `frq.net.dart` is who owns the socket. There, a
+  `SecureSocket` and a Dart `Stream`; here, a socket on a Nim thread and a
+  poll. Nim never calls back into Dart — a callback from a foreign thread has
+  to be marshalled onto the main isolate, which is a whole mechanism for
+  something a timer does for free."
+  (:require ["dart:async" :as async]
+            ["package:frq_core/frq_core.dart" :as core]
+            [frq.irc.parse :as parse]
+            [frq.net :as net]))
+
+(def ^:private poll-ms
+  ;; Fast enough that a conversation feels live, slow enough that an idle
+  ;; client is not waking twenty times a second for nothing. Each tick is two
+  ;; FFI calls that answer null.
+  50)
+
+(defn- pump!
+  "Drain whatever the socket thread has queued, once."
+  [timer on-msg on-close]
+  ;; Events first: a close seen before the lines that preceded it would drop
+  ;; the tail of the session.
+  (loop []
+    (when-let [e (core/connEvent)]
+      (cond
+        (.startsWith e "close:")
+        (do (some-> @timer .cancel)
+            (when on-close (on-close nil)))
+
+        (.startsWith e "error:")
+        (do (some-> @timer .cancel)
+            (when on-close (on-close (.trim (subs e 6))))))
+      (recur)))
+
+  (loop []
+    (when-let [line (core/connRecv)]
+      (let [m (parse/parse-line line)]
+        ;; PING is answered here rather than upstairs, exactly as
+        ;; `frq.net.dart` does it: a client that leaves keepalive to the
+        ;; reducer is one queue away from a timeout, and nothing about the
+        ;; answer is a decision.
+        (when (= "PING" (:command m))
+          (core/connSend (str "PONG :" (first (:params m)))))
+        (when on-msg (on-msg m)))
+      (recur))))
+
+(defn ^:async connect!
+  "Dial, and start draining.
+
+  The `sock` this hands back is the timer. There is one connection in the core
+  and no handle to give out, so the seam's socket argument is the thing that
+  has to be stopped when the caller says close."
+  [{:keys [host port tls? on-msg on-close]}]
+  (core/trace "net.nim" (str "connect! " host ":" port " tls=" (boolean tls?)))
+  (core/connOpen host (int port) .tls (boolean tls?))
+  (let [timer (atom nil)]
+    (reset! timer
+            (async/Timer.periodic
+             (Duration. .milliseconds poll-ms)
+             (fn [_] (pump! timer on-msg on-close))))
+    (core/trace "net.nim" "timer armed; handing the socket back")
+    @timer))
+
+(defn send-line! [_sock line]
+  (core/trace "net.nim" (str "send-line! " line))
+  (core/connSend line))
+
+(defn close! [sock]
+  (some-> sock .cancel)
+  (core/connClose))
+
+(defn install!
+  "Register this as the transport in place of `frq.net.dart`. An entry point
+  calls one or the other and never both."
+  []
+  (net/install!
+   {:connect! connect!
+    :send-line! send-line!
+    :close! close!}))
