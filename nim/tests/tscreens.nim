@@ -8,6 +8,8 @@ import std/[json, sequtils, strutils, tables, unicode, unittest]
 import frq/[ui, cells, model]
 import frq/screens/connect as cs
 import frq/screens/settings as ss
+import frq/screens/chat as cht
+import frq/[rooms]
 
 proc find*(node: Node, tag: string): seq[Node] =
   if node.isNil: return
@@ -242,3 +244,85 @@ suite "the chats screen":
     s.search = "oth"
     let names = ch.chatsScreen(s, true).labels("title-2")
     check names == @["#other"]
+
+suite "the chat screen's panes":
+  setup:
+    var s = initState()
+    s.formNick = "me"
+    s.windowWidth = wideWidth      # both panes on screen
+    s.rooms.ensureRoom("#test")
+    var r = s.rooms["#test"]
+    r.joined = true
+    r.users = {"me": "", "alice": "@"}.toTable
+    r.messages = @[Message(id: "1", frm: "alice", text: "hi",
+                           at: 1_700_000_000_000'i64)]
+    s.rooms["#test"] = r
+    s.current = "#test"
+
+  test "the backlog and the rooms sit side by side when the list is up":
+    # The toggle had a button and rendered nothing at all: `hideChatList` was
+    # read for the button's own highlight and by nobody else.
+    s.hideChatList = false
+    let t = cht.chatScreen(s, true)
+    check "chat-list-pane" in t.keys("vbox")
+    check t.find("vbox").anyIt(it.props{"key"}.getStr() == "chat-list-pane" and
+                               it.children.len > 0)
+    check "messages" in t.keys("vbox")
+
+  test "and the strip goes away when it is folded":
+    s.hideChatList = true
+    let t = cht.chatScreen(s, true)
+    check t.find("vbox").anyIt(it.props{"key"}.getStr() == "chat-list-pane" and
+                               it.children.len == 0)
+
+  test "the people strip is beside the backlog, not instead of it":
+    # It used to take the whole pane on a narrow window, so asking who was in
+    # a room meant losing the room while you looked.
+    s.windowWidth = wideWidth - 1  # one pane at a time
+    s.showUsers = true
+    let t = cht.chatScreen(s, true)
+    check t.find("vbox").anyIt(it.props{"key"}.getStr() == "people-pane" and
+                               it.children.len > 0)
+    check t.find("scroll").anyIt(
+      it.props{"scrollKey"}.getStr() == "messages-#test")
+
+  test "a room in the strip opens it, and the current one is lit":
+    s.hideChatList = false
+    let t = cht.chatScreen(s, true)
+    let side = t.find("button").filterIt(
+      it.props{"key"}.getStr().startsWith("side-"))
+    check side.len == 1
+    check side[0].props{"onClick"}.getStr() == "room.open:#test"
+    check side[0].props{"kind"}.getStr() == "primary"
+
+suite "the sender's row":
+  setup:
+    var s = initState()
+    s.formNick = "me"
+    s.rooms.ensureRoom("#test")
+    var r = s.rooms["#test"]
+    r.messages = @[Message(id: "1", frm: "alice", text: "hi",
+                           at: 1_700_000_000_000'i64)]
+    s.rooms["#test"] = r
+    s.current = "#test"
+
+  test "on a wide window the chips are carried to the right edge":
+    # `align: end` on the chips never did anything: the row was a Wrap, which
+    # packs from the left and has no slack to align with. A stretch in a row
+    # that does not wrap is what moves them.
+    s.windowWidth = wideWidth
+    let t = cht.chatScreen(s, true)
+    check t.find("spacer").anyIt(it.props{"expand"}.getBool())
+    check t.find("hbox").anyIt(not it.props{"wrap"}.getBool() and
+                               it.children.anyIt(it.tag == "avatar"))
+
+  test "on a narrow one it wraps instead, and nothing is pushed off":
+    # With the name shrunk to nothing the face, the time and three chips
+    # still ask for more than a phone has, so there the row wraps as before.
+    s.windowWidth = wideWidth - 1  # one pane at a time
+    let t = cht.chatScreen(s, true)
+    check not t.find("spacer").anyIt(it.props{"expand"}.getBool())
+    let senderRows = t.find("hbox").filterIt(
+      it.children.anyIt(it.tag == "avatar"))
+    check senderRows.len == 1
+    check senderRows[0].props{"wrap"}.getBool()

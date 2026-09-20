@@ -438,6 +438,29 @@ proc dispatch*(event: JsonNode) =
   of "present.left": app.atPresent = false
   of "present.back": app.atPresent = true
 
+  of "window.size":
+    # `<width>x<height>`, from whatever is drawing. The core decides what a
+    # window that size can hold — whether the room list rides beside the
+    # conversation, whether there is a back button — and it cannot measure
+    # one: a window is the host's, like a socket or a clock.
+    #
+    # Nothing sent this until now, so `windowWidth` was zero and `wide` was
+    # false on every window there has ever been. The whole side-by-side
+    # layout was unreachable, and the button that folds the room list was
+    # never drawn — it is only offered on a wide one.
+    # In the value where the renderer puts it, or after the colon where a
+    # test or a console types it. Both, because the first version read only
+    # the id and the test that passed was the one written to match it — the
+    # renderer was sending a value nothing looked at.
+    let spec = if value.len > 0: value else: arg
+    let x = spec.find('x')
+    if x > 0:
+      let w = try: parseInt(spec[0 ..< x]) except ValueError: 0
+      let h = try: parseInt(spec[x + 1 .. ^1]) except ValueError: 0
+      if w > 0 and h > 0:
+        app.windowWidth = w
+        app.windowHeight = h
+
   # ------------------------------------------------------------ the compose
   of "draft.change": app.draft = value
   of "send": sendDraft()

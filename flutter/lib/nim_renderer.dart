@@ -60,6 +60,11 @@ class _NimAppState extends State<NimApp> {
   // switching rooms is a different backlog at a different offset.
   final _scrollers = <String, ScrollController>{};
 
+  // The last size reported to the core, so a rebuild that changed nothing
+  // does not dispatch.
+  int _reportedW = 0;
+  int _reportedH = 0;
+
   // Where a "go to that message" is pointing, for the one frame it is
   // pointing there. The core marks the row with `scrollHere`, this finds it
   // after the frame is laid out — `ensureVisible` needs a built element, so
@@ -144,7 +149,31 @@ class _NimAppState extends State<NimApp> {
         // faces and reaction pills under here keep their gestures.
         home: Scaffold(
           backgroundColor: t.bg,
-          body: SafeArea(child: SelectionArea(child: _build(_tree))),
+          // The core decides what a window this size can hold — whether the
+          // room list rides beside the conversation, whether there is a back
+          // button — and it cannot measure one. A window is the host's, like
+          // a socket or a clock, so the host says.
+          //
+          // From the constraints rather than MediaQuery: this is the space
+          // the tree is actually given, which is what the decision is about.
+          // Reported after the frame, because a dispatch is a setState and a
+          // setState during build is an error.
+          body: SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final w = constraints.maxWidth.round();
+                final h = constraints.maxHeight.round();
+                if (w != _reportedW || h != _reportedH) {
+                  _reportedW = w;
+                  _reportedH = h;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _send('window.size', '${w}x$h');
+                  });
+                }
+                return SelectionArea(child: _build(_tree));
+              },
+            ),
+          ),
         ),
       );
 
@@ -456,6 +485,12 @@ class _NimAppState extends State<NimApp> {
 
       case 'spacer':
         {
+          // A gap that takes whatever is left, when it says so. That is what
+          // carries a row's last children to its far edge: `align: end` on a
+          // row cannot, because a Row with no slack has nothing to align.
+          if (n.prop('expand', false) && flex) {
+            return const Spacer();
+          }
           final s = _d(n.props['size'], t.spaceXxs);
           return SizedBox(width: s, height: s);
         }
@@ -507,11 +542,22 @@ class _NimAppState extends State<NimApp> {
           // middle of a line and must not look like a control. Text that
           // takes a press, with no chrome at all.
           if (kind == 'plain') {
-            return InkWell(
+            final plain = InkWell(
               onTap: () => _send(onClick),
               child: Text(n.prop('label', ''),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: _style(t.textBody, t.onBg)),
             );
+            // `Flexible` and not `Expanded`: a name takes the width it needs
+            // and gives the rest back, but on a row too narrow for everything
+            // it is the part that should shrink. A handle is long, and the
+            // time and the chips beside it are not negotiable — so without
+            // this the sender's row overflowed by however much the name was
+            // over, which on a phone was most handles.
+            return (n.prop('expand', false) && flex)
+                ? Flexible(child: plain)
+                : plain;
           }
           if (kind == 'destructive') {
             return FilledButton(

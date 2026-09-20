@@ -212,3 +212,33 @@ suite "faces":
     say(":irc.freeq.at 352 alice #freeq ~u freeq/key/z6Mkp5we irc.freeq.at " &
         "cartographer H :0 did:key:z6Mkp5wegrxZR62h54HwR329yz7TJ8Ccx4sh")
     check not entry("did:key:z6Mkp5wegrxZR62h54HwR329yz7TJ8Ccx4sh")[1]
+
+suite "how big the window is":
+  setup: reset()
+
+  test "the host says, in the value, which is where the renderer puts it":
+    # Nothing sent this until it was noticed: `windowWidth` was zero on every
+    # window there had ever been, so `wide` was always false and the whole
+    # side-by-side layout was unreachable.
+    #
+    # The value and not the id, and this test says so because the first one
+    # did not: it passed against a reducer that read the id only, while the
+    # renderer sent a value nobody looked at.
+    dispatch(%*{"id": "window.size", "value": "1280x760"})
+    check app.windowWidth == 1280
+    check app.windowHeight == 760
+    check app.wide
+
+  test "or after the colon, for a console or a test that types it":
+    dispatch(%*{"id": "window.size:1280x760"})
+    check app.wide
+
+  test "and a narrow one is not wide":
+    dispatch(%*{"id": "window.size", "value": "420x800"})
+    check not app.wide
+
+  test "nonsense does not move it":
+    dispatch(%*{"id": "window.size", "value": "1280x760"})
+    dispatch(%*{"id": "window.size", "value": "banana"})
+    dispatch(%*{"id": "window.size", "value": "0x0"})
+    check app.windowWidth == 1280

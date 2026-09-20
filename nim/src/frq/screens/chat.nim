@@ -24,6 +24,10 @@ const
   chipGap = 4
   overviewLines* = 8
 
+  sidePanelWidth = 150
+    ## What a strip beside the backlog takes. Wide enough for a room name or
+    ## a nick, narrow enough that the conversation is still the pane.
+
 func actionChips(m: Message, mine: bool): Node =
   ## Answering and reacting, on the sender's row above the message.
   ##
@@ -147,13 +151,23 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
       if m.account.len > 0: m.account else: s.dids.getOrDefault(m.frm, ""),
       m.frm)
     let open = "profile.open:" & m.frm & ":" & senderActor
-    var row = hbox(%*{"spacing": 6},
+    # A row where there is room for one, a Wrap where there is not.
+    #
+    # The chips ride the right edge by way of the `stretch` below, and a
+    # stretch needs slack to take. On a phone there is none: with the name
+    # shrunk to nothing, the face, the time and three chips still ask for
+    # more than 360 points has — which is why this was a Wrap to begin with,
+    # and why on a narrow window it still is, putting the chips on a second
+    # line rather than off the edge.
+    var row = hbox(%*{"spacing": 6, "wrap": not s.wide},
       # From the profile cache rather than the message: a face belongs to a
       # person, not to a line they said, and a profile that arrives after
       # their first message should appear on all of them.
       avatar(avatarFor(senderActor, m.frm), m.frm, size = faceSize,
              onClick = open),
-      n("button", %*{"label": m.frm, "kind": "plain", "onClick": open}))
+      n("button", %*{"label": m.frm, "kind": "plain", "onClick": open,
+                     "expand": s.wide}))
+    if s.wide: row.children.add stretch()
     if m.at > 0:
       row.children.add dimLabel(clockTime(m.at))
     if m.edited:
@@ -350,9 +364,11 @@ proc chatScreen*(s: State, connected: bool): Node =
   let name = if room.name.len > 0: room.name else: "Chat"
   let isChannel = room.name.startsWith("#")
   let showUsers = s.showUsers and isChannel
-  # Beside the backlog only where there is room for both. On a narrow window
-  # the panel is the pane, and the backlog stands down for as long as it is up.
-  let narrowPeople = showUsers and not s.wide
+  # The chat list rides beside the backlog on a wide window. On a narrow one
+  # there is `← Chats`, which goes to the list as a screen of its own — a
+  # panel and a whole-screen list in the same place would be two ways to the
+  # same thing, one of them cramped.
+  let showChatList = s.wide and not s.hideChatList
 
   # Wrapping, because on a phone this row asks for more than there is: ← Chats,
   # the room's name, People and Overview do not fit across 360 points, and in a
@@ -393,8 +409,12 @@ proc chatScreen*(s: State, connected: bool): Node =
 
   # The backlog. Not a page — a page scrolls everything, which would carry the
   # compose bar off the bottom with the messages.
-  var messages = vbox(%*{"key": "messages", "expand": not narrowPeople})
-  if not narrowPeople:
+  # The backlog always has the middle, and always expands: a panel coming up
+  # beside it takes a strip of the width, not the pane. It used to take the
+  # whole of it on a narrow window, so asking who was in a room meant losing
+  # the room while you looked.
+  var messages = vbox(%*{"key": "messages", "expand": true})
+  block:
     var sc = scroll(%*{"scrollKey": "messages-" & room.name,
                        "orientation": "vertical",
                        "stickToBottom": true,
@@ -407,14 +427,42 @@ proc chatScreen*(s: State, connected: bool): Node =
       sc.children.add dimLabel("Nothing here yet.")
     messages.children.add sc
 
+  # The rooms, beside the one being read. Names rather than the cards the
+  # chats screen uses: a card carries a preview and two buttons and is a
+  # screen's worth of width, where this is a strip down one side.
+  #
+  # Neither strip scrolls, and that is a limit rather than a decision. A
+  # `scroll` becomes an `Expanded`, and a `vbox` is always `MainAxisSize.min`
+  # — which is the one combination Flutter will not lay out, and it came back
+  # as a semantics assertion rather than anything mentioning either. A room
+  # list or a member list longer than the window will run off the bottom
+  # until a vbox can be told to fill its parent.
+  var chatListPane = vbox(%*{"key": "chat-list-pane"})
+  if showChatList:
+    var panel = vbox(%*{"spacing": 4, "widthRequest": sidePanelWidth},
+      title2("Chats"))
+    var list = vbox(%*{"key": "chat-list", "spacing": 4})
+    for r in channelList(s.rooms, ""):
+      let unread = if r.unread > 0: "  " & (if r.mention: "◆ " else: "● ") &
+                                    $r.unread
+                   else: ""
+      list.children.add n("button",
+        %*{"key": "side-" & r.name, "label": r.name & unread,
+           "kind": (if r.name == s.current: "primary" else: "plain"),
+           "onClick": "room.open:" & r.name})
+    panel.children.add list
+    chatListPane.children.add panel
+
   var peoplePane = vbox(%*{"key": "people-pane"})
   if showUsers:
-    var panel = vbox(%*{"spacing": 4, "widthRequest": 150},
+    var panel = vbox(%*{"spacing": 4, "widthRequest": sidePanelWidth},
       title2("People"))
+    var list = vbox(%*{"key": "people-list", "spacing": 2})
     # Ops first, then alphabetically, with the mode prefix in front of the
     # name — the order every other client lists them in.
     for m in memberList(room.users):
-      panel.children.add label(m.prefix & m.nick)
+      list.children.add label(m.prefix & m.nick)
+    panel.children.add list
     peoplePane.children.add panel
 
   # Both panels are in wrappers that are always there, for the reason the
@@ -485,8 +533,10 @@ proc chatScreen*(s: State, connected: bool): Node =
     # The jump button floats over the backlog rather than taking a row of
     # its own; see `ui.overlay`.
     overlay(%*{"key": "backlog", "expand": true},
+      # The split: the rooms on one side, the people on the other, and the
+      # conversation between them taking whatever is left.
       n("hbox", %*{"spacing": 8, "wrap": false, "expand": true},
-        @[messages, peoplePane]),
+        @[chatListPane, messages, peoplePane]),
       jump),
     overview,
     profile,
