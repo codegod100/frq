@@ -41,8 +41,12 @@ proc b64urlDecode*(s: string): string =
   try: decode(t) except CatchableError: ""
 
 proc newClient(): HttpClient =
-  newHttpClient(timeout = 15_000,
-                sslContext = newContext(verifyMode = CVerifyPeer))
+  ## No socket timeout, and that is not an oversight: Linux never restarts a
+  ## socket call that has one, whatever `SA_RESTART` says, so a timeout here
+  ## means every request dies on the first signal to arrive. See `frq/eintr`.
+  ## The cost is that a server which accepts and then says nothing holds the
+  ## call until TCP gives up.
+  newHttpClient(sslContext = newContext(verifyMode = CVerifyPeer))
 
 proc getJson(url, whatFor: string): JsonNode =
   ## `whatFor` is what the caller was trying to do, because the failure the
@@ -50,11 +54,16 @@ proc getJson(url, whatFor: string): JsonNode =
   ## directory answers an unknown handle with a bare 400, and "400 Bad
   ## Request" on the connect screen tells nobody anything.
   trace("atproto", "GET " & url)
-  let c = newClient()
+  var c: HttpClient
   try:
     var body: string
-    # Retried where a signal cut the round trip short; see `frq/eintr`.
+    # A client per attempt: one whose handshake a signal cut short is not one
+    # to ask again. `getContent` reads the whole body, so unlike `request`
+    # there is nothing left outside the retry. See `frq/eintr`.
     retrying 3:
+      if c != nil:
+        try: c.close() except CatchableError: discard
+      c = newClient()
       body = c.getContent(url)
     parseJson(body)
   except JsonParsingError:
@@ -63,7 +72,8 @@ proc getJson(url, whatFor: string): JsonNode =
     trace("atproto", "!! " & e.msg)
     raise newException(AtprotoError, whatFor)
   finally:
-    c.close()
+    if c != nil:
+      try: c.close() except CatchableError: discard
 
 func hostOf*(url: string): string =
   var u = url
@@ -129,21 +139,29 @@ proc createSession*(handle, password: string): Session =
   let pds = pdsFor(did)
   trace("atproto", "createSession at " & pds)
 
-  let c = newClient()
+  var c: HttpClient
   try:
-    c.headers = newHttpHeaders({"Content-Type": "application/json"})
     let payload = $(%*{"identifier": handle.strip(), "password": password})
-    var res: Response
+    var status, raw: string
     retrying 3:
-      res = c.request("https://" & hostOf(pds) &
-                      "/xrpc/com.atproto.server.createSession",
-                      httpMethod = HttpPost, body = payload)
+      if c != nil:
+        try: c.close() except CatchableError: discard
+      c = newClient()
+      c.headers = newHttpHeaders({"Content-Type": "application/json"})
+      let res = c.request("https://" & hostOf(pds) &
+                          "/xrpc/com.atproto.server.createSession",
+                          httpMethod = HttpPost, body = payload)
+      # Inside the retry: `Response.body` is a stream read where it is first
+      # touched, so reading it below would put the longest blocking part of
+      # the round trip outside the retry meant to cover it.
+      status = res.status
+      raw = res.body
     # Read the body whatever the status: the PDS puts the reason in it, and a
     # wrong app password is a 401 whose message is the useful part.
-    let body = try: parseJson(res.body)
+    let body = try: parseJson(raw)
                except JsonParsingError:
                  raise newException(AtprotoError,
-                   "Your PDS refused the sign-in (" & res.status & ").")
+                   "Your PDS refused the sign-in (" & status & ").")
     let jwt = body{"accessJwt"}.getStr()
     if jwt.len == 0:
       let msg = body{"message"}.getStr()
@@ -156,7 +174,8 @@ proc createSession*(handle, password: string): Session =
             accessJwt: jwt,
             pds: pds)
   finally:
-    c.close()
+    if c != nil:
+      try: c.close() except CatchableError: discard
 
 proc saslResponse*(s: Session, nonce: string): string =
   ## The base64url SASL payload, for either kind freeq takes.

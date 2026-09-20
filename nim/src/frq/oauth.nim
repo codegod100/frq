@@ -115,21 +115,36 @@ proc refreshSession*(broker, brokerToken: string): Tokens =
   ## This is what a second run uses: the token that came back through the
   ## browser was spent on the first connection, and the reader should not see
   ## a login page again for it.
-  let c = newHttpClient(timeout = 15_000,
-                        sslContext = newContext(verifyMode = CVerifyPeer))
+  # A client per attempt, and the body read inside it.
+  #
+  # Neither of those is fussiness. A client whose handshake was cut short is
+  # not a client to ask again — the retry rides a half-open connection — and
+  # `Response.body` is a stream that is read where it is first touched, so
+  # reading it at `parseJson` put the longest blocking call of the round trip
+  # outside the very retry meant to cover it. `⚠ Could not reach the broker —
+  # Interrupted system call` survived the first fix for that reason.
+  var
+    c: HttpClient
+    status: string
+    body: string
   try:
-    c.headers = newHttpHeaders({"Content-Type": "application/json"})
-    var res: Response
     retrying 3:
-      res = c.request("https://" & brokerHost(broker) & "/session",
-                      httpMethod = HttpPost,
-                      body = $(%*{"broker_token": brokerToken}))
+      if c != nil:
+        try: c.close() except CatchableError: discard
+      # No socket timeout, deliberately; see `frq/eintr`.
+      c = newHttpClient(sslContext = newContext(verifyMode = CVerifyPeer))
+      c.headers = newHttpHeaders({"Content-Type": "application/json"})
+      let res = c.request("https://" & brokerHost(broker) & "/session",
+                          httpMethod = HttpPost,
+                          body = $(%*{"broker_token": brokerToken}))
+      status = res.status
+      body = res.body
     # The body whatever the status: an expired token is a 401 whose message
     # is the part worth showing.
-    let j = try: parseJson(res.body)
+    let j = try: parseJson(body)
             except CatchableError:
               raise newException(OauthError,
-                "The broker's answer was not JSON (" & res.status & ").")
+                "The broker's answer was not JSON (" & status & ").")
     let token = j{"token"}.getStr()
     if token.len == 0:
       let m = j{"message"}.getStr()
@@ -139,7 +154,8 @@ proc refreshSession*(broker, brokerToken: string): Tokens =
            nick: j{"nick"}.getStr(), did: j{"did"}.getStr(),
            handle: j{"handle"}.getStr())
   finally:
-    c.close()
+    if c != nil:
+      try: c.close() except CatchableError: discard
 
 # --------------------------------------------------------- the capture page
 

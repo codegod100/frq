@@ -56,3 +56,35 @@ suite "retrying":
         runs.inc
         raise osError(p.EINTR, "Interrupted system call")
     check runs == 4
+
+suite "restartableSyscalls":
+  test "adds SA_RESTART without disturbing the handler":
+    # The flag says what the kernel does to an interrupted syscall. It must
+    # not change which function runs, or whose signal it is — the profiler
+    # whose handler this finds is somebody else's.
+    proc handler(sig: cint) {.noconv.} = discard
+    var wanted: Sigaction
+    discard sigemptyset(wanted.sa_mask)
+    wanted.sa_handler = handler
+    wanted.sa_flags = 0
+    check p.sigaction(SIGALRM, wanted, nil) == 0
+
+    restartableSyscalls()
+
+    var got: Sigaction
+    check sigactionOf(SIGALRM, got)
+    check (got.sa_flags and p.SA_RESTART) != 0
+    check got.sa_handler == handler
+
+  test "and leaves one that already has it alone":
+    proc handler(sig: cint) {.noconv.} = discard
+    var wanted: Sigaction
+    discard sigemptyset(wanted.sa_mask)
+    wanted.sa_handler = handler
+    wanted.sa_flags = p.SA_RESTART
+    check p.sigaction(SIGALRM, wanted, nil) == 0
+    restartableSyscalls()
+    var got: Sigaction
+    check sigactionOf(SIGALRM, got)
+    check got.sa_handler == handler
+    check (got.sa_flags and p.SA_RESTART) != 0

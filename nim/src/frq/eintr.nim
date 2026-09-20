@@ -26,9 +26,12 @@ func interrupted*(e: ref CatchableError): bool =
   ## By `errorCode` where there is one, and by message otherwise: a library
   ## that catches an OSError and re-raises its text — `httpclient` does this
   ## in places — loses the code but keeps the words.
-  if e of OSError:
-    ((ref OSError)(e)).errorCode.int32 == p.EINTR.int32
+  if e of OSError and ((ref OSError)(e)).errorCode.int32 == p.EINTR.int32:
+    true
   else:
+    # The message as well as the code, and for an OSError too: a code of zero
+    # with those words in the text is a wrapper that lost the errno on the
+    # way, not a different failure.
     "Interrupted system call" in e.msg
 
 template retrying*(attempts: int, body: untyped): untyped =
@@ -45,3 +48,48 @@ template retrying*(attempts: int, body: untyped): untyped =
     except CatchableError as e:
       if tries < attempts and interrupted(e): continue
       raise
+
+# ------------------------------------------------- asking for restartable calls
+
+proc sigactionRaw(sig: cint, act, old: ptr Sigaction): cint
+  {.importc: "sigaction", header: "<signal.h>".}
+  ## C's own shape, because the question here is "what is installed?" and
+  ## Nim's binding takes the new action where C takes a NULL. Passing an
+  ## uninitialised struct there does not read the handler, it replaces it
+  ## with SIG_DFL — and the first signal after that killed the process,
+  ## which is how this line came to be written.
+
+proc sigactionOf*(sig: cint, into: var Sigaction): bool =
+  ## What is installed for `sig`, without changing it. Exported for the test
+  ## that checks this module leaves a handler as it found it.
+  sigactionRaw(sig, nil, addr into) == 0
+
+proc restartOn(sig: cint) =
+  ## Add `SA_RESTART` to whatever handler is already installed for `sig`.
+  ##
+  ## The handler itself is not touched — same function, same mask. The flag
+  ## says only what the kernel should do to a syscall the signal lands in:
+  ## restart it rather than fail it with EINTR.
+  var current: Sigaction
+  if sigactionRaw(sig, nil, addr current) != 0: return
+  if (current.sa_flags and p.SA_RESTART) != 0: return
+  var updated = current
+  updated.sa_flags = current.sa_flags or p.SA_RESTART
+  discard sigactionRaw(sig, addr updated, nil)
+
+proc restartableSyscalls*() =
+  ## Ask for interrupted syscalls to be restarted rather than reported.
+  ##
+  ## Retrying is not enough on its own, and the reason is arithmetic: the
+  ## Dart VM's profiler samples every thread about a thousand times a second,
+  ## and an HTTPS round trip takes far longer than a millisecond. Every
+  ## attempt is interrupted, so three attempts are three failures — which is
+  ## what a signal storm against a real request showed, five times out of
+  ## five.
+  ##
+  ## So the flag, which costs nothing and changes nobody's handler. The
+  ## profiler still gets its signal and still samples; the read underneath
+  ## carries on rather than failing. The retries stay, for a signal arriving
+  ## from somewhere this never reached.
+  for sig in [p.SIGPROF, p.SIGALRM, p.SIGVTALRM, p.SIGCHLD]:
+    restartOn(sig)

@@ -26,7 +26,7 @@
 ## between this and the experiment that was deleted for being a facsimile.
 
 import std/[json, strutils, tables]
-import frq/[ircparse, trace, ui, cells, reducer, model, rooms]
+import frq/[ircparse, trace, ui, cells, reducer, model, rooms, eintr]
 import frq/conn as tr
 import frq/screens/connect as scConnectScreen
 import frq/screens/chats as scChatsScreen
@@ -52,6 +52,11 @@ proc frq_init*() {.exportc, dynlib.} =
   ## `frq_ui_reset` deliberately does not do this. It is the tests' entry
   ## point, and a suite that picked up whoever is signed in on the machine
   ## running it would pass or fail by accident.
+  # Before anything opens a socket. The Dart VM's profiler signals every
+  # thread in this process about a thousand times a second, and a syscall
+  # interrupted by one fails rather than resuming unless its handler says
+  # otherwise — which is why signing in reported `Interrupted system call`.
+  restartableSyscalls()
   reducer.restore()
 
 proc dup(s: string): cstring =
