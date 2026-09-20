@@ -20,6 +20,19 @@ import 'src/host.dart' as host;
 
 import 'nim_theme.dart' as t;
 
+/// A child of an `overlay` that covers it rather than floating at its foot.
+///
+/// A widget rather than a flag, because the thing that has to act on it is
+/// the `Stack` two levels up, and a tree is the only channel between them.
+/// It is never built: the overlay unwraps it and uses `child`.
+class _Filling extends StatelessWidget {
+  const _Filling(this.child);
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => child;
+}
+
 class NimApp extends StatefulWidget {
   const NimApp({super.key});
   @override
@@ -273,6 +286,14 @@ class _NimAppState extends State<NimApp> {
     final key = n.prop('key', '');
     var w = _buildNode(n, axis);
 
+    // `_Filling` has to stay outermost: the `Stack` in `overlay` looks for it
+    // by type, and a `KeyedSubtree` around it is a `KeyedSubtree` as far as
+    // that check is concerned — which is how the first version of this ended
+    // up laying a flex child out against an unbounded height.
+    if (w is _Filling && key.isNotEmpty) {
+      return _Filling(KeyedSubtree(key: ValueKey(key), child: w.child));
+    }
+
     // The row a reply's arrow is aiming at. Two keys on one widget is not a
     // thing, so they nest: the ValueKey keeps the element across rebuilds,
     // and the GlobalKey is how this frame finds it afterwards.
@@ -358,6 +379,13 @@ class _NimAppState extends State<NimApp> {
             children: [
               Positioned.fill(child: base),
               for (final o in over)
+                // Two kinds of floating child. One sits at the bottom on its
+                // own ground — a control over the conversation. The other
+                // covers it: a picture being looked at is not something to
+                // read the backlog through.
+                if (o is _Filling)
+                  Positioned.fill(child: o.child)
+                else
                 Positioned(
                   left: 0,
                   right: 0,
@@ -390,6 +418,15 @@ class _NimAppState extends State<NimApp> {
           col = _margins(n, col);
           final w = _d(n.props['widthRequest'], 0);
           if (w > 0) col = SizedBox(width: w, child: col);
+          // A panel that covers something needs a ground of its own, or what
+          // it covers reads through it.
+          if (n.prop('background', false)) {
+            col = ColoredBox(color: t.bg, child: col);
+          }
+          // Said by a child of an `overlay`: fill it rather than float at the
+          // bottom of it. Carried as a wrapper because the Stack above is the
+          // only thing that can act on it.
+          if (n.prop('fill', false)) return _Filling(col);
           return expanded(col);
         }
 
@@ -482,15 +519,25 @@ class _NimAppState extends State<NimApp> {
         return Text(n.prop('text', ''), style: _style(t.textBody, t.onBg));
 
       case 'link':
-        return _wrapTap(
-          n.prop('onClick', ''),
-          Text(
+        {
+          // The same rule the inline links follow: a link with no `onClick`
+          // opens its own `url`. `Open on bsky.app` in the profile panel is
+          // this one, and it was underlined, blue and inert for exactly the
+          // reason the ones in a message were — `_wrapTap` hands back a bare
+          // child when there is no event to send, and a link's event was
+          // never the point. Opening a URL is the platform's job.
+          final url = n.prop('url', '');
+          final onClick = n.prop('onClick', '');
+          final label = Text(
             n.prop('label', ''),
             style: _style(t.textBody, t.accent)
                 .copyWith(decoration: TextDecoration.underline,
                           decorationColor: t.accent),
-          ),
-        );
+          );
+          if (onClick.isNotEmpty) return _wrapTap(onClick, label);
+          if (url.isEmpty) return label;
+          return InkWell(onTap: () => host.openUrl(url), child: label);
+        }
 
       case 'separator':
         return const Divider(height: 1, thickness: 1, color: t.divider);
@@ -726,7 +773,10 @@ class _NimAppState extends State<NimApp> {
               child: img,
             );
           }
-          return _wrapTap(n.prop('onClick', ''), img);
+          // `expand` on a picture is what makes a lightbox a lightbox: in
+          // the column of a panel that fills the screen, it takes the height
+          // that is left and `BoxFit.contain` does the rest.
+          return expanded(_wrapTap(n.prop('onClick', ''), img));
         }
 
       case 'entry':

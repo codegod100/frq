@@ -79,8 +79,9 @@ suite "the chat screen":
   test "only our own lines get a pencil":
     let chips = cs.chatScreen(s, true).find("reaction")
       .mapIt(it.props{"emoji"}.getStr())
-    # 🙂 and ↩️ on both messages, ✏️ on ours alone.
-    check chips.countIt(it == "✏️") == 1
+    # React and reply on both messages, edit on ours alone. Emoji-only
+    # codepoints on purpose — see `actionChips`.
+    check chips.countIt(it == "📝") == 1
     check chips.countIt(it == "🙂") == 2
 
   test "a line with no msgid gets a spacer where the chips would be":

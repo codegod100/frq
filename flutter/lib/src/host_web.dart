@@ -42,10 +42,16 @@ Widget networkImage(String url,
 /// No family is named on the web, and that is the fix rather than the gap.
 ///
 /// A browser is not painting with the machine's fonts: CanvasKit carries its
-/// own, and downloads a Noto face on demand for any glyph it cannot draw —
-/// emoji included. Naming a family it does not have defeats that, because a
-/// named family that is missing is a notdef box rather than a search. Every
-/// reaction chip drew ▯ until this list was empty.
+/// own and fetches a Noto face on demand for glyphs it cannot draw. Naming a
+/// family it does not have defeats that — a named family that is missing is
+/// a notdef box rather than a search, and every chip drew ▯.
+///
+/// That was tried twice. The second time was on the theory that the first
+/// result had come through a stale service worker; it had not, and the boxes
+/// came straight back. What a glyph gets here is whatever CanvasKit's own
+/// fallback finds, which for an emoji-presentation codepoint is the colour
+/// face — and for a text codepoint wearing a variation selector is not. See
+/// `screens/chat`, where the chips are chosen accordingly.
 const List<String> emojiFonts = <String>[];
 
 @JS('window.open')

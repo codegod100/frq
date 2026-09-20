@@ -37,18 +37,26 @@ func actionChips(m: Message, mine: bool): Node =
   ## the line with the text they took width off every line under them and
   ## wrapped a message that had the room to sit on one.
   ##
-  ## A row laid out from the right lays its first child furthest right, so
-  ## reacting comes first here and this reads ✏️ then ↩️ then 🙂 on screen.
-  ## Only our own lines carry a pencil: the server refuses an edit of somebody
-  ## else's, and a chip that always fails is a chip that lies.
+  ## Only our own lines carry the edit chip: the server refuses an edit of
+  ## somebody else's, and a chip that always fails is a chip that lies.
+  ##
+  ## The glyphs are all emoji-presentation codepoints, and that is a
+  ## constraint rather than a preference. `✏️` is U+270F plus a variation
+  ## selector *asking* for emoji presentation, and the ask is not binding:
+  ## some font claims the bare U+270F and draws the monochrome pencil the
+  ## text era had. On a desktop that font is DejaVu Sans, which naming the
+  ## colour face gets around; in a browser CanvasKit has no such face to name
+  ## — naming one gives notdef boxes — so the only reliable answer is a
+  ## codepoint no text font claims. Hence 📝 where ✏️ was, and 💬 where ↩️
+  ## was: both are emoji-only, and both come out in colour everywhere.
   result = n("hbox", %*{"key": "actions", "align": "end", "spacing": chipGap}, @[
     n("reaction", %*{"key": "react", "emoji": "🙂", "size": pillSize,
                      "onClick": "react.open:" & rowId(m)}),
-    n("reaction", %*{"key": "reply", "emoji": "↩️", "size": pillSize,
+    n("reaction", %*{"key": "reply", "emoji": "💬", "size": pillSize,
                      "onClick": "reply.to:" & rowId(m)})])
   if mine:
     result.children.add n("reaction",
-      %*{"key": "edit", "emoji": "✏️", "size": pillSize,
+      %*{"key": "edit", "emoji": "📝", "size": pillSize,
          "onClick": "edit.start:" & rowId(m)})
 
 func reactionRow(m: Message, me: string): Node =
@@ -58,8 +66,8 @@ func reactionRow(m: Message, me: string): Node =
   ## takes yours off, which is the same gesture that put it there. `reaction`
   ## rather than a button with the emoji as its label — the renderer draws a
   ## `reaction` in the colour emoji font, where a label gets whatever ordinary
-  ## fallback finds, which for ✏️ and ↩️ is a monochrome glyph out of a text
-  ## font.
+  ## fallback finds — see `actionChips` on why the glyphs here avoid the
+  ## variation-selector kind entirely.
   result = n("hbox", %*{"key": "pills", "spacing": chipGap})
   var emojis: seq[string]
   for r in m.reactions: emojis.add r.emoji
@@ -296,17 +304,24 @@ proc overviewPane(s: State): Node =
   result.children.add body
 
 proc lightboxPane(s: State): Node =
-  ## The picture being looked at, full size.
+  ## The picture being looked at, as large as the window allows.
   ##
   ## A panel over the conversation rather than a screen of its own: closing it
   ## should put the reader back exactly where they were, and a screen would
   ## have to remember where that was.
-  card(
-    hbox(%*{"spacing": 8},
+  ##
+  ## It used to be a card in the column with the picture capped at 640 by 480
+  ## — which put a thumbnail-and-a-half below the backlog, off the bottom of
+  ## a short window, and called it full size. Now it covers the conversation
+  ## and the picture takes all of it.
+  n("vbox", %*{"key": "lightbox-card", "spacing": 8, "margin": 12,
+               "background": true, "expand": true}, @[
+    hbox(%*{"spacing": 8, "wrap": false},
       title2("Picture"),
-      button("Close", "lightbox.close")),
-    image(s.lightbox.url, maxWidth = 640, maxHeight = 480),
-    dimLabel(s.lightbox.url))
+      n("button", %*{"label": "Close", "onClick": "lightbox.close",
+                     "expand": true})),
+    n("image", %*{"src": s.lightbox.url, "expand": true}),
+    dimLabel(s.lightbox.url)])
 
 proc profilePane(s: State): Node =
   ## Who someone is, behind the nick on a line.
@@ -476,7 +491,9 @@ proc chatScreen*(s: State, connected: bool): Node =
   if s.profileViewing.has:
     profile.children.add profilePane(s)
 
-  var lightbox = vbox(%*{"key": "lightbox-pane"})
+  # In the overlay rather than the column, and marked to fill it: a picture
+  # being looked at should cover the conversation, not sit under it.
+  var lightbox = vbox(%*{"key": "lightbox-pane", "fill": true})
   if s.lightbox.has:
     lightbox.children.add lightboxPane(s)
 
@@ -514,7 +531,7 @@ proc chatScreen*(s: State, connected: bool): Node =
   var editing = vbox(%*{"key": "editing"})
   if s.editing.has:
     editing.children.add hbox(%*{"spacing": 8},
-      emoji("✏️", ""),
+      emoji("📝", ""),
       dimLabel("Editing your message"),
       button("✕", "edit.cancel"))
   banners.children.add editing
@@ -530,11 +547,16 @@ proc chatScreen*(s: State, connected: bool): Node =
 
   # The compose bar. The picture button is a tile rather than an emoji: the
   # emoji was a colour photo that matched nothing else in the bar.
-  var compose = hbox(%*{"spacing": 8, "align": "center", "marginBottom": 12},
+  # `wrap: false`, so this is a row and the box can take what the picture
+  # button and Send leave. It was a Wrap with the box pinned to 260 points,
+  # which is a message box the width of a phone's on a window four times
+  # that — and the rest of the line empty beside it.
+  var compose = hbox(%*{"spacing": 8, "align": "center", "marginBottom": 12,
+                        "wrap": false},
     image("asset:assets/insert-image.png", maxWidth = 36, maxHeight = 36,
           onClick = "image.pick"),
     entry("draft", s.draft, "Message " & name, "draft.change",
-          width = 260, onSubmit = "send"),
+          onSubmit = "send"),
     button("Send", "send", "primary"))
 
   vbox(%*{"spacing": 8, "margin": 12, "expand": true},
@@ -550,10 +572,9 @@ proc chatScreen*(s: State, connected: bool): Node =
       # conversation between them taking whatever is left.
       n("hbox", %*{"spacing": 8, "wrap": false, "expand": true},
         @[chatListPane, messages, peoplePane]),
-      jump),
+      jump, lightbox),
     overview,
     profile,
-    lightbox,
     returnRow,
     banners,
     separator(),

@@ -380,6 +380,33 @@ void main() {
     });
   });
 
+  group('the lightbox', () {
+    testWidgets('a picture being looked at covers the conversation',
+        (tester) async {
+      // It used to be a card in the column with the picture capped at 640 by
+      // 480 — a thumbnail-and-a-half below the backlog, off the bottom of a
+      // short window, called full size.
+      core.demoUi();
+      core.dispatch('window.size', '1280x800');
+      await layOut(tester, sizes['desktop']!);
+      expect(find.text('Picture'), findsNothing);
+
+      core.dispatch('lightbox:https://example.com/a.png');
+      await tester.pump(const Duration(milliseconds: 150));
+      expectLaidOut(tester, 'the lightbox');
+      expect(find.text('Picture'), findsOneWidget);
+
+      // As wide as the conversation it covers, rather than a card in it.
+      final pane = tester.getRect(find.text('Picture').first);
+      expect(pane.left, lessThan(200));
+
+      core.dispatch('lightbox.close');
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(find.text('Picture'), findsNothing);
+      expectLaidOut(tester, 'the conversation after closing it');
+    });
+  });
+
   group('identity', () {
     // Duplicate keys among siblings are an error Flutter throws at build
     // time, so this is mostly a guard on the tree the core emits: every
