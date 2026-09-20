@@ -16,6 +16,7 @@ import std/[algorithm, json, strutils, tables]
 import std/options
 import frq/[ui, cells, model, clock, reactions, textruns, members,
            glyphs, emoji, rooms, profile]
+import frq/links as lk
 from frq/screens/connect import errorNote
 from frq/screens/frame import tabBar
 
@@ -94,6 +95,34 @@ func runNodes(m: Message): Node =
     case r.kind
     of rkText: result.children.add text(r.value)
     of rkLink: result.children.add link(r.value, r.value)
+
+proc previewCard(url: string): Node =
+  ## What is at the end of a link, under the line that pasted it.
+  ##
+  ## Nothing while it is being fetched and nothing where it failed: a card
+  ## that says "loading" is a row that appears, changes height and
+  ## disappears again in every message of a backlog, and a card that says
+  ## "no preview" is a card about this client rather than about the link.
+  ## The link itself is in the text either way, so the failure mode is the
+  ## message as it reads without any of this.
+  ##
+  ## The title is the control rather than the whole card: `link` is the one
+  ## tag that opens a URL, and a card that took the press would need the
+  ## renderer to learn a second way — which is a change on both sides of a
+  ## boundary that is supposed to hold.
+  let (p, has) = lk.lookup(url)
+  if not has or p.status != lk.lsReady: return nil
+  result = card(%*{"key": "preview", "spacing": 2})
+  if p.image.len > 0:
+    result.children.add image(p.image, maxWidth = 320, maxHeight = 160,
+                              onClick = "lightbox:" & p.image)
+  let site = if p.siteName.len > 0: p.siteName else: lk.domainOf(url)
+  if site.len > 0:
+    result.children.add dimLabel(site)
+  if p.title.len > 0:
+    result.children.add link(p.title, url)
+  if p.description.len > 0:
+    result.children.add text(p.description, lines = 2)
 
 const pickerColumns = 8
   ## How wide the emoji grid is. Narrow enough to sit under a message on a
@@ -209,6 +238,14 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
     images.children.add image(m.imageUrl, maxWidth = 320, maxHeight = 240,
                               onClick = "lightbox:" & m.imageUrl)
 
+  # What the link in the message turned out to be, where it has come back.
+  var preview = vbox(%*{"key": "preview-row", "spacing": 4})
+  if not m.system:
+    let url = firstPreviewUrl(m.text)
+    if url.len > 0:
+      let cardNode = previewCard(url)
+      if not cardNode.isNil: preview.children.add cardNode
+
   # The picker, under the message it is for and nowhere else.
   var picker = vbox(%*{"key": "picker", "marginBottom": 4})
   if s.reacting.has and s.reacting.id == rowId(m):
@@ -223,7 +260,7 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
   n(if highlit: "card" else: "vbox",
     %*{"key": (if highlit: "body-card" else: "body-plain"),
        "spacing": 2, "margin": 0},
-    @[who, body, picker, images, pills])
+    @[who, body, picker, images, preview, pills])
 
 proc messageRow(s: State, room: Room, i: int, m: Message): Node =
   ## One message: who said it, when, what you can do to it, and the words.

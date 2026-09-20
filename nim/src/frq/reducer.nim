@@ -16,6 +16,8 @@ import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
            atproto, handshake, textruns, members, msgsig, profile, store,
            profilefetch, edits]
+import frq/links as lk
+import frq/linkfetch as lf
 import frq/conn as tr
 import frq/oauth as oa
 
@@ -46,6 +48,9 @@ proc rememberRooms(force = false)
 proc wantFace(m: Message)
   ## And this because `sendDraft` is: our own line wants a face as much as
   ## anybody's.
+
+proc wantPreview(m: Message)
+  ## And this for the same reason: a link in our own line gets a card too.
 
 proc openSocket()
   ## And this because a browser sign-in finishes above it: the host answers
@@ -780,6 +785,33 @@ proc wantFace(m: Message) =
   let actor = actorFor(did, m.frm)
   if actor.len > 0: want(actor)
 
+proc notePreviewTags(tags: string) =
+  ## A preview the sender sent with their line, into the cache.
+  ##
+  ## freeq carries one as `+freeq.at/link-*`, signed with the message the way
+  ## an attachment is. Where it is there it is the better answer than asking
+  ## the server to go and look: it costs no round trip, and it is what the
+  ## author said the link was rather than what the page says about itself
+  ## today. `want` finds the URL already known and asks nothing.
+  let (url, hasUrl) = tagValue(tags, "+freeq.at/link-url")
+  if not hasUrl or not lk.previewable(url) or lk.known(url): return
+  let (title, _) = tagValue(tags, "+freeq.at/link-title")
+  let (desc, _) = tagValue(tags, "+freeq.at/link-desc")
+  let (image, _) = tagValue(tags, "+freeq.at/link-image")
+  if title.len == 0 and image.len == 0: return
+  lk.remember(url, lk.Preview(status: lk.lsReady, title: title,
+                              description: desc, image: image))
+
+proc wantPreview(m: Message) =
+  ## Ask what is at the end of the link in this line, if it has one.
+  ##
+  ## Here rather than in the screen because a screen must not fetch, and here
+  ## rather than at the PRIVMSG because a line arrives by three roads — said,
+  ## replayed, or echoed back — and `note` is the one they all pass through.
+  if m.system: return
+  let url = firstPreviewUrl(m.text)
+  if url.len > 0: lf.want(app.formHost, url)
+
 proc note(room: string, m: Message) =
   app.rooms.ensureRoom(room)
   var r = app.rooms[room]
@@ -788,6 +820,7 @@ proc note(room: string, m: Message) =
   r.lastActivity = nowMs()
   app.rooms[room] = r.recount(app.formNick)
   wantFace(m)
+  wantPreview(m)
 
 proc drain*() =
   # The browser handoff, before the socket: a sign-in that just landed should
@@ -920,6 +953,7 @@ proc drain*() =
         if hasRep: m.replyTo = rep
         let (tally, hasTally) = tagValue(p.tags, "+freeq.at/reacts")
         if hasTally: m.reactions = parseTally(tally)
+        notePreviewTags(p.tags)
         note(room, m)
 
     of "TAGMSG":
@@ -1089,8 +1123,9 @@ proc drain*() =
     else:
       trace("skip", p.command & " " & $p.params)
 
-  # Faces that have come back since the last frame.
-  discard collect()
+  # Faces that have come back since the last frame, and previews.
+  discard profilefetch.collect()
+  discard lf.collect()
 
   # A line arriving moves the marker in the room being looked at, and closing
   # the window is not a moment this client gets told about — so the saving

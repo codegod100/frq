@@ -3,6 +3,7 @@
 import std/[json, sequtils, strutils, tables, unicode, unittest]
 import frq/[ui, cells, model, textruns]
 import frq/screens/chat as cs
+import frq/links as lk
 
 proc find(node: Node, tag: string): seq[Node] =
   if node.isNil: return
@@ -115,6 +116,35 @@ suite "the chat screen":
       .filterIt(it.props{"src"}.getStr() == "https://x.com/a.png")
     check img.len == 1
     check img[0].props{"onClick"}.getStr().startsWith("lightbox:")
+
+  test "a link with a preview back gets a card under the message":
+    lk.forgetPreviews()
+    lk.setPreviewForTest("https://example.com",
+      lk.Preview(status: lk.lsReady, title: "A post", description: "About it",
+                 siteName: "Example", image: "https://example.com/i.png"))
+    var r = s.rooms["#test"]
+    r.messages[0].text = "see https://example.com now"
+    s.rooms["#test"] = r
+    let t = cs.chatScreen(s, true)
+    check t.labels("link").anyIt(it == "A post")
+    check t.labels("dim-label").anyIt(it == "Example")
+    check t.find("image").anyIt(
+      it.props{"src"}.getStr() == "https://example.com/i.png")
+    lk.forgetPreviews()
+
+  test "a link still being fetched gets nothing — not a row that flickers":
+    lk.forgetPreviews()
+    lk.setPreviewForTest("https://example.com",
+                         lk.Preview(status: lk.lsLoading))
+    var r = s.rooms["#test"]
+    r.messages[0].text = "see https://example.com now"
+    s.rooms["#test"] = r
+    let t = cs.chatScreen(s, true)
+    # The link itself is still there; only the card is absent.
+    check t.labels("link").anyIt(it == "https://example.com")
+    check not t.find("image").anyIt(
+      it.props{"src"}.getStr() == "https://example.com/i.png")
+    lk.forgetPreviews()
 
   test "a reply quotes what it answers, and offers a way there":
     var r = s.rooms["#test"]
