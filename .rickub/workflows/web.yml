@@ -55,8 +55,8 @@ jobs:
   # ...and Modal serves it.
   #
   # `modal deploy` and not `modal run`: a run is a job that ends, and this is
-  # a URL that should still be there on the next push. The app is named by
-  # `[container] name` in `.modal/web/container.toml`, so deploying again
+  # a URL that should still be there on the next push. The app is named in
+  # `.modal/web/app.py` — `modal.App("frq-web")` — so deploying again
   # replaces the running one rather than standing a second one beside it.
   deploy:
     runs-on: ubuntu-latest
@@ -71,8 +71,8 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          # What `${FRQ_WEB_IMAGE}` in container.toml expands to. The job
-          # above computed it; passing it forward rather than recomputing it
-          # keeps one place saying what the tag is.
+          # The image `app.py` serves. The job above computed the tag;
+          # passing it forward rather than recomputing it keeps one place
+          # saying what it is.
           FRQ_WEB_IMAGE: ${{ needs.image.outputs.image }}
-        run: modal deploy .modal/web/container.py
+        run: modal deploy .modal/web/app.py

@@ -157,7 +157,11 @@ deploy container="web":
         echo "  e.g. registry.gitlab.com/<ns>/frq/web:\$(git rev-parse HEAD)" >&2
         exit 1
     fi
-    exec modal deploy ".modal/{{container}}/container.py"
+    # `app.py` for `web`, which is plain Modal; a `container.py` for anything
+    # described by a `container.toml`.
+    spec=".modal/{{container}}/app.py"
+    [ -f "$spec" ] || spec=".modal/{{container}}/container.py"
+    exec modal deploy "$spec"
 
 # The same core, compiled to JavaScript.
 #

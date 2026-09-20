@@ -28,10 +28,16 @@ deployed apps by name, not the ephemeral one a `modal run` creates, and carries
 nothing until the Sandbox starts — the image build streams to the client and
 nowhere else.
 
-Two containers, and they are not the same kind of thing. `dev` is a build
-that ends. `web` is a deploy: rickub builds `.modal/web/Dockerfile` into
+Two containers, and they are not the same kind of thing — which is why they
+are not written the same way. `dev` is a build that ends, and is a
+`container.toml` read by `_loader.py`: a sandbox with a volume, a toolchain
+and a command that changes. `web` is a deploy, and is plain Modal in
+`.modal/web/app.py`, because four constants and a `Popen` did not need a spec
+file to be read before the file itself made sense.
+
+`web` is a deploy: rickub builds `.modal/web/Dockerfile` into
 `registry.rickub.com` (`.rickub/workflows/web.yml`), and
-`modal deploy .modal/web/container.py` serves that exact tag at a URL,
+`modal deploy .modal/web/app.py` serves that exact tag at a URL,
 building nothing. So `just build web` on a laptop and the thing
 on the internet come from the same two commands, run in different places —
 and a deploy is a pull rather than a compile.
@@ -56,7 +62,7 @@ Let them write to the terminal, or `tee` them if you want a copy to grep
 afterwards:
 
 ```bash
-modal run .modal/web/container.py 2>&1 | tee /tmp/frq-build.log
+modal run .modal/dev/container.py 2>&1 | tee /tmp/frq-build.log
 ```
 
 Trim afterwards, on the file, where the whole run is still there to re-read.
