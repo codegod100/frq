@@ -51,7 +51,18 @@ proc forget*() =
 proc generate*(did: string): string =
   ## Mint a key for this connection and answer with its public half, base64url
   ## — which is what goes out as `MSGSIG <pub>`.
-  signer = Signer(has: true, did: did, key: newKey())
+  ##
+  ## A key with no public half is a build that cannot sign — the web one, so
+  ## far, where Ed25519 is asynchronous and this is not. Nothing is claimed in
+  ## that case: `signedIn` stays false, no MSGSIG goes out, and the server
+  ## treats these lines as it treats a guest's. Better than announcing a key
+  ## and then failing to sign with it.
+  let key = newKey()
+  if key.public.len == 0:
+    signer = Signer()
+    trace("msgsig", "no signing in this build; lines go out unsigned")
+    return ""
+  signer = Signer(has: true, did: did, key: key)
   signer.kid = b64url(signer.key.public)[0 ..< 16]
   trace("msgsig", "key for " & did & " kid=" & signer.kid)
   b64url(signer.key.public)

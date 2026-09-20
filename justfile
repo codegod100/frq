@@ -55,7 +55,8 @@ build target="desktop":
     case "{{target}}" in
         desktop) just _flutter desktop build ;;
         lib)     just _nim-lib ;;
-        *)       echo "usage: just build [desktop|lib]" >&2; exit 1 ;;
+        core-js) just _nim-js ;;
+        *)       echo "usage: just build [desktop|lib|core-js]" >&2; exit 1 ;;
     esac
 
 # Build a target and start it.
@@ -80,29 +81,34 @@ run target="desktop":
 #   dart     the Dart side of the FFI boundary, on the plain Dart VM. Passing
 #            `nim` and failing this one is a marshalling bug, which is why the
 #            two are separate suites.
+#   web      the JavaScript build of the same core, driven as a browser
+#            drives it. Needs node and nothing else.
 #   live     the whole stack against a real freeq. Not in `all`: it wants a
 #            network and a running server.
 #
 #   just test              all of them
 #   just test nim tircparse    one Nim file
-[doc('run a suite: all nim dart layout live')]
+[doc('run a suite: all nim dart layout web live')]
 test suite="all" *args:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{root}}"
     shift
     case "{{suite}}" in
-        all)    just test nim && just test dart && just test layout ;;
+        all)    just test nim && just test dart && just test layout \
+                             && just test web ;;
         layout) just _nim-lib
                 just _flutter layout test ;;
         nim)    just _nim-test "$@" ;;
+        web)    just _nim-js
+                exec node nim/web/test/smoke.js build/web/frq_core.js ;;
         dart)   just _nim-lib
                 exec "{{tc}}" exec -- bash -c \
                     'cd dart/frq_core && dart pub get && dart test -r expanded' ;;
         live)   just _nim-lib
                 exec "{{tc}}" exec -- bash -c \
                     'cd dart/frq_core && dart pub get >/dev/null && dart run tool/live_ui.dart "$@"' _ "$@" ;;
-        *)      echo "usage: just test [all|nim|dart|layout|live]" >&2; exit 1 ;;
+        *)      echo "usage: just test [all|nim|dart|layout|web|live]" >&2; exit 1 ;;
     esac
 
 # The containers in `.modal/`, run on Modal rather than here: this machine
@@ -123,6 +129,26 @@ modal container="dev" *args:
     cd "{{root}}"
     shift || true
     exec modal run ".modal/{{container}}/container.py" "$@"
+
+# The same core, compiled to JavaScript.
+#
+# `--path:src --path:web`, in that order, because the later path wins: every
+# module under `nim/web/frq` shadows the one beside it in `nim/src/frq`, so
+# `frq/conn` is a queue the host fills rather than two socket threads, and the
+# shared code above them never learns which host it is on.
+[private]
+_nim-js:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{root}}"
+    out="{{root}}/build/web"
+    mkdir -p "$out"
+    exec "{{tc}}" exec -- bash -euo pipefail -c '
+        cd nim
+        nim js -d:release --hints:off \
+            --path:src --path:web --out:"'"$out"'/frq_core.js" web/frq_web.nim
+        printf "built %s (%s)\n" "'"$out"'/frq_core.js" \
+            "$(gzip -9c "'"$out"'/frq_core.js" | wc -c | awk "{printf \"%d KB gzipped\", \$1/1024}")"'
 
 [private]
 _nim-lib:
