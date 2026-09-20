@@ -8,9 +8,14 @@ import std/json
 import frq/[ui, cells]
 
 func tabBar*(s: State): Node =
+  ## The three screens, and the way between them.
+  ##
+  ## Lit for a conversation as well as for the list, because a conversation is
+  ## what the Chats tab leads to — a bar with nothing lit on it reads as a bar
+  ## that has lost its place.
   hbox(%*{"spacing": 8},
     button("Chats", "screen.chats",
-           if s.screen == scChats: "primary" else: "default"),
+           if s.screen in {scChats, scChat}: "primary" else: "default"),
     button("Discover", "screen.discover",
            if s.screen == scDiscover: "primary" else: "default"),
     button("Settings", "screen.settings",

@@ -17,6 +17,7 @@ import std/options
 import frq/[ui, cells, model, clock, reactions, textruns, members,
            glyphs, emoji, rooms, profile]
 from frq/screens/connect import errorNote
+from frq/screens/frame import tabBar
 
 const
   faceSize = 32
@@ -484,6 +485,18 @@ proc chatScreen*(s: State, connected: bool): Node =
     returnRow.children.add button("← back to " & s.overviewReturn,
                                   "overview.back")
 
+  # The same bar the other three screens carry, which this one did not have.
+  # On a narrow window that was survivable: `← Chats` goes back to a screen
+  # that has one. On a wide window there is no back button — the room list is
+  # a strip instead — so Discover and Settings had no way in at all.
+  #
+  # Wide only, and not for symmetry's sake: a 300-point window puts these
+  # three on two lines, and the chat screen has no 120 points to spare. It
+  # overflowed the moment they were added unconditionally.
+  var tabs = vbox(%*{"key": "tabs"})
+  if s.wide:
+    tabs.children.add tabBar(s)
+
   var jump = vbox(%*{"key": "jump"})
   if not s.atPresent:
     jump.children.add button("↓ Jump to present", "jump.present")
@@ -544,4 +557,5 @@ proc chatScreen*(s: State, connected: bool): Node =
     returnRow,
     banners,
     separator(),
-    compose)
+    compose,
+    tabs)

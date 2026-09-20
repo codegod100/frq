@@ -258,6 +258,8 @@ suite "the chat screen's panes":
                            at: 1_700_000_000_000'i64)]
     s.rooms["#test"] = r
     s.current = "#test"
+    # What `room.open` does, and what the tab bar reads to light Chats.
+    s.screen = scChat
 
   test "the backlog and the rooms sit side by side when the list is up":
     # The toggle had a button and rendered nothing at all: `hideChatList` was
@@ -285,6 +287,29 @@ suite "the chat screen's panes":
                                it.children.len > 0)
     check t.find("scroll").anyIt(
       it.props{"scrollKey"}.getStr() == "messages-#test")
+
+  test "the way to Discover and Settings is on the screen":
+    # It was not: the chat screen never carried the tab bar, and on a wide
+    # window there is no back button either — the room list is a strip. So
+    # from a conversation there was no way to either of them at all.
+    let t = cht.chatScreen(s, true)
+    check "Discover" in t.labels("button")
+    check "Settings" in t.labels("button")
+
+  test "and Chats is lit, because a conversation is what it leads to":
+    let t = cht.chatScreen(s, true)
+    let chats = t.find("button").filterIt(
+      it.props{"label"}.getStr() == "Chats")
+    check chats.len == 1
+    check chats[0].props{"kind"}.getStr() == "primary"
+
+  test "but not on a narrow window, which has no room for them":
+    # Three tabs go to two lines at 300 points, and this screen has no 120
+    # points to spare — `← Chats` is the way back there instead.
+    s.windowWidth = wideWidth - 1
+    let t = cht.chatScreen(s, true)
+    check "Discover" notin t.labels("button")
+    check "← Chats" in t.labels("button")
 
   test "a room in the strip opens it, and the current one is lit":
     s.hideChatList = false
