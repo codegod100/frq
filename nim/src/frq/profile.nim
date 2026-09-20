@@ -218,12 +218,27 @@ proc collect*(): bool =
         except CatchableError: Profile(status: psFailed)
     result = true
 
-proc avatarFor*(actor: string): string =
+proc avatarFor*(actor: string, alsoKnownAs = ""): string =
   ## The face to paint for this identity, or "" where there is not one yet.
   ## A lookup and never a fetch: this is called from the render path.
-  if actor.len == 0: return ""
-  let p = cache.getOrDefault(actor)
-  if p.status == psReady: p.avatar else: ""
+  ##
+  ## Two names because a person has two here, and which one the screen uses
+  ## changes underneath them. Before WHO answers, a handle-shaped nick is its
+  ## own actor; afterwards the actor is the DID. Without the fallback the
+  ## face would appear on the first message, vanish the moment WHO arrived,
+  ## and come back when the second fetch landed.
+  if actor.len > 0:
+    let p = cache.getOrDefault(actor)
+    if p.status == psReady and p.avatar.len > 0: return p.avatar
+  if alsoKnownAs.len > 0 and alsoKnownAs != actor:
+    let q = cache.getOrDefault(alsoKnownAs)
+    if q.status == psReady: return q.avatar
+  ""
+
+proc setProfileForTest*(actor, avatar: string) =
+  ## A profile that has arrived, without a network. For the tests that are
+  ## about what the screen does with one.
+  cache[actor] = Profile(status: psReady, avatar: avatar, handle: actor)
 
 proc forgetProfiles*() =
   ## For a test that wants a known starting point.

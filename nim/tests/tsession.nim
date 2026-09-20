@@ -173,6 +173,40 @@ suite "faces":
         "nandi.uk H :0 did:plc:ngokl2gnmpbvuvrfckja3g7p")
     check avatarFor("did:plc:ngokl2gnmpbvuvrfckja3g7p") == ""
 
+  test "a handle-shaped nick is asked for as soon as it speaks":
+    # Before WHO has answered, the screen looks a face up under the handle —
+    # so that is the name it has to be asked for under. Asking only when a
+    # DID turned up is why a face appeared only after opening the profile by
+    # hand, which asks under the handle.
+    say(":nandi.uk!u@freeq/plc/ngokl2gn PRIVMSG #freeq :hello")
+    check entry("nandi.uk")[1]
+    check entry("nandi.uk")[0].status == psLoading
+
+  test "and once WHO has answered, under the DID the screen then uses":
+    say(":irc.freeq.at 352 alice #freeq ~u freeq/plc/ngokl2gn irc.freeq.at " &
+        "nandi.uk H :0 did:plc:ngokl2gnmpbvuvrfckja3g7p",
+        ":nandi.uk!u@freeq/plc/ngokl2gn PRIVMSG #freeq :hello")
+    check entry("did:plc:ngokl2gnmpbvuvrfckja3g7p")[1]
+
+  test "a guest nick is nobody to look up":
+    # `sleek5209` is not a handle and has no DID; there is no profile behind
+    # it and a request for one can only fail.
+    say(":sleek5209!u@freeq/guest PRIVMSG #freeq :hello")
+    check not entry("sleek5209")[1]
+
+  test "and a system line is not somebody speaking":
+    say(":alice!a@h JOIN #freeq")
+    check not entry("*")[1]
+
+  test "the face does not blink when WHO changes which name is the actor":
+    # The handle's profile is what is cached when the first message lands;
+    # the actor becomes the DID a moment later. Without the fallback there is
+    # a hole between the two.
+    say(":nandi.uk!u@freeq/plc/ngokl2gn PRIVMSG #freeq :hello")
+    setProfileForTest("nandi.uk", "https://cdn/face.png")
+    check avatarFor("did:plc:ngokl2gnmpbvuvrfckja3g7p", "nandi.uk") ==
+          "https://cdn/face.png"
+
   test "an agent is never asked about":
     # `did:key:` has no Bluesky profile, so a request for one can only 400.
     say(":irc.freeq.at 352 alice #freeq ~u freeq/key/z6Mkp5we irc.freeq.at " &

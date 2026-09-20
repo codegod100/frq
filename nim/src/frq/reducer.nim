@@ -42,6 +42,10 @@ proc rememberRooms(force = false)
   ## Declared here because `openRoom` is above it and calls it — the file is
   ## ordered by what the reader does, not by what calls what.
 
+proc wantFace(m: Message)
+  ## And this because `sendDraft` is: our own line wants a face as much as
+  ## anybody's.
+
 proc send(line: string) =
   trace("out", line)
   tr.send(line)
@@ -297,6 +301,7 @@ proc sendDraft() =
                   localId: "local-" & $r.messages.len, pending: true)
   m.imageUrl = app.attachment.url
   r.messages.add m
+  wantFace(m)
   app.rooms[app.current] = r.markRead
   app.draft = ""
   app.attachment = Attachment()
@@ -575,6 +580,22 @@ proc dispatch*(event: JsonNode) =
 # the tree the renderer gets is built after every line that had arrived when
 # it asked.
 
+proc wantFace(m: Message) =
+  ## Ask for the face of whoever said this, by the same name the screen will
+  ## look it up under.
+  ##
+  ## That last part is the whole of it. A profile is cached under the actor
+  ## `actorFor` returns, and before WHO has answered — or for somebody in a
+  ## replayed backlog who is no longer in the room to be answered about —
+  ## that is the handle rather than the DID. Asking only when a DID turned up
+  ## meant the handle was never asked for, so a face appeared only once the
+  ## reader opened the profile by hand, which asks under the same name.
+  if m.system or m.frm.len == 0: return
+  let did = if m.account.len > 0: m.account
+            else: app.dids.getOrDefault(m.frm, "")
+  let actor = actorFor(did, m.frm)
+  if actor.len > 0: want(actor)
+
 proc note(room: string, m: Message) =
   app.rooms.ensureRoom(room)
   var r = app.rooms[room]
@@ -582,6 +603,7 @@ proc note(room: string, m: Message) =
   r.messages.add m
   r.lastActivity = nowMs()
   app.rooms[room] = r.recount(app.formNick)
+  wantFace(m)
 
 proc drain*() =
   # The browser handoff, before the socket: a sign-in that just landed should

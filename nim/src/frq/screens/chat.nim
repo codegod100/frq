@@ -151,7 +151,8 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
       # From the profile cache rather than the message: a face belongs to a
       # person, not to a line they said, and a profile that arrives after
       # their first message should appear on all of them.
-      avatar(avatarFor(senderActor), m.frm, size = faceSize, onClick = open),
+      avatar(avatarFor(senderActor, m.frm), m.frm, size = faceSize,
+             onClick = open),
       n("button", %*{"label": m.frm, "kind": "plain", "onClick": open}))
     if m.at > 0:
       row.children.add dimLabel(clockTime(m.at))
