@@ -1,44 +1,14 @@
-## handle → DID → PDS → session, and the SASL payload freeq takes.
+## Resolving an identity, over HTTPS.
 ##
-## From `common/frq/atproto/core.cljc`. That file is split into `-req` and
-## `-parse` pairs because ClojureDart had no portable HTTP client and the host
-## had to make the call in between; Nim has `std/httpclient`, so the round
-## trips are here whole and the seam is gone.
-##
-## The JSON is `std/json` rather than the hand-rolled string scanner the
-## Clojure uses. That scanner exists because two compilers disagreed about
-## JSON and neither could be depended on; one language has one JSON.
+## The half that talks: a handle to a DID, a DID to its PDS, an app-password
+## sign-in, and a profile. `atprotocore` holds what a session *is* and the
+## SASL payload built from it, which is the same everywhere and is what the
+## handshake needs.
 
-import std/[base64, httpclient, json, net, strutils]
+import std/[httpclient, json, net, strutils]
 import frq/[trace, eintr]
-
-const
-  directoryHost* = "public.api.bsky.app"
-  plcHost* = "plc.directory"
-
-type
-  SessionKind* = enum
-    skNone = "none", skPdsSession = "pds-session", skWebToken = "web-token"
-
-  Session* = object
-    kind*: SessionKind
-    did*: string
-    handle*: string
-    accessJwt*: string
-    pds*: string
-    token*: string        ## a web-token from the broker, where that is the kind
-
-  AtprotoError* = object of CatchableError
-
-proc b64url*(s: string): string =
-  ## base64url, unpadded — what AUTHENTICATE carries.
-  s.encode().replace("+", "-").replace("/", "_").replace("=", "")
-
-proc b64urlDecode*(s: string): string =
-  var t = s.replace("-", "+").replace("_", "/")
-  # `decode` wants the padding the wire form drops.
-  while t.len mod 4 != 0: t.add '='
-  try: decode(t) except CatchableError: ""
+import frq/atprotocore
+export atprotocore
 
 proc newClient(): HttpClient =
   ## No socket timeout, and that is not an oversight: Linux never restarts a
@@ -74,13 +44,6 @@ proc getJson(url, whatFor: string): JsonNode =
   finally:
     if c != nil:
       try: c.close() except CatchableError: discard
-
-func hostOf*(url: string): string =
-  var u = url
-  for scheme in ["https://", "http://"]:
-    if u.startsWith(scheme): u = u[scheme.len .. ^1]
-  let i = u.find('/')
-  if i < 0: u else: u[0 ..< i]
 
 proc resolveHandle*(handle: string): string =
   ## A handle to a DID. One that is already a DID needs no call and passes
@@ -177,27 +140,3 @@ proc createSession*(handle, password: string): Session =
     if c != nil:
       try: c.close() except CatchableError: discard
 
-proc saslResponse*(s: Session, nonce: string): string =
-  ## The base64url SASL payload, for either kind freeq takes.
-  ##
-  ## A pds-session carries the PDS token, the DID it belongs to, its PDS, and
-  ## the server's own nonce echoed back so the token cannot be replayed at
-  ## another server. A web-token from the broker carries only the token — the
-  ## server looks the DID up in its own store, which is why the field is sent
-  ## empty rather than guessed at.
-  case s.kind
-  of skWebToken:
-    b64url($(%*{"did": "", "method": "web-token", "signature": s.token}))
-  else:
-    b64url($(%*{"did": s.did,
-                "signature": s.accessJwt,
-                "method": "pds-session",
-                "pds_url": s.pds,
-                "challenge_nonce": nonce}))
-
-proc nonceOf*(challenge: string): string =
-  ## The nonce out of the server's AUTHENTICATE challenge, which is a
-  ## base64url JSON object.
-  let raw = b64urlDecode(challenge)
-  if raw.len == 0: return ""
-  try: parseJson(raw){"nonce"}.getStr() except CatchableError: ""

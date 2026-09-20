@@ -5,7 +5,7 @@
 ## say back — so it answers with lines and the caller writes them.
 
 import std/[sets, strutils]
-import frq/[ircparse, atproto, msgsig]
+import frq/[ircparse, atprotocore, msgsig]
 
 const
   saslChunk* = 100_000
