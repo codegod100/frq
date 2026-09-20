@@ -18,9 +18,9 @@
 ## The Clojure has a fetch seam here because the two compilers disagreed about
 ## HTTP. Nim has one client, so the seam is gone and `fetch` simply asks.
 
-import std/[exitprocs, json, strutils, tables]
+import std/[json, strutils, tables]
 from std/unicode import runeLen, runeSubStr
-import frq/[atproto, trace]
+
 
 type
   ProfileStatus* = enum
@@ -113,110 +113,18 @@ proc parseProfile*(body: JsonNode): Profile =
           follows: body{"followsCount"}.getInt(),
           posts: body{"postsCount"}.getInt())
 
+proc remember*(actor: string, p: Profile) =
+  ## Put a profile in the cache. For `profilefetch`, which is the only thing
+  ## that has one to put — the cache lives here because this is the side the
+  ## screens read, and a screen must never reach the side that fetches.
+  cache[actor] = p
+
+proc known*(actor: string): bool = cache.hasKey(actor)
+
 proc entry*(actor: string): (Profile, bool) =
   ## What is known about this person right now, and whether anything is.
   if cache.hasKey(actor): (cache[actor], true)
   else: (Profile(), false)
-
-proc fetch*(actor: string) =
-  ## Ensure this person's profile is on its way.
-  ##
-  ## Blocking, and called from the reducer — which is the one place in this
-  ## program that can afford it: the render path must not, and the socket
-  ## threads have their own work. A profile is opened by a press, so the
-  ## reader is already waiting.
-  if actor.len == 0 or cache.hasKey(actor): return
-  cache[actor] = Profile(status: psLoading)
-  try:
-    let body = getProfile(actor)
-    cache[actor] = if body{"did"}.getStr().len > 0: parseProfile(body)
-                   else: Profile(status: psFailed)
-  except CatchableError as e:
-    trace("profile", "could not fetch " & actor & ": " & e.msg)
-    cache[actor] = Profile(status: psFailed)
-
-# ------------------------------------------------------------ in the background
-
-# Faces are wanted for everyone in a room at once, and a profile is an HTTPS
-# round trip each. Blocking was affordable for the panel — a reader presses a
-# face and waits — and is not affordable for a room of twelve, on the thread
-# that also answers every keystroke.
-#
-# So: a worker takes actors off one channel and puts answers on another, and
-# `collect` folds them into the cache on the thread that owns it. The cache
-# itself is never touched from two threads; only the channels are.
-
-var
-  requests: Channel[string]
-  answers: Channel[string]   ## "<actor>\x1f<json>", the json empty on failure
-  fetcher: Thread[void]
-  fetching: bool
-
-var stopping: bool
-
-proc fetcherBody() {.thread.} =
-  {.gcsafe.}:
-    while true:
-      let actor = requests.recv()
-      if actor.len == 0 or stopping: break
-      var body = ""
-      try:
-        body = $getProfile(actor)
-      except CatchableError as e:
-        trace("profile", "could not fetch " & actor & ": " & e.msg)
-      answers.send(actor & "\x1f" & body)
-
-proc want*(actor: string) =
-  ## Ask for a profile, without waiting for it.
-  ##
-  ## Once per identity for the run: `psLoading` goes in the cache here, so a
-  ## second ask for the same person while the first is in flight is not a
-  ## second round trip.
-  if actor.len == 0 or cache.hasKey(actor) or isAgent(actor): return
-  cache[actor] = Profile(status: psLoading)
-  if not fetching:
-    fetching = true
-    createThread(fetcher, fetcherBody)
-  requests.send(actor)
-
-proc stopFetching() =
-  ## Stop the worker and wait for it, at exit.
-  ##
-  ## Not tidiness: a thread that is still running when the process tears down
-  ## is a thread calling `newContext` after OpenSSL has been unloaded under
-  ## it, which is a SIGSEGV inside `net.newContext` reported against whatever
-  ## ran last. The test suite found it the first time this landed.
-  ##
-  ## The sentinel is an empty actor. A request already in flight finishes
-  ## first — at worst the HTTP timeout, and in practice the round trip that
-  ## was already nearly done.
-  if not fetching: return
-  stopping = true
-  requests.send("")
-  joinThread(fetcher)
-  fetching = false
-
-addExitProc(stopFetching)
-
-proc collect*(): bool =
-  ## Fold whatever has come back into the cache. True where anything did, so
-  ## a caller knows the screen has something new on it.
-  while true:
-    let (ok, msg) = answers.tryRecv()
-    if not ok: break
-    let sep = msg.find('\x1f')
-    if sep < 0: continue
-    let actor = msg[0 ..< sep]
-    let body = msg[sep + 1 .. ^1]
-    cache[actor] =
-      if body.len == 0: Profile(status: psFailed)
-      else:
-        try:
-          let j = parseJson(body)
-          if j{"did"}.getStr().len > 0: parseProfile(j)
-          else: Profile(status: psFailed)
-        except CatchableError: Profile(status: psFailed)
-    result = true
 
 proc avatarFor*(actor: string, alsoKnownAs = ""): string =
   ## The face to paint for this identity, or "" where there is not one yet.
@@ -266,5 +174,3 @@ proc truncate*(s: string, max: int): string =
   let t = s.strip()
   if t.runeLen <= max: t else: t.runeSubStr(0, max - 1) & "…"
 
-requests.open()
-answers.open()

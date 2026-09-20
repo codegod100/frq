@@ -14,7 +14,8 @@
 import std/[json, options, sequtils, strutils, tables]
 import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
-           atproto, handshake, textruns, members, msgsig, profile, store]
+           atproto, handshake, textruns, members, msgsig, profile, store,
+           profilefetch]
 import frq/conn as tr
 import frq/oauth as oa
 

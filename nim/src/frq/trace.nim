@@ -13,18 +13,30 @@
 ## string building — which matters because the argument to a trace call is
 ## usually the expensive part.
 
-import std/[os, strutils, times]
+import std/[strutils, times]
+when not defined(js):
+  import std/os
 
-let enabled* = getEnv("FRQ_TRACE").len > 0 and getEnv("FRQ_TRACE") != "0"
+when defined(js):
+  # No environment to read, and no stderr to write to. A web build traces
+  # through the console, and turns it on from there rather than from a
+  # variable set before the page loaded.
+  var enabled* = false
+else:
+  let enabled* = getEnv("FRQ_TRACE").len > 0 and getEnv("FRQ_TRACE") != "0"
 
 proc trace*(topic: string, msg: string) =
   ## One line: a timestamp, a topic, and the message.
   if not enabled: return
   let t = now().format("HH:mm:ss'.'fff")
-  stderr.writeLine("[frq " & t & "] " & topic.alignLeft(9) & " " & msg)
+  let line = "[frq " & t & "] " & topic.alignLeft(9) & " " & msg
+  when defined(js):
+    echo line
+  else:
+    stderr.writeLine(line)
   # Flushed every line rather than at exit: a trace lost when the process dies
   # is worth nothing, and the process dying is the case most worth tracing.
-  stderr.flushFile()
+  when not defined(js): stderr.flushFile()
 
 template traced*(topic: string, body: untyped) =
   ## For a message that costs something to build. The body is not evaluated
