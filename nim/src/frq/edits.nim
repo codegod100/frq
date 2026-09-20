@@ -39,3 +39,28 @@ proc applyEdit*(rooms: var OrderedTable[string, Room],
       r.messages[i].editIds.add revision
     result = erApplied
   rooms[room] = r
+
+proc applyDelete*(rooms: var OrderedTable[string, Room],
+                  room, msgid: string): bool =
+  ## Take a line out of the buffer it was said in.
+  ##
+  ## freeq's delete is soft on its side — a `deleted_at` on the row — but
+  ## what it means to a reader is that the line is gone: the server leaves it
+  ## out of CHATHISTORY and out of a JOIN replay, so a buffer that kept it
+  ## would be the only place it still existed, and only until a reconnect.
+  ##
+  ## Unlike `applyEdit` this does not check the nick, and the difference is
+  ## in what the two relays could do. A forged edit puts words in somebody's
+  ## mouth; a forged delete takes words away, and the server has already
+  ## refused any delete whose actor was neither the author nor an op —
+  ## `AUTHOR_MISMATCH`. Checking authorship here would only disagree with it
+  ## in the one case it is right and we cannot see: an op clearing up. The
+  ## line would sit on screen, deleted everywhere else.
+  if room.len == 0 or msgid.len == 0: return false
+  if not rooms.hasKey(room): return false
+  var r = rooms[room]
+  let i = r.indexById(msgid)
+  if i < 0: return false
+  r.messages.delete(i)
+  rooms[room] = r
+  true

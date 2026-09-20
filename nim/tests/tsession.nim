@@ -9,7 +9,7 @@
 ## `conn.feed` puts a line in as though the server had sent it; `tryOutbound`
 ## reads what went out. No socket at either end.
 
-import std/[json, sequtils, strutils, tables, unittest]
+import std/[json, options, sequtils, strutils, tables, unittest]
 import frq/[cells, model, profile, reducer, rooms]
 import frq/conn as tr
 
@@ -332,3 +332,51 @@ suite "sending a picture":
     dispatch(%*{"id": "attachment.failed:Upload failed (413)"})
     check app.hasError
     check app.error == "Upload failed (413)"
+
+suite "unsending a line":
+  setup:
+    reset()
+    joined("#freeq")
+    dispatch(%*{"id": "room.open:#freeq"})
+    say(":alice!a@h PRIVMSG #freeq :@msgid=m1 something regrettable")
+    say("@msgid=m1 :alice!a@h PRIVMSG #freeq :something regrettable")
+    say("@msgid=m2 :bob!b@h PRIVMSG #freeq :and one of bob's")
+    discard sent()
+
+  test "the delete goes out as a TAGMSG naming the id":
+    # Not a PRIVMSG: there is no body, only the id of the line that should
+    # stop existing. `+draft/delete` is freeq's tag for it and the wrong one
+    # would be relayed to nobody and refused quietly.
+    dispatch(%*{"id": "edit.start:m1"})
+    dispatch(%*{"id": "edit.delete"})
+    let out1 = sent()
+    check out1.len == 1
+    check "+draft/delete=m1" in out1[0]
+    check " TAGMSG #freeq" in out1[0]
+
+  test "and the line goes, without waiting for the echo":
+    dispatch(%*{"id": "edit.start:m1"})
+    dispatch(%*{"id": "edit.delete"})
+    check app.rooms["#freeq"].messageById("m1").isNone
+    check app.rooms["#freeq"].messageById("m2").isSome
+
+  test "and edit mode is over":
+    dispatch(%*{"id": "edit.start:m1"})
+    check app.editing.has
+    check app.draft.len > 0
+    dispatch(%*{"id": "edit.delete"})
+    check not app.editing.has
+    check app.draft == ""
+
+  test "somebody else's delete takes their line too":
+    # The relayed TAGMSG, which is how every other client hears of this —
+    # and how an op clearing up reaches us. There was no TAGMSG case at all,
+    # so the line stayed on screen until a reconnect dropped it.
+    say("@msgid=x :bob!b@h TAGMSG #freeq")   # no delete tag: nothing happens
+    check app.rooms["#freeq"].messageById("m2").isSome
+    say("@+draft/delete=m2;msgid=x :bob!b@h TAGMSG #freeq")
+    check app.rooms["#freeq"].messageById("m2").isNone
+
+  test "a delete for a line we never had is not an error":
+    say("@+draft/delete=nope :bob!b@h TAGMSG #freeq")
+    check not app.hasError

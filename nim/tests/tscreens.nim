@@ -357,3 +357,31 @@ suite "the sender's row":
     check senderRows[0].props{"wrap"}.getBool()
     check not senderRows[0].children.anyIt(
       it.tag == "button" and it.props{"expand"}.getBool())
+
+suite "the editing banner":
+  setup:
+    var s = initState()
+    s.formNick = "me"
+    s.current = "#test"
+    s.rooms.ensureRoom("#test")
+    var r = s.rooms["#test"]
+    r.messages = @[Message(id: "1", frm: "me", text: "regrettable", at: 1)]
+    s.rooms["#test"] = r
+
+  test "offers no delete when nothing is being edited":
+    let t = cht.chatScreen(s, true)
+    check "edit.delete" notin t.find("button").mapIt(
+      it.props{"onClick"}.getStr())
+
+  test "but does while a line is open for editing":
+    # The moment a reader is already looking at one line and deciding what
+    # to do with it is the moment to offer the other thing they might want.
+    s.editing = EditTarget(has: true, room: "#test", id: "1")
+    let t = cht.chatScreen(s, true)
+    let b = t.find("button").filterIt(
+      it.props{"onClick"}.getStr() == "edit.delete")
+    check b.len == 1
+    check b[0].props{"label"}.getStr() == "Delete"
+    # Deleting is not undoable — freeq leaves the line out of history — so
+    # it should not look like the cancel beside it.
+    check b[0].props{"kind"}.getStr() == "destructive"

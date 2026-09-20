@@ -533,7 +533,13 @@ proc chatScreen*(s: State, connected: bool): Node =
     editing.children.add hbox(%*{"spacing": 8},
       emoji("📝", ""),
       dimLabel("Editing your message"),
-      button("✕", "edit.cancel"))
+      button("✕", "edit.cancel"),
+      # Rewriting and unsending are the same decision taken two ways, and
+      # this is the moment a reader is already looking at the line and
+      # deciding what to do with it. `destructive` because it is: freeq
+      # leaves a deleted line out of history, so there is nothing to undo
+      # it with.
+      button("Delete", "edit.delete", "destructive"))
   banners.children.add editing
 
   var attach = vbox(%*{"key": "attachment"})

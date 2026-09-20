@@ -15,7 +15,7 @@ import std/[json, options, sequtils, strutils, tables]
 import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
            atproto, handshake, textruns, members, msgsig, profile, store,
-           profilefetch]
+           profilefetch, edits]
 import frq/conn as tr
 import frq/oauth as oa
 
@@ -590,6 +590,31 @@ proc dispatch*(event: JsonNode) =
     app.editing = EditTarget()
     app.draft = ""
 
+  of "edit.delete":
+    # Unsending, which freeq carries as a TAGMSG rather than a message:
+    # there is no body, only the id of the line that should stop existing.
+    #
+    # Signed like a reaction and for the same reason -- it is a mutation of
+    # somebody's record, and freeq refuses an unsigned one from an account.
+    # `subject` is what is being deleted and there is no emoji, which is
+    # exactly the document `chat-signing-vectors.json` freezes under the
+    # name `delete`.
+    let mid = if arg.len > 0: arg else: app.editing.id
+    if mid.len > 0:
+      var tags = "+draft/delete=" & mid
+      for k, v in mutationTags("delete", app.current, mid, "",
+                               peerDid(app.currentRoom, app.formNick),
+                               nowMs()):
+        tags.add ";" & k & "=" & v
+      send("@" & tags & " TAGMSG " & app.current)
+      # Taken off the screen now rather than when the echo lands. The server
+      # relays the TAGMSG back and `TAGMSG` below would remove it again, to
+      # no effect -- but a reader who has just pressed Delete should not
+      # watch the line sit there while a round trip happens.
+      discard app.rooms.applyDelete(app.current, mid)
+    app.editing = EditTarget()
+    app.draft = ""
+
   of "image.pick":
     # Picking a file and uploading it are both the host's: a file dialog is
     # the platform's, and so is a multipart POST. The core says who is asking
@@ -896,6 +921,22 @@ proc drain*() =
         let (tally, hasTally) = tagValue(p.tags, "+freeq.at/reacts")
         if hasTally: m.reactions = parseTally(tally)
         note(room, m)
+
+    of "TAGMSG":
+      # A message with tags and nothing said. freeq carries deletes on one,
+      # and relays it to the channel -- so this arrives both for our own
+      # delete and for everybody else's, including an op's.
+      #
+      # Reactions ride a TAGMSG too and are not handled here: they arrive
+      # again as a tally on the next CHATHISTORY, which is the only reason
+      # their absence has gone unnoticed. A delete has no such second
+      # chance, because the whole point is that the line stops being sent.
+      if p.params.len >= 1:
+        let (gone, isDelete) = tagValue(p.tags, "+draft/delete")
+        if isDelete and gone.len > 0:
+          let target = p.params[0]
+          let room = if target.startsWith("#"): target else: nickOf(p.prefix)
+          discard app.rooms.applyDelete(room, gone)
 
     of "JOIN":
       if p.params.len >= 1:
