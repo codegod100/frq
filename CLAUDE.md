@@ -84,16 +84,26 @@ point: the whole boundary is checkable in about a second.
 
 There is no `common/` any more, and that rule went with it. It said a module
 stays until there is a wasm build of the core, because a browser has no
-dart:ffi — which was true, and the web target is gone rather than the rule
-being wrong. Bringing it back means compiling the core to wasm, not restoring
-ClojureDart.
+dart:ffi. The premise was right and the conclusion was wrong: the answer was
+not wasm but `nim js`, which compiles the same core — state, reducer, every
+screen — to JavaScript that a page loads with a `<script>` tag.
+
+So there is a web target again, `just build web`. What differs from the
+desktop is only the host: `nim/web/frq/*.nim` shadows `nim/src/frq/*.nim` by
+search path (`--path:src --path:web`, later wins), so `frq/conn` is a queue a
+WebSocket fills rather than two socket threads, `frq/store` is localStorage,
+and `frq/crypto` says plainly that it cannot sign. The shared code above them
+imports the same names either way and never learns which host it is on. Dart
+does the same thing one layer up, in `dart/frq_core/lib/src/host.dart`.
 
 ## The source trees
 
 ```
-nim/           the program: state, screens, IRC, signing
-dart/frq_core  the FFI binding — plain Dart, not a Flutter package
+nim/src        the program: state, screens, IRC, signing
+nim/web        the same program's host half, for a browser
+dart/frq_core  the binding — plain Dart, not a Flutter package
 flutter/lib    the renderer, and the app's entry point
+flutter/web    the page, and the JavaScript that owns the socket
 ```
 
 `nim/src/frq/ui.nim` builds a widget tree; `frq_core` carries it across the
@@ -104,9 +114,17 @@ the boundary is in the wrong place.
 
 There used to be two more trees. `src/` was jolt and libcosmic; `common/` and
 `flutter/src/` were ClojureDart, compiled for Android, Linux and the web. Both
-are gone, and with the second went the APK and the web target: a browser has
-no `dart:ffi`, and the APK wants `libfrqcore.so` cross-compiled for Android's
-ABIs. What is left builds one thing, `just build desktop`.
+are gone. The APK went with them and has not come back — it wants
+`libfrqcore.so` cross-compiled for Android's ABIs — but the web target has,
+by a different road than the one that was expected: `just build web`.
+
+Three things the web build does not do, all of them written down where they
+are done rather than only here. It cannot sign a message, because Ed25519 in
+a browser is asynchronous and every signature here is wanted inline, so a
+reader is in a guest's position for reactions and edits. It has no
+app-password tab, because that wants a blocking call to the reader's own PDS.
+And it does not keep a broker token, because `localStorage` is readable by
+every script the origin runs.
 
 Two modules were never ported and are gone rather than moved: `frq.profile`
 (the Bluesky profile behind a nick) and `frq.replies` (asking freeq what a

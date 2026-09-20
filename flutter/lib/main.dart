@@ -12,12 +12,12 @@
 /// `nim/README.md` for what is done and what is not.
 library;
 
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:frq_core/frq_core.dart' as core;
 
 import 'nim_renderer.dart';
+import 'src/host.dart' as host;
 
 void main() {
   // FRQ_AUTOCONNECT presses Connect at startup, and FRQ_NICK overrides the
@@ -29,10 +29,10 @@ void main() {
   // button uses. It lived in `currentTree()` before, which meant the function
   // whose job is "serialise the current screen" opened a socket on its first
   // call depending on the process environment.
-  final env = Platform.environment;
-  final want = env['FRQ_AUTOCONNECT'] ?? '';
+  // There is no environment in a browser, so this is simply never on there.
+  final want = host.envOr('FRQ_AUTOCONNECT', '');
   if (want.isNotEmpty && want != '0') {
-    final nick = env['FRQ_NICK'] ?? '';
+    final nick = host.envOr('FRQ_NICK', '');
     if (nick.isNotEmpty) core.dispatch('nick.change', nick);
     core.dispatch('connect');
   }

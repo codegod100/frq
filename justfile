@@ -40,23 +40,27 @@ tools *args:
 # Build a target.
 #
 #   desktop    the app: Nim owns the state and the screens, Flutter paints
+#   web        the same, in a browser: the core compiled by `nim js`, the
+#              socket a WebSocket to freeq's own bridge, Flutter painting
 #   lib        the Nim core alone, as build/nim/libfrqcore.so
+#   core-js    the core alone, as build/web/frq_core.js
 #
 # There were four more. `apk` and `web` compiled ClojureDart and went with it:
 # the web target cannot come back without a wasm build of the core, since a
 # browser has no dart:ffi, and the APK wants libfrqcore.so cross-compiled for
 # Android's ABIs. `ui` and `app` were the two halves of the migration, and
 # there is one app now.
-[doc('build a target: desktop lib')]
+[doc('build a target: desktop web lib core-js')]
 build target="desktop":
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{root}}"
     case "{{target}}" in
         desktop) just _flutter desktop build ;;
+        web)     just _web-bundle ;;
         lib)     just _nim-lib ;;
         core-js) just _nim-js ;;
-        *)       echo "usage: just build [desktop|lib|core-js]" >&2; exit 1 ;;
+        *)       echo "usage: just build [desktop|web|lib|core-js]" >&2; exit 1 ;;
     esac
 
 # Build a target and start it.
@@ -64,14 +68,17 @@ build target="desktop":
 #   FRQ_TRACE=1        every line in and out, both languages in one log
 #   FRQ_AUTOCONNECT=1  press Connect at startup, for a window a script cannot
 #                      click; FRQ_NICK overrides the nickname
-[doc('build the app and start it')]
+[doc('build the app and start it: desktop web')]
 run target="desktop":
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{root}}"
     case "{{target}}" in
         desktop) just _flutter desktop run ;;
-        *)       echo "usage: just run [desktop]" >&2; exit 1 ;;
+        web)     just _web-bundle
+                 echo "serving build/web on http://localhost:8000"
+                 exec python3 -m http.server 8000 --directory build/web ;;
+        *)       echo "usage: just run [desktop|web]" >&2; exit 1 ;;
     esac
 
 # Test a suite.
@@ -136,6 +143,27 @@ modal container="dev" *args:
 # module under `nim/web/frq` shadows the one beside it in `nim/src/frq`, so
 # `frq/conn` is a queue the host fills rather than two socket threads, and the
 # shared code above them never learns which host it is on.
+# The web bundle: the core as JavaScript, and Flutter around it.
+#
+# The core goes into `flutter/web/` rather than being copied afterwards,
+# because `flutter build web` copies that directory into the bundle — so the
+# page's `<script src="frq_core.js">` resolves the same in a dev server as it
+# does in the built output.
+[private]
+_web-bundle:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{root}}"
+    just _nim-js
+    cp build/web/frq_core.js flutter/web/frq_core.js
+    exec "{{tc}}" exec -- bash -euo pipefail -c '
+        cd flutter
+        flutter pub get
+        flutter build web
+        rm -rf ../build/web
+        cp -r build/web ../build/web
+        echo "built build/web"'
+
 [private]
 _nim-js:
     #!/usr/bin/env bash

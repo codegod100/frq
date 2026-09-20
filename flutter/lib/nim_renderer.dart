@@ -11,12 +11,12 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 
 import 'package:flutter/material.dart';
 import 'package:frq_core/frq_core.dart' as core;
+import 'src/host.dart' as host;
 
 import 'nim_theme.dart' as t;
 
@@ -165,16 +165,10 @@ class _NimAppState extends State<NimApp> {
   ///
   /// A family list rather than one name, because the font that has them
   /// differs by platform, and a name nothing matches costs nothing.
-  static const List<String> _emojiFonts = <String>[
-    'Noto Color Emoji',      // Linux, Android
-    'Apple Color Emoji',     // macOS, iOS
-    'Segoe UI Emoji',        // Windows
-  ];
-
   TextStyle _emojiStyle(double size) => TextStyle(
         fontSize: size,
-        fontFamily: _emojiFonts.first,
-        fontFamilyFallback: _emojiFonts,
+        fontFamily: host.emojiFonts.isEmpty ? null : host.emojiFonts.first,
+        fontFamilyFallback: host.emojiFonts.isEmpty ? null : host.emojiFonts,
       );
 
   double _d(dynamic v, double fallback) =>
@@ -203,7 +197,7 @@ class _NimAppState extends State<NimApp> {
     if (src.startsWith('http://') || src.startsWith('https://')) {
       return NetworkImage(src);
     }
-    return FileImage(File(src));
+    return host.localImage(src);
   }
 
   Widget _wrapTap(String onClick, Widget child, {BorderRadius? radius}) {
@@ -610,20 +604,27 @@ class _NimAppState extends State<NimApp> {
       case 'avatar':
         {
           final size = _d(n.props['size'], 32);
-          final provider = _imageProvider(n.prop('url', ''));
+          final url = n.prop('url', '');
           final fallback = n.prop('fallback', '');
+          final initial = Text(
+              fallback.isNotEmpty ? fallback.substring(0, 1).toUpperCase() : '?',
+              style: _style(t.textBody, t.onBg));
+          // Through the host rather than as a `backgroundImage`: on the web a
+          // face is an <img> the browser fetches, which is the only kind CORS
+          // lets through, and an element cannot be a decoration.
           final face = CircleAvatar(
             radius: size / 2,
             backgroundColor: t.component,
-            backgroundImage: provider,
-            onBackgroundImageError: provider == null ? null : (_, _) {},
-            child: provider == null
-                ? Text(
-                    fallback.isNotEmpty
-                        ? fallback.substring(0, 1).toUpperCase()
-                        : '?',
-                    style: _style(t.textBody, t.onBg))
-                : null,
+            child: url.isEmpty
+                ? initial
+                : ClipOval(
+                    child: SizedBox(
+                      width: size,
+                      height: size,
+                      child: host.networkImage(url,
+                          fit: BoxFit.cover, onError: () => initial),
+                    ),
+                  ),
           );
           final onClick = n.prop('onClick', '');
           if (onClick.isEmpty) return face;
@@ -636,19 +637,26 @@ class _NimAppState extends State<NimApp> {
 
       case 'image':
         {
-          final provider = _imageProvider(n.prop('src', ''));
-          if (provider == null) return const SizedBox.shrink();
+          final src = n.prop('src', '');
+          if (src.isEmpty) return const SizedBox.shrink();
           final maxW = _d(n.props['maxWidth'], 0);
           final maxH = _d(n.props['maxHeight'], 0);
-          Widget img = Image(
-            image: provider,
-            fit: BoxFit.contain,
-            // A half-written cache file, or one deleted under us: the decoder
-            // throws during the build, and an exception in a build is a red
-            // screen for the whole conversation rather than a gap where one
-            // picture was.
-            errorBuilder: (_, _, _) => const SizedBox.shrink(),
-          );
+          // A half-written cache file, or one deleted under us: the decoder
+          // throws during the build, and an exception in a build is a red
+          // screen for the whole conversation rather than a gap where one
+          // picture was.
+          Widget img;
+          if (src.startsWith('http://') || src.startsWith('https://')) {
+            img = host.networkImage(src);
+          } else {
+            final provider = _imageProvider(src);
+            if (provider == null) return const SizedBox.shrink();
+            img = Image(
+              image: provider,
+              fit: BoxFit.contain,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            );
+          }
           if (maxW > 0 || maxH > 0) {
             img = ConstrainedBox(
               constraints: BoxConstraints(

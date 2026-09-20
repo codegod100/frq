@@ -34,3 +34,4 @@ __pycache__/
 
 # The mirror `just serve` keeps of the Modal-built web bundle.
 .web-local/
+flutter/web/frq_core.js

@@ -27,12 +27,17 @@
   <link rel="manifest" href="manifest.json">
 
   <!--
-    WebCrypto for the OAuth client, loaded before the bundle so it is there
-    the moment ClojureDart asks. Not `async`: `frq.dpop.web` calls into it
-    during sign-in, and a helper that might not have parsed yet is a race
-    nobody would enjoy debugging.
+    The core, and the half of the web build that owns the I/O. Both before
+    the bundle and neither `async`: Flutter reaches `globalThis.frq` as soon
+    as it starts, and a core that might not have parsed yet is a race nobody
+    would enjoy debugging.
+
+    This is where the ClojureDart build loaded `frq_dpop.js`, a WebCrypto
+    helper for an OAuth client written in Dart. The broker does that work
+    now, and the client asking for it is Nim.
   -->
-  <script src="frq_dpop.js"></script>
+  <script src="frq_core.js"></script>
+  <script src="frq_host.js"></script>
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>

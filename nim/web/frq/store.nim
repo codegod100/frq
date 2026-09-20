@@ -54,18 +54,25 @@ proc readJson(key: string): JsonNode =
     nil
 
 proc loadSession*(): (SavedSession, bool) =
+  ## No session is remembered here, and that is a decision rather than a gap.
+  ##
+  ## The desktop writes the broker token to a file only its owner can read.
+  ## `localStorage` has no such thing: it is readable by every script this
+  ## origin ever runs, and a durable credential sitting there is one
+  ## cross-site script away from being somebody else's. A page can afford to
+  ## ask the broker again — and usually the broker still knows the reader, so
+  ## asking is a redirect and back rather than a login.
+  ##
+  ## The handle is kept, so the connect screen opens with the right name in
+  ## it. That is not a credential.
   let j = readJson(sessionKey)
   if j.isNil: return (SavedSession(), false)
-  let s = SavedSession(brokerToken: j{"brokerToken"}.getStr(),
-                       handle: j{"handle"}.getStr(),
-                       did: j{"did"}.getStr(),
-                       nick: j{"nick"}.getStr())
-  (s, s.brokerToken.len > 0)
+  (SavedSession(handle: j{"handle"}.getStr(), nick: j{"nick"}.getStr()), false)
 
 proc saveSession*(s: SavedSession): bool =
+  ## The handle and the nick, and deliberately not the token; see above.
   setItem(sessionKey.cstring,
-          ($(%*{"brokerToken": s.brokerToken, "handle": s.handle,
-                "did": s.did, "nick": s.nick})).cstring)
+          ($(%*{"handle": s.handle, "nick": s.nick})).cstring)
 
 proc clearSession*() = delItem(sessionKey.cstring)
 
