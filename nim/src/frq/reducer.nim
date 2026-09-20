@@ -228,14 +228,24 @@ proc signIn(): bool =
       app.status = "Refreshing your sign-in…"
       adoptTokens(oa.refreshSession(oa.defaultBroker, app.brokerToken))
       true
-    except CatchableError as e:
-      # A token the broker no longer honours is worse than none: every
-      # Connect would spend a round trip failing the same way. Dropped, and
-      # the next press opens the browser.
-      trace("oauth", "refresh failed: " & e.msg)
+    except oa.OauthError as e:
+      # The broker itself saying no. A token it no longer honours is worse
+      # than none — every Connect would spend a round trip failing the same
+      # way — so it goes, and the next press opens the browser.
+      trace("oauth", "refresh refused: " & e.msg)
       app.brokerToken = ""
       clearSession()
       setError(e.msg)
+      app.connecting = false
+      false
+    except CatchableError as e:
+      # Anything else is the network, not the answer: a name that did not
+      # resolve, a connection that did not open, a syscall a signal cut
+      # short. The token is still good and is kept — throwing it away here
+      # meant a dropped wifi or a stray SIGPROF cost the reader their saved
+      # sign-in and sent them back to a browser.
+      trace("oauth", "refresh failed: " & e.msg)
+      setError("Could not reach the broker — " & e.msg)
       app.connecting = false
       false
 

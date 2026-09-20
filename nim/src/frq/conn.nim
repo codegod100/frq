@@ -75,12 +75,24 @@ proc readerBody(cfg: ConnConfig) {.thread.} =
     try:
       trace("conn", "dialling " & cfg.host & ":" & $cfg.port &
                     (if cfg.tls: " over TLS" else: " plain"))
-      var sock = newSocket(buffered = true)
-      if cfg.tls:
-        # CVerifyPeer: this carries a nick and, once SASL is wired, a token.
-        let ctx = newContext(verifyMode = CVerifyPeer)
-        ctx.wrapSocket(sock)
-      sock.connect(cfg.host, Port(cfg.port))
+      # Dialling is the first blocking call a connection makes and the one
+      # most likely to be cut short: a DNS lookup, a TCP connect and a TLS
+      # handshake, all of them interruptible, all of them before anything has
+      # been read. `⚠ Interrupted system call` on pressing Connect was this.
+      #
+      # The whole setup is inside the retry rather than the connect alone: a
+      # socket that failed part way through cannot be dialled again, so each
+      # attempt starts with a new one and closes the last.
+      var sock: Socket
+      retrying 3:
+        if not sock.isNil:
+          try: sock.close() except CatchableError: discard
+        sock = newSocket(buffered = true)
+        if cfg.tls:
+          # CVerifyPeer: this carries a nick and a token.
+          let ctx = newContext(verifyMode = CVerifyPeer)
+          ctx.wrapSocket(sock)
+        sock.connect(cfg.host, Port(cfg.port))
       shared = sock
       createThread(writer, writerBody, 0)
       events.send("open")
@@ -105,8 +117,13 @@ proc readerBody(cfg: ConnConfig) {.thread.} =
         inbound.send(line)
 
     except CatchableError as e:
+      # Named for what failed. Every error out of this thread used to arrive
+      # on the connect screen as a bare OS message — "Interrupted system
+      # call" on its own says nothing about which call, and it took two
+      # rounds of guessing to find out.
       trace("conn", "!! " & e.msg)
-      events.send("error: " & e.msg)
+      events.send("error: Could not reach " & cfg.host & ":" & $cfg.port &
+                  " — " & e.msg)
     finally:
       running = false
       # Unblock the writer, which is sitting in `outbound.recv()`.
