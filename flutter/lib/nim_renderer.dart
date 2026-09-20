@@ -507,7 +507,7 @@ class _NimAppState extends State<NimApp> {
 
       // Container::Card in the Clojure: padding 12, fills its width.
       case 'card':
-        return Container(
+        final card = Container(
           width: double.infinity,
           margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
           padding: const EdgeInsets.all(t.spaceXs),
@@ -519,6 +519,20 @@ class _NimAppState extends State<NimApp> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: _spaced(kids, spacing > 0 ? spacing : t.spaceXxs,
                   vertical: true)),
+        );
+        // A card that is itself the control. Where every line in a list goes
+        // to the same place, a button on each one is a small target beside a
+        // large inert thing -- and on a phone the button is what wraps onto
+        // a row of its own. The whole card takes the press instead.
+        final tap = n.prop('onClick', '');
+        if (tap.isEmpty) return card;
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => _send(tap),
+            borderRadius: BorderRadius.circular(t.radiusS),
+            child: card,
+          ),
         );
 
       case 'title':
@@ -553,7 +567,15 @@ class _NimAppState extends State<NimApp> {
       /// wraps. Kept apart from `label` because a wrapping label in a row
       /// lays out against the row's width rather than the column's.
       case 'text':
-        return Text(n.prop('text', ''), style: _style(t.textBody, t.onBg));
+        // `lines` clamps to that many and ellipsises. A character count
+        // cannot do this job: how much fits on a line is a fact about the
+        // font and the width, and the two disagree — in a widget test the
+        // same 96 characters take five lines where a phone gives them two.
+        final lines = n.prop('lines', 0);
+        return Text(n.prop('text', ''),
+            maxLines: lines > 0 ? lines : null,
+            overflow: lines > 0 ? TextOverflow.ellipsis : TextOverflow.clip,
+            style: _style(t.textBody, t.onBg));
 
       case 'link':
         {

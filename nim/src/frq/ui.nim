@@ -56,6 +56,10 @@ func hbox*(props: JsonNode, children: varargs[Node]): Node =
   n("hbox", props, @children)
 func card*(children: varargs[Node]): Node =
   n("card", newJObject(), @children)
+func card*(props: JsonNode, children: varargs[Node]): Node =
+  ## A card with props — `onClick` makes the whole card the control, for a
+  ## list whose every line goes somewhere.
+  n("card", props, @children)
 func page*(props: JsonNode, children: varargs[Node]): Node =
   n("page", props, @children)
 
@@ -118,9 +122,14 @@ func paragraph*(children: varargs[Node]): Node =
   ## contradiction before every row it drew.
   n("paragraph", newJObject(), @children)
 
-func text*(body: string): Node =
+func text*(body: string, lines = 0): Node =
   ## Prose, as opposed to a `label`: wraps, and is the thing a message is.
-  n("text", %*{"text": body})
+  ##
+  ## `lines` caps how many it may take, ellipsising after. Left at 0 it says
+  ## all of itself, which is what a message in a conversation does.
+  var p = %*{"text": body}
+  if lines > 0: p["lines"] = %lines
+  n("text", p)
 
 func link*(label, url: string): Node =
   n("link", %*{"label": label, "url": url})

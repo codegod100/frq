@@ -247,6 +247,24 @@ proc frq_ui_demo*() {.exportc, dynlib.} =
     # A different day, so a heading has to land between them.
     Message(id: "8", frm: "alice", text: "next day", at: t0 + 200_000_000)]
   app.rooms["#test"] = r
+
+  # Somewhere else, because the overview is about every room but this one and
+  # with a single room there was nothing for it to show. The test that laid
+  # the overview out was laying out "Nothing has happened anywhere else."
+  #
+  # Awkward on purpose, like the rest: a long bot line that has to be cut,
+  # and a short one that must not look different for it.
+  app.rooms.ensureRoom("#tasks")
+  var other = app.rooms["#tasks"]
+  other.joined = true
+  other.messages = @[
+    Message(id: "o1", frm: "freeq-bot", text: "sandbox-01: I am sandbox 1 of 50.",
+            at: t0 + 100_000),
+    Message(id: "o2", frm: "freeq-bot",
+            text: "**Result**: 50/50 announcements collected in ~12s, and the rest of a sentence that has to be cut somewhere sensible.",
+            at: t0 + 200_000)]
+  app.rooms["#tasks"] = other
+
   app.current = "#test"
   app.screen = scChat
   app.status = "Connected as me"

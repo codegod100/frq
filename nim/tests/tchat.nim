@@ -266,6 +266,18 @@ suite "the overview":
       .anyIt("hello" in it.props{"text"}.getStr() and
              it.props{"text"}.getStr() != "hello")
 
+  test "each line is a card that is itself the way there":
+    # It used to be a row ending in a "→" button. In a Wrap on a phone the
+    # button landed on a line of its own, so every entry cost three rows and
+    # the smallest thing on screen was the only part that could be pressed.
+    app.overview = true
+    let t = cs.chatScreen(app, true)
+    check "→" notin t.labels("button")
+    let cards = t.find("card").filterIt(
+      it.props{"onClick"}.getStr().startsWith("overview.goto:"))
+    check cards.len == 1
+    check cards[0].props{"onClick"}.getStr() == "overview.goto:#other:o1"
+
   test "an empty one says so":
     var lonely = withRoom()
     lonely.overview = true

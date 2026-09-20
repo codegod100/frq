@@ -232,8 +232,14 @@ void main() {
       core.demoUi();
       core.dispatch('screen.chats');
       await layOut(tester, sizes['desktop']!);
-      // The row's "Open", not its name: the name is a label in this list.
-      await tester.tap(find.text('Open').first);
+      // The row's "Open", not its name: the name is a label in this list —
+      // and the Open belonging to #test, not whichever card is first. There
+      // is more than one room in the demo now, and `.first` was a fact about
+      // the order they happen to come back in.
+      final card = find
+          .ancestor(of: find.text('#test'), matching: find.byType(Container))
+          .last;
+      await tester.tap(find.descendant(of: card, matching: find.text('Open')));
       await tester.pump();
       expect(find.text('hello there'), findsWidgets,
           reason: 'tapping the room did not open it');
@@ -531,6 +537,61 @@ void main() {
       expect(overview.top, back.top, reason: 'a long name pushed Overview off');
       expect(overview.right, lessThanOrEqualTo(sizes['phone']!.width));
       expectLaidOut(tester, 'a long room name');
+    });
+  });
+
+  group('the overview on a phone', () {
+    testWidgets('an entry is two lines, not three', (tester) async {
+      // The complaint, measured. Each entry was [room, sender, text, →] in a
+      // Wrap: on a phone the arrow wrapped to a row of its own, so an entry
+      // stood about three lines tall and most of that was a button. Counting
+      // rows is unreliable across themes; the height of one entry is not.
+      core.demoUi();
+      core.dispatch('overview.toggle');
+      await layOut(tester, sizes['phone']!);
+
+      // The entry carrying a known line, found by what is in it rather than
+      // by position among every InkWell on the screen.
+      final entry = find
+          .ancestor(
+              of: find.textContaining('sandbox-01'),
+              matching: find.byType(InkWell))
+          .first;
+      expect(entry, findsOneWidget, reason: 'the entry is not tappable');
+
+      final h = tester.getRect(entry).height;
+      expect(h, lessThan(96),
+          reason: 'an overview entry is $h tall — three lines of furniture');
+
+      // The long one, which is what the complaint was actually about: a bot
+      // line runs for paragraphs and a summary of it must still be an entry
+      // in a list rather than a page of its own.
+      final long = find
+          .ancestor(
+              of: find.textContaining('Result'), matching: find.byType(InkWell))
+          .first;
+      final lh = tester.getRect(long).height;
+      // 167 before the text was clamped, and the clamp is what holds this:
+      // a character cap cannot, because it is the font and the width that
+      // decide how many lines 96 characters become.
+      expect(lh, lessThan(110),
+          reason: 'a long line makes a $lh-tall entry');
+      expectLaidOut(tester, 'the overview on a phone');
+    });
+
+    testWidgets('and the whole entry is the control, not an arrow',
+        (tester) async {
+      core.demoUi();
+      core.dispatch('overview.toggle');
+      await layOut(tester, sizes['phone']!);
+      // Scoped to the overview: a `→` also jumps to the line a reply
+      // answers, up in the backlog, and that one is not this one.
+      final card = find
+          .ancestor(
+              of: find.textContaining('sandbox-01'), matching: find.byType(InkWell))
+          .first;
+      expect(find.descendant(of: card, matching: find.text('→')), findsNothing,
+          reason: 'the arrow button is back');
     });
   });
 }

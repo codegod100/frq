@@ -286,22 +286,37 @@ proc overviewPane(s: State): Node =
   ## `rooms.recentEverywhere`. Taking the newest hundred would be the strip
   ## answering about whichever room is busiest, which is the one already on
   ## screen.
-  result = card(title2("Overview"))
-  var body = vbox(%*{"spacing": 4})
+  # One card a line, and the card is the control.
+  #
+  # This was a single card holding rows of [room, sender, text, →]. In a
+  # Wrap on a phone that is three lines an entry: the sender on the first,
+  # the text on the second, and the arrow alone on a third -- a full-height
+  # button carrying no more meaning than the row it had been pushed off.
+  # Eight entries filled the screen with mostly furniture.
+  #
+  # So the arrow is gone and the whole card takes the press, which is both
+  # the larger target and the smaller thing to draw. What is left is what a
+  # reader actually skims: who said it and where, then what they said.
+  var body = vbox(%*{"spacing": 4}, title2("Overview"))
   var n = 0
   for m in recentEverywhere(s.rooms, s.current):
     if n >= overviewLines: break
     n += 1
     # Each line carries the room it was said in, since that is the one thing a
     # line taken out of its own conversation no longer says for itself.
-    body.children.add hbox(%*{"spacing": 6},
-      dimLabel(m.room),
-      label(m.frm & ":"),
-      text(summarise(m.text, 48)),
-      button("→", "overview.goto:" & m.room & ":" & rowId(m)))
+    body.children.add card(
+      %*{"onClick": "overview.goto:" & m.room & ":" & rowId(m),
+         "spacing": 2},
+      hbox(%*{"spacing": 6}, dimLabel(m.room), label(m.frm)),
+      # Two lines, and the cap is in lines rather than characters. How much
+      # fits on one is a fact about the font and the width, and a character
+      # count knows neither: 96 of them are two lines on a phone and five in
+      # a widget test. `summarise` still bounds what crosses the wire, but
+      # what a reader sees is bounded by the thing they are looking at.
+      text(summarise(m.text, 160), lines = 2))
   if n == 0:
     body.children.add dimLabel("Nothing has happened anywhere else.")
-  result.children.add body
+  result = body
 
 proc lightboxPane(s: State): Node =
   ## The picture being looked at, as large as the window allows.
