@@ -54,7 +54,7 @@ func chatsScreen*(s: State, connected: bool): Node =
   var joinRow = hbox(%*{"spacing": 8, "align": "end"},
     button(if s.joinInput.startsWith("@"): "Message" else: "Join", "join"),
     entry("join-input", s.joinInput, "#channel or @nick", "join-input.change",
-          onSubmit = "join"))
+          onSubmit = "join", verbatim = true))
 
   var searchRow = hbox(%*{"spacing": 8, "align": "end"})
   if s.search.len > 0:

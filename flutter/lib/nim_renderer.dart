@@ -888,10 +888,28 @@ class _NimAppState extends State<NimApp> {
               selection: TextSelection.collapsed(offset: value.length),
             );
           }
+          // A field holding an identifier, not a sentence.
+          //
+          // A phone keyboard is built for prose and every one of its helps
+          // is wrong here: it capitalises the first letter of a handle,
+          // suggests a word it guessed at, and -- the one that prompted
+          // this -- inserts a space after a full stop, because a full stop
+          // ends a sentence. It is also the middle of `alice.bsky.social`,
+          // and a handle with a space in it resolves to nothing.
+          //
+          // `TextInputType.url` is the layout that suits it: a full stop on
+          // the main plane and no space bar to be helpful with.
+          final verbatim = n.prop('verbatim', false);
           final field = TextField(
             controller: c,
             focusNode: _focus.putIfAbsent(key, FocusNode.new),
             style: _style(t.textBody, t.onBg),
+            autocorrect: !verbatim,
+            enableSuggestions: !verbatim,
+            textCapitalization: verbatim
+                ? TextCapitalization.none
+                : TextCapitalization.sentences,
+            keyboardType: verbatim ? TextInputType.url : null,
             decoration: InputDecoration(
               hintText: n.prop('placeholder', ''),
               hintStyle: _style(t.textBody, t.dim),

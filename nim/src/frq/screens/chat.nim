@@ -23,7 +23,7 @@ const
   faceSize = 32
   pillSize = 20
   chipGap = 4
-  overviewLines* = 8
+  overviewLines* = 40
 
   sidePanelWidth = 150
     ## What a strip beside the backlog takes. Wide enough for a room name or
@@ -297,14 +297,14 @@ proc overviewPane(s: State): Node =
   # So the arrow is gone and the whole card takes the press, which is both
   # the larger target and the smaller thing to draw. What is left is what a
   # reader actually skims: who said it and where, then what they said.
-  var body = vbox(%*{"spacing": 4}, title2("Overview"))
+  var list = vbox(%*{"spacing": 4})
   var n = 0
   for m in recentEverywhere(s.rooms, s.current):
     if n >= overviewLines: break
     n += 1
     # Each line carries the room it was said in, since that is the one thing a
     # line taken out of its own conversation no longer says for itself.
-    body.children.add card(
+    list.children.add card(
       %*{"onClick": "overview.goto:" & m.room & ":" & rowId(m),
          "spacing": 2},
       hbox(%*{"spacing": 6}, dimLabel(m.room), label(m.frm)),
@@ -315,8 +315,19 @@ proc overviewPane(s: State): Node =
       # what a reader sees is bounded by the thing they are looking at.
       text(summarise(m.text, 160), lines = 2))
   if n == 0:
-    body.children.add dimLabel("Nothing has happened anywhere else.")
-  result = body
+    list.children.add dimLabel("Nothing has happened anywhere else.")
+
+  # The whole pane scrolls, heading and all. There were eight entries
+  # because eight was all that could be seen: nothing here scrolled, so
+  # what fell below the fold could not be reached at all.
+  #
+  # The heading scrolls with them rather than staying put, and that is not
+  # the nicer arrangement -- it is the one that works. A fixed heading over
+  # a scrolling list wants an `Expanded` inside this pane, and `expand` is
+  # already how the pane claims its own share of the column; a second one
+  # nested in the first asks a Column to shrink-wrap and fill at once.
+  result = scroll(%*{"scrollKey": "overview", "orientation": "vertical"},
+    vbox(%*{"spacing": 4}, title2("Overview"), list))
 
 proc lightboxPane(s: State): Node =
   ## The picture being looked at, as large as the window allows.
@@ -539,8 +550,13 @@ proc chatScreen*(s: State, connected: bool): Node =
 
   # Both panels are in wrappers that are always there, for the reason the
   # error note is: a child that comes and goes renumbers the row.
+  # `expand` only while it is open, and that is not a detail: an empty
+  # wrapper claiming a share of the column would take half the screen to
+  # show nothing. Open, it splits the height with the backlog above it --
+  # both scroll, so neither has to be given up for the other.
   var overview = vbox(%*{"key": "overview-pane"})
   if s.overview:
+    overview.props["expand"] = %true
     overview.children.add overviewPane(s)
 
   var profile = vbox(%*{"key": "profile-pane"})

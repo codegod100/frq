@@ -32,6 +32,18 @@ suite "the connect screen":
     check "frq" in t.labels("title")
     check cs.transportNote in t.labels("dim-label")
 
+  test "the fields holding an identifier ask to be taken as typed":
+    # A phone keyboard puts a space after a full stop, because a full stop
+    # ends a sentence -- and is also the middle of `alice.bsky.social`. The
+    # compose box is prose and is left alone; these are not.
+    for mode in [amGuest, amBluesky, amAppPassword]:
+      var f = initState()
+      f.authMode = mode
+      let fields = cs.connectScreen(f).find("entry")
+      check fields.len > 0
+      for e in fields:
+        check e.props{"verbatim"}.getBool() == true
+
   test "is pure — twice with no change is the same tree":
     check $cs.connectScreen(s).toJson == $cs.connectScreen(s).toJson
 

@@ -265,6 +265,18 @@ proc frq_ui_demo*() {.exportc, dynlib.} =
             at: t0 + 200_000)]
   app.rooms["#tasks"] = other
 
+  # A third room, and enough in it that the overview is taller than a phone.
+  # Without one nothing here would ever need to scroll, and a test that the
+  # overview scrolls would pass on a list that fits.
+  app.rooms.ensureRoom("#busy")
+  var busy = app.rooms["#busy"]
+  busy.joined = true
+  for i in 1 .. 12:
+    busy.messages.add Message(id: "b" & $i, frm: "carol",
+                              text: "line " & $i & " of a long day",
+                              at: t0 + 300_000 + i.int64 * 1000)
+  app.rooms["#busy"] = busy
+
   app.current = "#test"
   app.screen = scChat
   app.status = "Connected as me"

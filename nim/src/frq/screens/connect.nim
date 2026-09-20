@@ -45,8 +45,10 @@ func serverFields(s: State): Node =
   vbox(%*{"spacing": 6},
     label("Server"),
     hbox(%*{"spacing": 8},
-      entry("host", s.formHost, "host", "host.change", width = 220),
-      entry("port", s.formPort, "6697", "port.change", width = 90)),
+      entry("host", s.formHost, "host", "host.change", width = 220,
+            verbatim = true),
+      entry("port", s.formPort, "6697", "port.change", width = 90,
+            verbatim = true)),
     checkbutton("TLS", s.formTls, "tls.toggle"))
 
 func authFields(s: State): Node =
@@ -63,7 +65,7 @@ func authFields(s: State): Node =
                "never reaches this app."),
       label("Handle"),
       entry("handle", s.formHandle, "alice.bsky.social", "handle.change",
-            width = 320))
+            width = 320, verbatim = true))
     # Both of these are stable wrappers for the reason `errorNote` is one.
     var remembered = vbox(%*{"key": "remembered", "spacing": 4})
     if s.brokerToken.len > 0:
@@ -86,17 +88,18 @@ func authFields(s: State): Node =
                "is handed the session it mints."),
       label("Handle"),
       entry("handle", s.formHandle, "alice.bsky.social", "handle.change",
-            width = 320),
+            width = 320, verbatim = true),
       label("App password"),
       entry("app-password", s.formAppPassword, "xxxx-xxxx-xxxx-xxxx",
-            "app-password.change", width = 320),
+            "app-password.change", width = 320, verbatim = true),
       dimLabel("Make one at bsky.app → Settings → App Passwords."))
 
   of amGuest:
     result = vbox(%*{"spacing": 6},
       title2("Connect as guest"),
       label("Nick"),
-      entry("nick", s.formNick, "your nick", "nick.change", width = 320))
+      entry("nick", s.formNick, "your nick", "nick.change", width = 320,
+            verbatim = true))
 
 func connectAction(s: State): Node =
   if s.connecting:

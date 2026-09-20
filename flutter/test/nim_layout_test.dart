@@ -579,6 +579,30 @@ void main() {
       expectLaidOut(tester, 'the overview on a phone');
     });
 
+
+    testWidgets('scrolls, so what is below the fold can be reached',
+        (tester) async {
+      // It did not. The pane drew its entries and whatever did not fit was
+      // simply unreachable -- which is why there were only ever eight.
+      core.demoUi();
+      core.dispatch('overview.toggle');
+      await layOut(tester, sizes['phone']!);
+
+      final list = find
+          .ancestor(
+              of: find.textContaining('sandbox-01'),
+              matching: find.byType(Scrollable))
+          .first;
+      expect(list, findsOneWidget, reason: 'the overview is not scrollable');
+
+      final pos = tester.widget<Scrollable>(list).controller!.position;
+      expect(pos.maxScrollExtent, greaterThan(0),
+          reason: 'the overview has nothing below the fold to scroll to');
+
+      pos.jumpTo(pos.maxScrollExtent);
+      await tester.pumpAndSettle();
+      expectLaidOut(tester, 'the overview scrolled to its end');
+    });
     testWidgets('and the whole entry is the control, not an arrow',
         (tester) async {
       core.demoUi();

@@ -80,13 +80,19 @@ func button*(text: string, onClick: string, kind = "default"): Node =
   n("button", %*{"label": text, "kind": kind, "onClick": onClick})
 
 func entry*(key, text, placeholder, onChange: string, width = 0,
-            onSubmit = ""): Node =
+            onSubmit = "", verbatim = false): Node =
   ## Every entry carries a key, and for the reason the Clojure's comment
   ## gives: a renderer that keeps a text controller per field needs a stable
   ## name for it, and without one the host and the port shared a controller
   ## and both showed the port.
   var p = %*{"key": key, "text": text, "placeholder": placeholder,
              "onChange": onChange}
+  # An identifier rather than prose: a handle, a host, a nick. A phone
+  # keyboard helps with prose and the help is wrong here -- it capitalises
+  # the first letter, offers a word it guesses at, and puts a space after a
+  # full stop, which is a sentence ending and is also the middle of
+  # `alice.bsky.social`. `verbatim` asks for the text to be taken as typed.
+  if verbatim: p["verbatim"] = %true
   if width > 0: p["widthRequest"] = %width
   # Enter, where the field has something to do with it. A compose box that
   # only sends on a button click is one nobody can type into at speed.
