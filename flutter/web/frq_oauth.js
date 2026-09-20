@@ -39,7 +39,36 @@
   // asks for `/index.htmlclient-metadata.json` and is told, quite correctly,
   // Not Found.
   const origin = () => window.location.origin + '/';
-  const clientId = () => origin() + 'client-metadata.json';
+
+  // Scope is declared in two places and they have to agree: here, where the
+  // authorization request asks for it, and in the metadata document, which
+  // says what this client may ever ask for.
+  const SCOPE = 'atproto transition:generic';
+
+  // A page served from a developer's own machine cannot publish a metadata
+  // document that an authorization server can reach, so the spec makes an
+  // exception for it: a `client_id` whose origin is exactly `http://localhost`
+  // is not fetched at all, and the server builds a virtual document out of the
+  // query string instead.
+  //
+  // Three things about that exception cost a rejection each to learn. The
+  // hostname must be the word `localhost` -- `127.0.0.1` is *not* accepted,
+  // which is exactly what `Invalid client ID "http://127.0.0.1:8000/..."`
+  // was saying. There must be no port and no path, so the `client_id` is
+  // `http://localhost` and nothing more before the `?`. And the redirect URI
+  // we declare there is matched on its path but *not* on its port, which is
+  // the whole point -- a dev server's port is whatever was free.
+  //
+  // So the redirect stays this page, loopback address and port and all; only
+  // the identity is the fiction.
+  const loopback = () =>
+    /^(localhost|127(\.\d+){3}|\[::1\])$/.test(window.location.hostname);
+
+  const clientId = () =>
+    loopback()
+      ? 'http://localhost?redirect_uri=' + encodeURIComponent(origin()) +
+        '&scope=' + encodeURIComponent(SCOPE)
+      : origin() + 'client-metadata.json';
 
   const PENDING = 'frq:oauth:pending';
   const SESSION = 'frq:oauth:session';
@@ -201,7 +230,7 @@
       ['client_id', clientId()],
       ['redirect_uri', origin()],
       ['response_type', 'code'],
-      ['scope', 'atproto transition:generic'],
+      ['scope', SCOPE],
       ['state', state],
       ['code_challenge', challenge],
       ['code_challenge_method', 'S256'],

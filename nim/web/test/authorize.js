@@ -16,8 +16,14 @@
 // login, and the request it pushes expires unused.
 const fs = require('fs');
 let assigned = '';
+// The deployed origin by default; `FRQ_WEB_ORIGIN=http://127.0.0.1:8000` runs
+// the same probe as a page served from a developer's own machine, which takes
+// the other branch of `clientId` -- the `http://localhost` exception.
+const served = new URL(process.env.FRQ_WEB_ORIGIN ||
+  'https://codegod100--frq-web-serve.modal.run');
 global.window = {
-  location: { origin: 'https://codegod100--frq-web-serve.modal.run', pathname: '/', search: '',
+  location: { origin: served.origin, hostname: served.hostname,
+              pathname: '/', search: '',
               assign: (u) => { assigned = u; } },
   history: { replaceState() {} },
 };
