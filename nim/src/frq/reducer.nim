@@ -47,6 +47,10 @@ proc wantFace(m: Message)
   ## And this because `sendDraft` is: our own line wants a face as much as
   ## anybody's.
 
+proc openSocket()
+  ## And this because a browser sign-in finishes above it: the host answers
+  ## asynchronously, and what it answers with is "now you may connect".
+
 proc send(line: string) =
   trace("out", line)
   tr.send(line)
@@ -145,6 +149,58 @@ proc rememberRooms(force = false) =
   roomsWritten = digest
   discard saveRooms(app.rooms)
 
+when oa.hostSignsIn:
+  # Only where the host is its own OAuth client. On the desktop the broker
+  # answers these questions and there is nothing here to compile.
+
+  var webSession: Session
+    ## Kept apart from `session`, which `signIn` clears on every Connect —
+    ## and on this host the sign-in happened on an earlier page load, so
+    ## there is nothing to clear it *from*. Without this the proof arrived
+    ## and was fastened to an empty session: no DID, no token, and a SASL
+    ## payload that said `pds-oauth` and carried nothing.
+
+  proc adoptWebSession*(j: JsonNode, thenConnect: bool) =
+    ## A sign-in the browser host holds, as the core's idea of a session.
+    ##
+    ## The core never sees the whole of it: the access token, the refresh token
+    ## and the key they are bound to stay on the host's side, and what arrives
+    ## here is what SASL needs plus the name to put on screen. `thenConnect` is
+    ## the difference between coming back from the authorization server — where
+    ## the reader asked for this and is waiting — and finding a session in
+    ## storage at load, where they have not asked for anything yet.
+    webSession = Session(kind: skPdsOauth,
+                         did: j{"did"}.getStr(),
+                         handle: j{"handle"}.getStr(),
+                         accessJwt: j{"accessJwt"}.getStr(),
+                         pds: j{"pds"}.getStr(),
+                         dpopNonce: j{"dpopNonce"}.getStr(),
+                         dpopProof: j{"dpopProof"}.getStr())
+    app.hasSession = webSession.accessJwt.len > 0
+    app.authMode = amBluesky
+    if webSession.handle.len > 0:
+      app.formHandle = webSession.handle
+      app.formNick = webSession.handle
+    trace("oauth", "a browser session for " & webSession.handle)
+    if thenConnect and app.hasSession:
+      if webSession.dpopProof.len > 0:
+        session = webSession
+        openSocket()
+      else:
+        oa.askForProof()
+
+  proc proofReady*(proof: string) =
+    ## The proof freeq will present to the PDS on this client's behalf, minted
+    ## by the host because minting it is WebCrypto. The last thing a browser
+    ## connection waits for.
+    if proof.len == 0:
+      setError("Could not prove the sign-in; try signing in again.")
+      app.connecting = false
+      return
+    webSession.dpopProof = proof
+    session = webSession
+    openSocket()
+
 proc restore*() =
   ## What a previous run left on disk, back in the state.
   ##
@@ -160,6 +216,7 @@ proc restore*() =
   # tab. The nick and handle come along so the screen says who it is about
   # before the broker is asked.
   app.brokerToken = saved.brokerToken
+  app.hasSession = saved.brokerToken.len > 0
   app.authMode = amBluesky
   if saved.handle.len > 0: app.formHandle = saved.handle
   if saved.nick.len > 0: app.formNick = saved.nick
@@ -181,6 +238,7 @@ proc adoptTokens(t: oa.Tokens) =
   # Only the durable half is written: the web-token beside it is single-use
   # and would be a stale secret on disk by the time anything read it.
   app.brokerToken = t.brokerToken
+  app.hasSession = true
   discard saveSession(SavedSession(brokerToken: t.brokerToken,
                                    handle: app.formHandle, did: t.did,
                                    nick: app.formNick))
@@ -220,6 +278,23 @@ proc signIn(): bool =
       app.connecting = false
       false
   of amBluesky:
+    when oa.hostSignsIn:
+      # A host that is its own OAuth client. Everything it does is
+      # asynchronous — `fetch`, and WebCrypto for the key a DPoP token is
+      # bound to — so nothing finishes on this line: either the page leaves
+      # for the authorization server, or it mints the proof a connection
+      # needs and says so through the drain.
+      if not app.hasSession:
+        app.status = "Signing in with Bluesky…"
+        oa.begin("", app.formHandle)
+      else:
+        # Per connect, not per sign-in: a proof carries an `iat` and a
+        # single-use `jti`, so one kept from the sign-in would be refused by
+        # the time a reconnect offered it.
+        app.status = "Preparing your sign-in…"
+        oa.askForProof()
+      return false
+
     # A remembered broker token is the whole reason to keep one: it buys a
     # fresh web-token without a browser, so a second run connects with no
     # login page at all. Only when there is none does the browser open, and
@@ -334,6 +409,8 @@ proc dispatch*(event: JsonNode) =
 
   of "session.forget":
     app.brokerToken = ""
+    app.hasSession = false
+    forgetHostSession()
     clearSession()
     app.loginUrl = ""
     oa.cancel()

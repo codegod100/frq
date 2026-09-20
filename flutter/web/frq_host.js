@@ -10,9 +10,10 @@
 //   * the socket. The core says where it wants to be connected; this opens a
 //     WebSocket to freeq's own bridge, feeds every line in, and sends
 //     everything the core has queued.
-//   * the sign-in. The broker answers by redirecting the page back with a
-//     payload in the fragment, so a sign-in finishes on the *next* load —
-//     this reads it, hands it over, and takes it off the URL.
+//   * the sign-in, which `frq_oauth.js` does and this drives. The core asks
+//     for a sign-in, for a proof, or to be forgotten; each answer goes back
+//     through a function on the core. A sign-in finishes on the *next* load,
+//     because the authorization leg leaves the page.
 //   * the profiles, which the core asks for through `fetch` (in the Nim, not
 //     here), so there is nothing to do for them.
 //
@@ -83,17 +84,43 @@
     }
   }, 50);
 
-  // The broker's answer, which arrives as a fragment on a fresh load.
+  // The sign-in, which this page does itself — see `frq_oauth.js` for why
+  // the broker cannot finish one here.
   //
-  // Taken off the URL once read: a payload carries a single-use token, and
-  // leaving it in the address bar means it is in the history, in whatever
-  // the reader pastes, and replayed by a refresh.
-  var payload = "";
-  if (window.location.hash) {
-    var h = window.location.hash.replace(/^#/, "");
-    payload = new URLSearchParams(h).get("oauth") || h.replace(/^oauth=/, "");
-    history.replaceState(null, "", window.location.pathname + window.location.search);
-  }
+  // Three things it is asked for, each taken as it is read so that asking
+  // twice does not do it twice: a sign-in to start, a proof to mint before a
+  // connection, and a session to forget.
+  setInterval(function () {
+    var handle = frq.wantedSignIn();
+    if (handle) {
+      frqOauth.begin(handle).catch(function (e) {
+        frq.signInFailed(String(e && e.message ? e.message : e));
+      });
+    }
+    if (frq.needProof()) {
+      frqOauth.prepare().then(
+        function (s) { frq.proofReady(s.dpopProof); },
+        function (e) {
+          frq.signInFailed(String(e && e.message ? e.message : e));
+          frq.proofReady("");
+        });
+    }
+    if (frq.needForget()) frqOauth.forget();
+  }, 50);
 
-  frq.init(payload);
+  frq.init("");
+
+  // Two ways a session arrives, and they mean different things. Coming back
+  // from the authorization server is a sign-in the reader asked for and is
+  // waiting on, so it connects; finding one in storage at load is not, so it
+  // only fills the name in.
+  frqOauth.resume().then(
+    function (session) {
+      if (session) frq.handoff(JSON.stringify(session));
+      else {
+        var saved = frqOauth.saved();
+        if (saved) frq.restoreSession(JSON.stringify(saved));
+      }
+    },
+    function (e) { frq.signInFailed(String(e && e.message ? e.message : e)); });
 })();

@@ -53,6 +53,21 @@ suite "saslResponse":
     check payload["signature"].getStr() == "tok"
     check payload["did"].getStr() == ""
 
+  test "a pds-oauth carries the proof freeq will present for us":
+    # freeq cannot simply hand a DPoP token to the PDS: the token is bound to
+    # a key and the holder has to prove it. So the proof travels with the
+    # token, minted for the exact call freeq is about to make.
+    var s = signedIn()
+    s.kind = skPdsOauth
+    s.dpopProof = "eyJhbGciOiJFUzI1NiJ9.proof"
+    let payload = parseJson(b64urlDecode(saslResponse(s, "N1")))
+    check payload["method"].getStr() == "pds-oauth"
+    check payload["did"].getStr() == "did:plc:abc"
+    check payload["signature"].getStr() == "jwt-123"
+    check payload["pds_url"].getStr() == "https://pds.example"
+    check payload["dpop_proof"].getStr() == "eyJhbGciOiJFUzI1NiJ9.proof"
+    check payload["challenge_nonce"].getStr() == "N1"
+
 suite "saslLines":
   test "a short payload is one line":
     check saslLines("abc") == @["AUTHENTICATE abc"]

@@ -18,7 +18,13 @@ import frq/[trace, eintr]
 import frq/oauthcore
 export oauthcore
 
-const loginTimeout = 5 * 60   ## seconds; a login page nobody finishes
+const
+  loginTimeout = 5 * 60   ## seconds; a login page nobody finishes
+
+  hostSignsIn* = false
+    ## This host signs in through freeq's broker, which is allowed to redirect
+    ## to loopback — and a desktop is loopback. A browser is not, so the web
+    ## build says `true` and does the OAuth itself. See `nim/web/frq/oauth`.
 
 proc refreshSession*(broker, brokerToken: string): Tokens =
   ## Mint a fresh web-token from the durable broker token.
@@ -232,6 +238,11 @@ proc begin*(broker, handle: string, openBrowser = true) =
   createThread(worker, workerBody,
                LoginReq(broker: broker, handle: handle,
                         openBrowser: openBrowser))
+
+proc forgetHostSession*() = discard
+  ## Nothing of a sign-in lives on this side: the broker token is the core's,
+  ## and `session.forget` has already dropped it. The web host holds a token
+  ## and a key and has real work to do here.
 
 proc cancel*() =
   ## Stop waiting. The thread notices within the second it is sleeping in.

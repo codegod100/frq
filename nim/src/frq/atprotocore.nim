@@ -14,7 +14,8 @@ const
 
 type
   SessionKind* = enum
-    skNone = "none", skPdsSession = "pds-session", skWebToken = "web-token"
+    skNone = "none", skPdsSession = "pds-session", skWebToken = "web-token",
+    skPdsOauth = "pds-oauth"
 
   Session* = object
     kind*: SessionKind
@@ -23,6 +24,15 @@ type
     accessJwt*: string
     pds*: string
     token*: string        ## a web-token from the broker, where that is the kind
+    dpopProof*: string
+      ## The proof freeq presents to the PDS on this client's behalf, for
+      ## `pds-oauth`. Minted by the host rather than here: it is WebCrypto in
+      ## a browser and this module does no I/O — and it is minted per connect,
+      ## because a proof carries an `iat` and a single-use `jti`, so one kept
+      ## from sign-in would be refused by the time a reconnect offered it.
+    dpopNonce*: string
+      ## The nonce the PDS last asked for, carried into the next proof so the
+      ## first authenticated call does not cost a round trip to be told.
 
   AtprotoError* = object of CatchableError
 
@@ -54,6 +64,19 @@ proc saslResponse*(s: Session, nonce: string): string =
   case s.kind
   of skWebToken:
     b64url($(%*{"did": "", "method": "web-token", "signature": s.token}))
+  of skPdsOauth:
+    # An OAuth access token, which the server cannot simply present to the
+    # PDS: a DPoP token is bound to a key, and the holder has to prove it. So
+    # the proof travels with it. freeq calls getSession with our token and our
+    # proof, and the PDS checks that the proof names that method, that URL and
+    # that token — which is what lets a proof be minted for a request this
+    # client never makes.
+    b64url($(%*{"did": s.did,
+                "signature": s.accessJwt,
+                "method": "pds-oauth",
+                "pds_url": s.pds,
+                "dpop_proof": s.dpopProof,
+                "challenge_nonce": nonce}))
   else:
     b64url($(%*{"did": s.did,
                 "signature": s.accessJwt,

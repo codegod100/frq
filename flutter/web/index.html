@@ -32,11 +32,14 @@
     as it starts, and a core that might not have parsed yet is a race nobody
     would enjoy debugging.
 
-    This is where the ClojureDart build loaded `frq_dpop.js`, a WebCrypto
-    helper for an OAuth client written in Dart. The broker does that work
-    now, and the client asking for it is Nim.
+    `frq_dpop.js` is the same WebCrypto helper the ClojureDart build loaded,
+    unchanged: ES256 keys, DPoP proofs, PKCE. `frq_oauth.js` is the flow that
+    uses it, which this page needs because freeq's broker will only redirect
+    back to loopback or its own origins — and this is neither.
   -->
   <script src="frq_core.js"></script>
+  <script src="frq_dpop.js"></script>
+  <script src="frq_oauth.js"></script>
   <script src="frq_host.js"></script>
 </head>
 <body>

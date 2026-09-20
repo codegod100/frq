@@ -46,13 +46,12 @@ proc currentTree(): string =
 # the names written here.
 
 proc frqInit(payload: cstring) {.exportc.} =
-  ## Once, before anything else. `payload` is the URL fragment this page came
-  ## back with, or empty — a browser catches the broker's answer by being the
-  ## page that was redirected, so a sign-in finishes here rather than on a
-  ## loopback socket.
+  ## Once, before anything else. The argument is vestigial: it used to carry
+  ## the broker's fragment, and this page is its own OAuth client now — the
+  ## host reads the query string, finishes the exchange, and calls
+  ## `handoff` or `restoreSession` with a session rather than a payload.
   restore()
-  let p = $payload
-  if p.len > 0: oa.handoff(p)
+  discard payload
 
 proc frqRender(): cstring {.exportc.} = currentTree().cstring
   ## The current screen as a widget tree, in JSON.
@@ -101,9 +100,36 @@ proc frqBrokerToken(): cstring {.exportc.} = app.brokerToken.cstring
   ## The remembered token, for the host to spend against the broker — `fetch`
   ## is asynchronous, so the core cannot spend it itself.
 
-proc frqHandoff(payload: cstring) {.exportc.} = oa.handoff($payload)
-  ## What the broker answered, whether from a redirect or from the host's own
-  ## call to `/session`.
+proc frqHandoff(payload: cstring) {.exportc.} =
+  ## A finished sign-in, as JSON from the host — the reader asked for this and
+  ## is waiting, so it connects.
+  try:
+    adoptWebSession(parseJson($payload), thenConnect = true)
+  except CatchableError as e:
+    oa.failed(e.msg)
+
+proc frqRestoreSession(payload: cstring) {.exportc.} =
+  ## A sign-in the host already had, at load. The same fields and a different
+  ## meaning: nobody has pressed Connect, so this only puts the name on the
+  ## screen and lights the Bluesky tab.
+  try:
+    adoptWebSession(parseJson($payload), thenConnect = false)
+  except CatchableError as e:
+    trace("oauth", "ignoring a stored session: " & e.msg)
+
+proc frqWantedSignIn(): cstring {.exportc.} = oa.wantedSignIn().cstring
+  ## The handle the core is asking the host to sign in as, or empty.
+
+proc frqNeedProof(): bool {.exportc.} = oa.needProof()
+  ## Whether a connection is waiting on a DPoP proof.
+
+proc frqNeedForget(): bool {.exportc.} = oa.needForget()
+  ## Whether the reader has asked to be forgotten.
+
+proc frqProofReady(proof: cstring) {.exportc.} = proofReady($proof)
+  ## The proof, minted. The last thing a browser connection waits for.
+
+proc frqSignInFailedWith(reason: cstring) {.exportc.} = oa.failed($reason)
 
 proc frqSignInFailed(reason: cstring) {.exportc.} = oa.failed($reason)
 
@@ -150,6 +176,11 @@ globalThis.frq = {
   takeOutbound: frqTakeOutbound,
   brokerToken: frqBrokerToken,
   handoff: frqHandoff,
+  restoreSession: frqRestoreSession,
+  wantedSignIn: frqWantedSignIn,
+  needProof: frqNeedProof,
+  needForget: frqNeedForget,
+  proofReady: frqProofReady,
   signInFailed: frqSignInFailed,
   trace: frqTrace,
   demo: frqDemo,

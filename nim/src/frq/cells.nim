@@ -88,6 +88,11 @@ type
     # The durable half of an OAuth sign-in. The web-token beside it is
     # single-use, so a reconnect mints a fresh one from this rather than
     # replaying the old.
+    hasSession*: bool
+      ## Whether the host is holding a sign-in this client can connect with.
+      ## A broker token on the desktop; an OAuth session in `localStorage` on
+      ## the web, which the core never sees the whole of.
+
     brokerToken*: string
     apiBearer*: string
     loginUrl*: string     ## shown while the browser is open

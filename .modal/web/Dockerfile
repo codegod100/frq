@@ -32,6 +32,14 @@ COPY . .
 # because `flutter build web` copies that directory into the bundle -- which
 # is what makes the page's `<script src="frq_core.js">` resolve the same
 # either way.
+# Where the deployed bundle answers, for the OAuth client metadata. An
+# authorization server fetches that document from the `client_id` URL and
+# takes it as the authority on where a code may be sent, so it has to name
+# this origin — and a Dockerfile is where the build learns what it will be.
+ARG FRQ_WEB_ORIGIN=https://codegod100--frq-web-serve.modal.run
+RUN python3 tools/client-metadata.py "$FRQ_WEB_ORIGIN" \
+      > flutter/web/client-metadata.json
+
 RUN tools/toolchain.sh exec -- bash -euo pipefail -c '\
       mkdir -p /src/build/web && cd /src/nim && \
       nim js -d:release --hints:off --path:src --path:web \

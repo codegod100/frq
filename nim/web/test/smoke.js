@@ -68,5 +68,70 @@ check("a fed line reaches the screen", tree.includes("hello from the web"));
 check("the store writes through localStorage",
       Object.keys(window.localStorage._v).some(k => k.startsWith("frq.")));
 
+// The browser sign-in: the core asks the host to do the asynchronous parts
+// and takes the answers back. None of this can be reached from the Nim suite,
+// because the whole point of the seam is that the other side is JavaScript.
+frq.demo();
+frq.dispatch(JSON.stringify({ id: "screen.connect" }));
+frq.dispatch(JSON.stringify({ id: "mode.bluesky" }));
+frq.dispatch(JSON.stringify({ id: "handle.change", value: "alice.bsky.social" }));
+frq.dispatch(JSON.stringify({ id: "connect" }));
+check("with no session, it asks the host to sign in",
+      frq.wantedSignIn() === "alice.bsky.social");
+check("and asks only once", frq.wantedSignIn() === "");
+
+// A session the host already had: the name appears, and nothing connects.
+frq.restoreSession(JSON.stringify({
+  did: "did:plc:abc", handle: "alice.bsky.social",
+  accessJwt: "tok", pds: "https://pds.example", dpopNonce: "n1",
+}));
+// `wanted` is the last socket the core asked for and stays set, which is how
+// the host knows not to redial — so "did it dial" is a comparison.
+const dialledBefore = frq.wanted();
+check("a stored session does not connect by itself",
+      frq.wanted() === dialledBefore);
+check("but it does put the handle on the screen",
+      frq.render().includes("alice.bsky.social"));
+
+// Now Connect: the proof is the last thing it waits for.
+frq.dispatch(JSON.stringify({ id: "connect" }));
+check("with a session, it asks for a proof", frq.needProof() === true);
+check("and asks only once", frq.needProof() === false);
+check("nothing is dialled until the proof is in",
+      frq.wanted() === dialledBefore);
+frq.proofReady("eyJhbGciOiJFUzI1NiJ9.proof");
+check("the proof opens the socket", JSON.parse(frq.wanted() || "{}").host === "irc.freeq.at");
+
+// And the SASL payload carries it. Drained at every step rather than at the
+// end: the core answers each line as it arrives, and a single take at the
+// end would mix the registration in with the answer being checked.
+frq.socketEvent("open");
+frq.render();
+frq.takeOutbound();                       // CAP LS, NICK, USER
+frq.feed("CAP * LS :sasl message-tags server-time");
+frq.render();
+frq.takeOutbound();                       // CAP REQ
+frq.feed("CAP * ACK :sasl message-tags server-time");
+frq.render();
+check("an acked sasl starts the exchange",
+      frq.takeOutbound().trim() === "AUTHENTICATE ATPROTO-CHALLENGE");
+
+const challenge = Buffer.from(JSON.stringify({ nonce: "N1" })).toString("base64url");
+frq.feed("AUTHENTICATE " + challenge);
+frq.render();
+const answer = frq.takeOutbound().trim();
+let payload = null;
+try {
+  payload = JSON.parse(
+    Buffer.from(answer.replace("AUTHENTICATE ", ""), "base64url").toString());
+} catch (e) { /* left null, and the checks below say so */ }
+check("the SASL payload is pds-oauth", payload && payload.method === "pds-oauth");
+check("with the DID and the token the host holds",
+      payload && payload.did === "did:plc:abc" && payload.signature === "tok");
+check("the proof freeq will present to the PDS",
+      payload && payload.dpop_proof === "eyJhbGciOiJFUzI1NiJ9.proof");
+check("and the nonce it was challenged with",
+      payload && payload.challenge_nonce === "N1");
+
 console.log(failures === 0 ? "all ok" : failures + " failed");
 process.exit(failures === 0 ? 0 : 1);

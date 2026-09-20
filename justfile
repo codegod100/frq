@@ -182,6 +182,17 @@ _web-bundle:
     cd "{{root}}"
     just _nim-js
     cp build/web/frq_core.js flutter/web/frq_core.js
+    # Where this bundle will be served from. Every value in the client
+    # metadata is absolute — the `client_id` has to equal the URL the document
+    # is served from — so the origin is a build input rather than something
+    # the page can work out for itself.
+    #
+    # The default is the dev server `just run web` starts. A page served from
+    # there cannot complete a Bluesky sign-in: an authorization server will
+    # not fetch client metadata over http from a non-loopback host, and this
+    # is `localhost` only when it is. Guest works everywhere.
+    python3 tools/client-metadata.py "${FRQ_WEB_ORIGIN:-http://localhost:8000}" \
+        > flutter/web/client-metadata.json
     exec "{{tc}}" exec -- bash -euo pipefail -c '
         cd flutter
         flutter pub get
