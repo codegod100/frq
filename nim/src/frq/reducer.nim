@@ -864,6 +864,30 @@ proc drain*() =
         note(room, Message(frm: "*", text: who & " left", at: at,
                            system: true))
 
+    of "NICK":
+      # Somebody is called something else now — including us.
+      #
+      # Our own rename is the server settling what we are called, and it is
+      # the usual way the nick on screen becomes the real one: freeq hands a
+      # guest a name of its choosing, and settles a signed-in connection on
+      # the account's. Without this the client goes on calling itself what it
+      # asked to be called, which is how a reader signs in with Bluesky and
+      # finds they are still `frq-guest` — and why every "is this mine?" test
+      # on a line then says no.
+      let who = nickOf(p.prefix)
+      let fresh = if p.params.len >= 1: p.params[^1] else: ""
+      if who.len > 0 and fresh.len > 0:
+        for name in toSeq(app.rooms.keys):
+          var r = app.rooms[name]
+          if r.users.renameUser(who, fresh):
+            app.rooms[name] = r
+        if who == app.formNick:
+          app.formNick = fresh
+          if app.status.startsWith("Connected") or
+             app.status.startsWith("Signed in"):
+            app.status = "Connected as " & fresh
+          trace("auth", "the server calls us " & fresh)
+
     of "353":
       # NAMES, into the PENDING list. It arrives over as many lines as it
       # takes and ends with 366; replacing `users` on each would empty the

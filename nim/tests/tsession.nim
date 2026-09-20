@@ -242,3 +242,37 @@ suite "how big the window is":
     dispatch(%*{"id": "window.size", "value": "banana"})
     dispatch(%*{"id": "window.size", "value": "0x0"})
     check app.windowWidth == 1280
+
+suite "being renamed":
+  setup: reset()
+
+  test "the server settling our name is the name we use":
+    # freeq hands a guest a name of its choosing and settles a signed-in
+    # connection on the account's. Nothing followed that, so a reader could
+    # sign in with Bluesky and go on being `frq-guest` — and every "is this
+    # mine?" test on a line said no, because it compares nicks.
+    joined("#freeq")
+    say(":alice!a@h NICK alice.bsky.social")
+    check app.formNick == "alice.bsky.social"
+
+  test "and somebody else's rename follows them round the room":
+    joined("#freeq")
+    say(":irc.freeq.at 353 alice = #freeq :alice @bob carol",
+        ":irc.freeq.at 366 alice #freeq :End of /NAMES list",
+        ":bob!b@h NICK robert")
+    check app.rooms["#freeq"].users.hasKey("robert")
+    check not app.rooms["#freeq"].users.hasKey("bob")
+
+  test "with the mode they had":
+    # An op who renames is still an op; dropping the prefix would take their
+    # mode off the list until the next NAMES.
+    joined("#freeq")
+    say(":irc.freeq.at 353 alice = #freeq :alice @bob",
+        ":irc.freeq.at 366 alice #freeq :End of /NAMES list",
+        ":bob!b@h NICK robert")
+    check app.rooms["#freeq"].users["robert"] == "@"
+
+  test "and somebody we have never seen changes nothing":
+    joined("#freeq")
+    say(":stranger!s@h NICK someoneelse")
+    check app.formNick == "alice"

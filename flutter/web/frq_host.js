@@ -99,7 +99,17 @@
     }
     if (frq.needProof()) {
       frqOauth.prepare().then(
-        function (s) { frq.proofReady(s.dpopProof); },
+        function (s) {
+          // The whole session, not just the proof. `prepare` asks the PDS
+          // who the token belongs to, and that answer can be the first time
+          // anyone here learns the handle — a sign-in whose `whoami` failed
+          // at the time has a session with a token and no name, and a
+          // nameless session connects as whatever is in the nick box, which
+          // is `frq-guest`. Handing the proof over on its own threw the
+          // answer away every time.
+          frq.restoreSession(JSON.stringify(s));
+          frq.proofReady(s.dpopProof);
+        },
         function (e) {
           frq.signInFailed(String(e && e.message ? e.message : e));
           frq.proofReady("");

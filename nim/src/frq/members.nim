@@ -64,6 +64,17 @@ proc withMode*(users: var Table[string, string], modes: string,
         # the next letter reads somebody else's nick.
         i += 1
 
+proc renameUser*(users: var Table[string, string], old, fresh: string): bool =
+  ## Somebody changed their nick, in this room. True where they were in it.
+  ##
+  ## The prefix travels with them: an op who renames is still an op, and
+  ## dropping the `@` would take their mode off the list until the next NAMES.
+  if old.len == 0 or fresh.len == 0 or not users.hasKey(old): return false
+  let prefix = users[old]
+  users.del(old)
+  users[fresh] = prefix
+  true
+
 func prefixRank(prefix: string): int =
   ## Where a prefix sorts. No prefix is last, which is why this is not simply
   ## the index.
