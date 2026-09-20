@@ -18,18 +18,18 @@ tested, and a deploy is a pull rather than a compile. The workflow is
 it up, and deploying again replaces it in place because the app is
 named by `[container] name`.
 
-Two credentials live outside the repo, both one-time setup:
+One credential and one setting live outside the repo, both one-time:
 
 * `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`, as rickub repository
-  secrets. The registry needs no secret of its own -- rickub
-  authenticates docker before a workflow's first step.
-* A Modal Secret named `rickub-registry`, holding `REGISTRY_USERNAME`
-  and `REGISTRY_PASSWORD` for a rickub deploy token (Settings →
-  Packages; pull-only, and the username is any label). Modal pulls the
-  private image on every cold start rather than once at deploy time,
-  so this has to be Modal's to keep and cannot be the run's own
-  short-lived registry token.
+  secrets. The registry needs none of its own -- rickub authenticates
+  docker before a workflow's first step.
+* The image set to **public** on rickub: its detail page, Manage,
+  visibility. Private is the default, and the first push creates it
+  private, so this is done once after the first green run.
 
-Making the image public instead -- its detail page, Manage,
-visibility -- removes the need for that second one entirely, at the
-price of anyone being able to pull the bundle.
+The second is why there is no `registry_secret` in `container.toml`.
+Modal pulls on every cold start rather than once at deploy time, so a
+private image would want a long-lived rickub deploy token held as a
+Modal Secret -- and what it would be guarding is `build/web`, which
+the URL hands to anyone who opens it. The alternative is written down
+in `container.toml` for whoever wants it.

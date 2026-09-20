@@ -6,14 +6,20 @@ description = "the web bundle CI built, served at a URL"
 # spec is read, so the tag is whatever commit the deploy job is deploying.
 # Unset, it fails loudly rather than deploying something stale.
 registry    = "${FRQ_WEB_IMAGE}"
-# Images on registry.rickub.com are private by default, so Modal needs
-# credentials to pull -- and it pulls on every cold start, not once at deploy
-# time, so the CI job's own registry token is no use: it is short-lived by
-# design. A Modal Secret of this name holds REGISTRY_USERNAME and
-# REGISTRY_PASSWORD for a rickub *deploy* token, which is pull-only by
-# construction. The username is a label of your choosing; only the token is
-# checked.
-registry_secret = "rickub-registry"
+# No registry_secret, which is a decision and not an omission. Images on
+# registry.rickub.com are private by default and Modal pulls on every cold
+# start -- not once at deploy time -- so a private image here would need a
+# long-lived rickub deploy token kept as a Modal Secret, since the workflow's
+# own registry token is short-lived by design. The image is made public
+# instead. It holds `build/web` and a python to serve it, and that bundle is
+# what the URL hands to anyone who opens it, so there is nothing in there to
+# keep: a credential to rotate would be guarding a copy of the public site.
+#
+# To go the other way, set the image private on rickub and add:
+#   registry_secret = "rickub-registry"
+# naming a Modal Secret with REGISTRY_USERNAME / REGISTRY_PASSWORD for a
+# pull-only deploy token (rickub Settings -> Packages; the username is any
+# label).
 # Not a Sandbox: a Sandbox is a run that ends, and this is meant to stay up
 # between pushes. `web` is a Function that Modal fronts with a stable https
 # URL and `modal deploy` leaves running.
