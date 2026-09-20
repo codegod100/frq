@@ -28,6 +28,13 @@ deployed apps by name, not the ephemeral one a `modal run` creates, and carries
 nothing until the Sandbox starts — the image build streams to the client and
 nowhere else.
 
+Two containers, and they are not the same kind of thing. `dev` is a build
+that ends. `web` is a deploy: CI builds `.modal/web/Dockerfile` into the
+GitLab registry, and `modal deploy .modal/web/container.py` serves that exact
+tag at a URL, building nothing. So `just build web` on a laptop and the thing
+on the internet come from the same two commands, run in different places —
+and a deploy is a pull rather than a compile.
+
 The containers run as Modal **Sandboxes on a real VM** rather than under
 gVisor: a real kernel, a working pty, and memory that is exactly what
 `[resources] memory` asks for.

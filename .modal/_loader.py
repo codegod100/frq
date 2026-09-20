@@ -40,8 +40,10 @@ class Container:
         self.command = run.get("command", "")
         self.env = dict(run.get("env", {}))
 
-        # "function" (the default) or "sandbox". Sandboxes can run on a real
-        # VM, which Functions cannot -- see ../README.md.
+        # "function" (the default), "sandbox" or "web". Sandboxes can run on
+        # a real VM, which Functions cannot -- see ../README.md. A "web"
+        # container is a Function that serves [network] ports at a URL and
+        # stays deployed, rather than a run that ends.
         self.runtime = spec.get("container", {}).get("runtime", "function")
 
         # name -> mount path. Modal Volumes, mounted while the container runs
@@ -57,9 +59,10 @@ class Container:
         # plain HTTP to your process" -- so the thing listening inside is an
         # ordinary http.server and not something holding a certificate.
         #
-        # Sandbox-only: a Function has no long-lived process to tunnel into,
-        # and `modal run` on one would hand back a URL for a container that
-        # has already exited.
+        # Not for a plain Function: it has no long-lived process to tunnel
+        # into, and `modal run` on one would hand back a URL for a container
+        # that has already exited. A "web" container has exactly one, and
+        # Modal fronts it with a stable https:// URL instead of a tunnel.
         self.ports = [int(p) for p in spec.get("network", {}).get("ports", [])]
 
         # Modal re-imports this module inside the container, so everything
@@ -95,17 +98,22 @@ class Container:
 
     def _validate(self):
         c = self.spec.get("container", {})
-        if self.runtime not in ("function", "sandbox"):
+        if self.runtime not in ("function", "sandbox", "web"):
             raise SpecError(
-                f'[container] runtime must be "function" or "sandbox",'
+                f'[container] runtime must be "function", "sandbox" or "web",'
                 f" not {self.runtime!r}"
             )
         if bool(c.get("base")) == bool(c.get("registry")):
             raise SpecError("set exactly one of [container] base or registry")
-        if self.ports and self.runtime != "sandbox":
+        if self.ports and self.runtime == "function":
             raise SpecError(
-                "[network] ports needs [container] runtime = \"sandbox\" --"
-                " a Function has no process to tunnel into"
+                "[network] ports needs [container] runtime = \"sandbox\""
+                " or \"web\" -- a Function has no process to tunnel into"
+            )
+        if self.runtime == "web" and len(self.ports) != 1:
+            raise SpecError(
+                "[container] runtime = \"web\" needs exactly one"
+                " [network] ports entry -- a URL fronts one listener"
             )
         for name, mount in self.volume_spec.items():
             if not isinstance(mount, str) or not mount.startswith("/"):
@@ -135,7 +143,22 @@ class Container:
         if c.get("base"):
             image = modal.Image.from_name(c["base"])
         else:
-            image = modal.Image.from_registry(c["registry"])
+            # `${VAR}` in a registry reference is expanded here, so a tag that
+            # CI computes -- a commit sha -- can be passed in rather than
+            # committed. A private registry needs credentials, and Modal wants
+            # them as a Secret holding REGISTRY_USERNAME / REGISTRY_PASSWORD:
+            # name it with [container] registry_secret.
+            ref = os.path.expandvars(c["registry"])
+            if "$" in ref:
+                raise SpecError(
+                    f"[container] registry has an unset variable: {ref}"
+                )
+            if secret := c.get("registry_secret"):
+                image = modal.Image.from_registry(
+                    ref, secret=modal.Secret.from_name(secret)
+                )
+            else:
+                image = modal.Image.from_registry(ref)
 
         # copy=True throughout: later run_commands need these files present.
         # `context` is what include paths are relative to, and it may sit above
@@ -168,7 +191,8 @@ class Container:
         # builds into a volume of its own. Patterns are relative to the copied
         # directory, as in .dockerignore.
         ignore = list(build.get("ignore", []))
-        for rel in build.get("include", ["."]):
+        includes = build.get("include", ["."])
+        for rel in includes:
             src = os.path.normpath(os.path.join(context, rel))
             dest = self.workdir if rel == "." else f"{self.workdir}/{rel}"
             if os.path.isdir(src):
@@ -181,7 +205,12 @@ class Container:
         # which points at nothing out here, so any tool that follows it fails
         # in a way that has nothing to do with what it was asked to do.
         # Nothing in a container wants the git metadata, so it goes.
-        image = image.run_commands(f"rm -rf {self.workdir}/.git")
+        # ...but only if a copy happened. `include = []` is how a container
+        # built elsewhere -- by CI, into a registry -- says the image is
+        # already what it should be, and adding a layer to it would rebuild
+        # and re-push something nobody asked to change.
+        if includes:
+            image = image.run_commands(f"rm -rf {self.workdir}/.git")
 
         if commands := build.get("commands", []):
             # Volumes mounted for the build too, not just the run, so a step
@@ -233,10 +262,15 @@ class Container:
             kwargs["memory"] = int(r["memory"])
         if r.get("gpu"):
             kwargs["gpu"] = r["gpu"]
+        # Containers kept warm. Zero -- the default -- means a served URL
+        # pays a cold start on the first request after it goes quiet, which
+        # for a static bundle is a second or two.
+        if r.get("min_containers"):
+            kwargs["min_containers"] = int(r["min_containers"])
         # Deliberately NOT self.experimental_options: that fills in the
         # sandbox default, and vm_runtime on a Function is refused by the
         # server. A sandbox container's @app.function is vestigial anyway.
-        if self.runtime == "function":
+        if self.runtime != "sandbox":
             if experimental := dict(self.spec.get("experimental", {})):
                 kwargs["experimental_options"] = experimental
         if volumes := self.volumes:
@@ -282,6 +316,49 @@ class Container:
         if not command:
             raise SpecError("container.toml has no [run] command")
         return f"cd {self.workdir} && {command}"
+
+    # -- web -------------------------------------------------------------
+
+    def register_web(self):
+        """Serve the [run] command's process at a URL, for `modal deploy`.
+
+        A web container's command is a server, not a build: it listens on the
+        one [network] port and Modal fronts it with https. `web_server` waits
+        for that port to accept a connection and then proxies to it, so the
+        command has to keep running -- Popen and return, rather than the
+        `subprocess.run` that `execute` uses for a job that ends.
+
+        Registered by calling this at import time, which happens twice: once
+        here, to define the Function, and once inside the container, where
+        `self.image` is None and the App has no image of its own.
+        """
+        kwargs = dict(self.function_kwargs)
+        if self.image is not None:
+            kwargs["image"] = self.image
+        line = self.shell_command()
+        env = {k: str(v) for k, v in self.env.items()}
+        port = self.ports[0]
+
+        # One container answering many requests. A static bundle costs
+        # nothing per request, so scaling out on concurrency would only buy
+        # cold starts.
+        #
+        # serialized=True because this body is defined in here rather than at
+        # a module's top level: Modal pickles it instead of importing it by
+        # name, which is also why a web container needs nothing of its own
+        # beyond the stub that calls this.
+        @self.app.function(name="serve", serialized=True, **kwargs)
+        @modal.concurrent(max_inputs=100)
+        @modal.web_server(port=port, startup_timeout=self.startup_timeout)
+        def serve():
+            subprocess.Popen(line, shell=True, env={**os.environ, **env})
+
+        return serve
+
+    @property
+    def startup_timeout(self) -> int:
+        """How long Modal waits for the port to answer, from [network]."""
+        return int(self.spec.get("network", {}).get("startup_timeout", 60))
 
     def run_sandbox(self, override: str = "") -> str:
         """Run one command in a Sandbox that dies when the command does.

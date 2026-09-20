@@ -14,6 +14,7 @@
 #   just run TARGET        apk desktop web ui app
 #   just test SUITE        all nim dart common live
 #   just modal CONTAINER   dev
+#   just deploy web        the CI-built image, to a Modal URL
 #   just serve [PORT]      the Modal-built web bundle, on localhost
 #   just tools ...         the toolchain itself
 
@@ -136,6 +137,27 @@ modal container="dev" *args:
     cd "{{root}}"
     shift || true
     exec modal run ".modal/{{container}}/container.py" "$@"
+
+# Deploy, rather than run: a URL that stays up between pushes.
+#
+# Nothing is built here. `.modal/web/` points at an image CI already made and
+# pushed, and FRQ_WEB_IMAGE is which tag of it — so this is the same command
+# the `deploy-web` job runs, with the tag named by hand instead of by the
+# commit. Normally you want the job; this is for deploying an older tag, or a
+# first deploy before CI has one.
+#
+#   FRQ_WEB_IMAGE=registry.gitlab.com/<ns>/frq/web:<sha> just deploy web
+[doc('deploy a .modal/ container as a URL (needs FRQ_WEB_IMAGE)')]
+deploy container="web":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{root}}"
+    if [ -z "${FRQ_WEB_IMAGE:-}" ]; then
+        echo "deploy: set FRQ_WEB_IMAGE to the image tag CI pushed" >&2
+        echo "  e.g. registry.gitlab.com/<ns>/frq/web:\$(git rev-parse HEAD)" >&2
+        exit 1
+    fi
+    exec modal deploy ".modal/{{container}}/container.py"
 
 # The same core, compiled to JavaScript.
 #

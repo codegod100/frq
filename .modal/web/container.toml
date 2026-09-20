@@ -1,0 +1,42 @@
+[container]
+name        = "frq-web"
+description = "the web bundle CI built, served at a URL"
+# Nothing is built here. `registry` is an image CI already made -- the
+# Dockerfile beside this file -- and `${FRQ_WEB_IMAGE}` is expanded when this
+# spec is read, so the tag is whatever commit the deploy job is deploying.
+# Unset, it fails loudly rather than deploying something stale.
+registry    = "${FRQ_WEB_IMAGE}"
+# The GitLab container registry is private, so Modal needs credentials to
+# pull. A Modal Secret of this name holding REGISTRY_USERNAME and
+# REGISTRY_PASSWORD -- a GitLab deploy token with `read_registry` is enough.
+registry_secret = "gitlab-registry"
+# Not a Sandbox: a Sandbox is a run that ends, and this is meant to stay up
+# between pushes. `web` is a Function that Modal fronts with a stable https
+# URL and `modal deploy` leaves running.
+runtime     = "web"
+
+[build]
+# Empty, and that is the whole point of this container: the image is already
+# what it should be. A copy here would add a layer to CI's image -- rebuilt
+# and re-pushed at deploy time -- and the tree it copied would be the
+# deploying machine's rather than the one that was built and tested.
+include = []
+
+[network]
+ports = [8000]
+
+[resources]
+# A static bundle over http.server. The cost is the pull, not the serving.
+cpu     = 1
+memory  = 1024
+timeout = 3600
+# One container kept warm, so the URL answers without a cold pull after a
+# quiet spell. Set it to 0 to pay that second or two instead.
+min_containers = 1
+
+[run]
+workdir = "/srv"
+# The image's own CMD, said again here because `web` starts the [run] command
+# and not the CMD: one place says what runs, and `--shell` into this
+# container gets the same line.
+command = "python3 -m http.server 8000 --directory /srv/web"
