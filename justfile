@@ -203,9 +203,13 @@ _web-bundle:
     # the only cure was clearing the site data by hand. Twice in one
     # afternoon a fix looked broken because of it.
     #
-    # It also retires the workers already installed out there: with no
-    # `flutter_service_worker.js` left to fetch, a browser update check 404s
-    # and the registration is dropped.
+    # For workers already installed out there it is less immediate than it
+    # looks. `none` still emits `flutter_service_worker.js`, empty -- a 200
+    # of zero bytes rather than a 404 -- so a browser holding the old one
+    # fetches it, sees it changed, and installs the empty worker, which
+    # waits its turn like any other. It has no fetch handler once it takes
+    # over, so nothing is served from a cache after that; and the page
+    # unregisters it outright, which is what `index.html` does.
     #
     # The comment lives out here rather than inside the quoted script below,
     # which is single-quoted -- an apostrophe in there ends the string, and

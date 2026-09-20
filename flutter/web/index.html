@@ -37,6 +37,34 @@
     uses it, which this page needs because freeq's broker will only redirect
     back to loopback or its own origins — and this is neither.
   -->
+  <!--
+    No service worker, and no leftovers of one.
+
+    The bundle is built `--pwa-strategy=none`, so nothing here registers
+    one any more. That settles a new visitor, but not a browser that
+    installed one before: `none` still emits `flutter_service_worker.js` as
+    an empty file, so the old worker is replaced by a no-op rather than
+    removed, and a no-op registration is still a registration.
+
+    This removes it. The app is a window onto a live IRC connection and has
+    no offline worth the name, so nothing is lost with the caches -- and
+    what they cost was a deploy that would not arrive: a new worker waits
+    until every tab on the origin is closed, so reloading went on serving
+    the previous bundle and the cure was clearing the site data by hand.
+  -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistrations()
+        .then(function (rs) { rs.forEach(function (r) { r.unregister(); }); })
+        .catch(function () { /* nothing to undo */ });
+    }
+    if (window.caches && caches.keys) {
+      caches.keys()
+        .then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); })
+        .catch(function () { /* nothing to undo */ });
+    }
+  </script>
+
   <script src="frq_core.js"></script>
   <script src="frq_dpop.js"></script>
   <script src="frq_oauth.js"></script>
