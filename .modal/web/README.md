@@ -11,7 +11,15 @@ four constants and a `Popen`.
 Unlike `dev`, this container builds nothing. rickub builds the image
 -- `Dockerfile` here, two stages, the second one just the bundle and
 a python -- and pushes it to `registry.rickub.com`; this deploys that
-exact tag. So the thing served is the thing that was built and
+exact tag.
+
+The python is `tools/webserve.py` rather than `http.server`, and it
+serves the bundle and relays exactly one path. freeq's media endpoint
+allows one origin -- its own -- so an upload posted from the page is
+accepted and its answer withheld, and the URL naming the picture never
+arrives. Posted to this server it is same-origin, and the relay makes
+the cross-origin request from a process the rule does not apply to.
+`FRQ_API_ORIGIN` names the freeq to relay to. So the thing served is the thing that was built and
 tested, and a deploy is a pull rather than a compile. The workflow is
 `.rickub/workflows/web.yml`.
 

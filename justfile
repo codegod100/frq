@@ -77,8 +77,7 @@ run target="desktop":
     case "{{target}}" in
         desktop) just _flutter desktop run ;;
         web)     just _web-bundle
-                 echo "serving build/web on http://localhost:8000"
-                 exec python3 -m http.server 8000 --directory build/web ;;
+                 exec python3 tools/webserve.py 8000 build/web ;;
         *)       echo "usage: just run [desktop|web]" >&2; exit 1 ;;
     esac
 
@@ -110,7 +109,8 @@ test suite="all" *args:
         nim)    just _nim-test "$@" ;;
         web)    just _nim-js
                 node nim/web/test/smoke.js build/web/frq_core.js
-                exec node nim/web/test/session.js ;;
+                node nim/web/test/session.js
+                exec python3 nim/web/test/serve.py ;;
         dart)   just _nim-lib
                 exec "{{tc}}" exec -- bash -c \
                     'cd dart/frq_core && dart pub get && dart test -r expanded' ;;

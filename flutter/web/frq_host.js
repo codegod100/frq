@@ -90,26 +90,25 @@
   // freeq's media endpoint as the multipart form it wants. The URL that
   // comes back goes in the line — that is how a picture travels on IRC.
   //
-  // From a browser this is blocked, and the shape of the block is worth
-  // writing down because it is not the one it looks like. freeq does send
-  // CORS headers -- `vary: origin`, an allow-methods and an allow-headers --
-  // and answers with `access-control-allow-origin: https://irc.freeq.at` for
-  // exactly one origin: its own. It is an allowlist, and we are not on it,
-  // for this build or the deployed one. Being added is somebody else's
-  // decision, the same one as the broker's `return_to` list.
+  // Posted to this server rather than to freeq, and the reason is CORS.
   //
-  // Sending no `Authorization` header is what makes it a *simple* request,
-  // which means no preflight -- so the POST is not stopped, only the answer
-  // is. The picture does upload; the URL naming it is withheld, and a URL
-  // nobody can read is a picture nobody can see. The endpoint wants no auth
-  // for a public upload (it says "No file provided", not "Unauthorized"),
-  // and no credentials are sent, which is deliberate: a request without
-  // them can be allowed by a plain `*`, where `credentials: "include"`
-  // would oblige the server to name this origin specifically. The smaller
-  // ask is the one more likely to be granted.
+  // freeq's media endpoint answers `access-control-allow-origin` for exactly
+  // one origin -- its own -- so a POST straight from here is sent, accepted,
+  // and its reply withheld: the picture uploads and the URL naming it never
+  // arrives. A URL nobody can read is a picture nobody can see. Nothing on
+  // the page can get around that; an `<img>` shows a cross-origin picture
+  // because displaying is not reading, and an upload is nothing but reading
+  // the answer.
   //
-  // Written the way it will work rather than left out -- the same POST from
-  // the desktop build has no such limit.
+  // `/api/v1/upload` on our own origin is not a circumvention, it is a
+  // different request: same-origin, so no preflight and no allowlist.
+  // `tools/webserve.py` relays it, from a process the rule does not apply
+  // to. One `Access-Control-Allow-Origin: *` on freeq's side would retire
+  // the whole arrangement -- and that is now the small ask, because this
+  // sends no credentials.
+  //
+  // Straight to freeq when the page is already on it, where the relay would
+  // be a detour through nothing.
   function pickAndUpload(want) {
     var input = document.createElement("input");
     input.type = "file";
@@ -129,8 +128,10 @@
       form.append("did", want.did);
       if (want.channel) form.append("channel", want.channel);
       form.append("file", file, file.name || "picture.png");
-      fetch("https://" + want.host + "/api/v1/upload",
-            {method: "POST", body: form})
+      var where = window.location.host === want.host
+        ? "https://" + want.host + "/api/v1/upload"
+        : "/api/v1/upload";
+      fetch(where, {method: "POST", body: form})
         .then(function (r) { return r.text().then(function (t) {
           return {ok: r.ok, status: r.status, body: t}; }); })
         .then(function (r) {

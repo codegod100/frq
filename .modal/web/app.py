@@ -57,7 +57,7 @@ image = modal.Image.from_registry(IMAGE or "python:3.13-slim")
 app = modal.App("frq-web", image=image)
 
 PORT = 8000
-SERVE = f"python3 -m http.server {PORT} --directory /srv/web"
+SERVE = f"python3 /srv/webserve.py {PORT} /srv/web"
 
 
 @app.function(cpu=1, memory=1024, timeout=3600, min_containers=1)

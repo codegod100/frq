@@ -192,6 +192,12 @@
   async function whoami(pds, token) {
     const r = await getWithDpop(sessionUrl(pds), token, '');
     if (r.status !== 200) {
+      // Said twice on purpose. The throw reaches the reader as the app's own
+      // warning; this puts the same words in the console, which is where a
+      // refusal is looked at -- and where, until it was printed, there was a
+      // bare `401 (Unauthorized)` and no way to tell an expired token from a
+      // wrong one.
+      console.warn('frq: getSession refused', r.status, r.body);
       throw new Error('The PDS would not accept the token (' + r.status +
         '): ' + r.body);
     }
@@ -350,6 +356,7 @@
       // The refresh token is gone or was revoked, and no retry will bring it
       // back. Clearing the session is what turns "signed in, and nothing
       // works" into a sign-in button.
+      console.warn('frq: refresh refused', r.status, r.body);
       forget();
       throw new Error('The session has expired; sign in again (' +
         r.status + '): ' + r.body);

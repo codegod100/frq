@@ -58,4 +58,5 @@ FROM python:3.13-slim
 COPY --from=build /src/flutter/build/web /srv/web
 
 EXPOSE 8000
-CMD ["python3", "-m", "http.server", "8000", "--directory", "/srv/web"]
+COPY --from=build /src/tools/webserve.py /srv/webserve.py
+CMD ["python3", "/srv/webserve.py", "8000", "/srv/web"]
