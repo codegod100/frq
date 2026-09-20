@@ -362,7 +362,19 @@ class _NimAppState extends State<NimApp> {
                   left: 0,
                   right: 0,
                   bottom: t.spaceS,
-                  child: Align(alignment: Alignment.bottomCenter, child: o),
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    // Opaque, because it floats over the conversation: a
+                    // control with the backlog showing through it is a
+                    // control nobody can read, and "↓ Jump to present" sat
+                    // on top of whatever line happened to be under it.
+                    child: Material(
+                      color: t.bg,
+                      shape: const StadiumBorder(),
+                      clipBehavior: Clip.antiAlias,
+                      child: o,
+                    ),
+                  ),
                 ),
             ],
           ));
@@ -485,12 +497,6 @@ class _NimAppState extends State<NimApp> {
 
       case 'spacer':
         {
-          // A gap that takes whatever is left, when it says so. That is what
-          // carries a row's last children to its far edge: `align: end` on a
-          // row cannot, because a Row with no slack has nothing to align.
-          if (n.prop('expand', false) && flex) {
-            return const Spacer();
-          }
           final s = _d(n.props['size'], t.spaceXxs);
           return SizedBox(width: s, height: s);
         }
@@ -549,14 +555,22 @@ class _NimAppState extends State<NimApp> {
                   overflow: TextOverflow.ellipsis,
                   style: _style(t.textBody, t.onBg)),
             );
-            // `Flexible` and not `Expanded`: a name takes the width it needs
-            // and gives the rest back, but on a row too narrow for everything
-            // it is the part that should shrink. A handle is long, and the
-            // time and the chips beside it are not negotiable — so without
-            // this the sender's row overflowed by however much the name was
-            // over, which on a phone was most handles.
+            // `Expanded`, and the name is drawn at the left of the box it
+            // gets. That box is the slack: it grows to fill the row, so
+            // whatever follows the name is carried to the far edge, and it
+            // shrinks when the row is too narrow for everything, so a long
+            // handle ellipsises rather than pushing the time and the chips
+            // off the end.
+            //
+            // `Flexible` was tried first and is the trap: its flex is 1, so
+            // it competed with the `Spacer` beside it for the free space,
+            // took half, used the 70 points the name needed and left the
+            // rest as a hole at the end of the row. The chips looked
+            // right-aligned to nothing in particular, 365 points short of
+            // the edge.
             return (n.prop('expand', false) && flex)
-                ? Flexible(child: plain)
+                ? Expanded(
+                    child: Align(alignment: Alignment.centerLeft, child: plain))
                 : plain;
           }
           if (kind == 'destructive') {
@@ -875,10 +889,20 @@ class _NimAppState extends State<NimApp> {
           style: _style(t.textBody, t.accent)
               .copyWith(decoration: TextDecoration.underline,
                         decorationColor: t.accent),
-          recognizer: onClick.isEmpty
-              ? null
-              : (_linkTaps[url] ??= TapGestureRecognizer()
-                ..onTap = () => _send(onClick)),
+          // A link with no `onClick` opens itself, which is every link in a
+          // message: `textruns` emits a label and a URL and nothing else, so
+          // until now they were underlined, blue, and inert. Opening one is
+          // the platform's job rather than the core's — a browser tab here,
+          // `xdg-open` there — so it goes through the host rather than back
+          // across the seam as an event the core could not act on.
+          recognizer: _linkTaps[url] ??= TapGestureRecognizer()
+            ..onTap = () {
+              if (onClick.isNotEmpty) {
+                _send(onClick);
+              } else if (url.isNotEmpty) {
+                host.openUrl(url);
+              }
+            },
         );
       case 'text':
         return TextSpan(

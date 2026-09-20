@@ -154,12 +154,13 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
     let open = "profile.open:" & m.frm & ":" & senderActor
     # A row where there is room for one, a Wrap where there is not.
     #
-    # The chips ride the right edge by way of the `stretch` below, and a
-    # stretch needs slack to take. On a phone there is none: with the name
-    # shrunk to nothing, the face, the time and three chips still ask for
-    # more than 360 points has — which is why this was a Wrap to begin with,
-    # and why on a narrow window it still is, putting the chips on a second
-    # line rather than off the edge.
+    # The chips ride the right edge because the name takes the slack: it is
+    # the row's one expanding child, drawn at the left of a box that grows,
+    # so everything after it is carried to the far edge. On a phone there is
+    # no slack to take — with the name shrunk to nothing, the face, the time
+    # and three chips still ask for more than 360 points has — which is why
+    # this was a Wrap to begin with, and why on a narrow window it still is,
+    # putting the chips on a second line rather than off the edge.
     var row = hbox(%*{"spacing": 6, "wrap": not s.wide},
       # From the profile cache rather than the message: a face belongs to a
       # person, not to a line they said, and a profile that arrives after
@@ -168,7 +169,6 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
              onClick = open),
       n("button", %*{"label": m.frm, "kind": "plain", "onClick": open,
                      "expand": s.wide}))
-    if s.wide: row.children.add stretch()
     if m.at > 0:
       row.children.add dimLabel(clockTime(m.at))
     if m.edited:

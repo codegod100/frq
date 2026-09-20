@@ -102,11 +102,6 @@ func separator*(): Node = n("separator")
 
 func spacer*(size: int): Node = n("spacer", %*{"size": size})
 
-func stretch*(): Node = n("spacer", %*{"expand": true})
-  ## A gap that takes whatever the row has left, so what follows it sits
-  ## against the far edge. Only inside a row that does not wrap — a `Wrap`
-  ## packs from the left and has no slack to give away.
-
 func paragraph*(children: varargs[Node]): Node =
   ## Prose with links in it, wrapping as text rather than as boxes.
   ##

@@ -6,6 +6,8 @@
 /// as a blob URL or not at all, and the path branch is never reached.
 library;
 
+import 'dart:js_interop';
+
 import 'package:flutter/widgets.dart';
 
 String envOr(String name, String fallback) => fallback;
@@ -45,3 +47,15 @@ Widget networkImage(String url,
 /// named family that is missing is a notdef box rather than a search. Every
 /// reaction chip drew ▯ until this list was empty.
 const List<String> emojiFonts = <String>[];
+
+@JS('window.open')
+external void _windowOpen(JSString url, JSString target);
+
+/// Open a URL in another tab.
+///
+/// `_blank`, and not this one: a reader following a link out of a
+/// conversation has not asked to leave the conversation, and a page that
+/// navigated away would lose the socket and everything in it.
+void openUrl(String url) {
+  _windowOpen(url.toJS, '_blank'.toJS);
+}

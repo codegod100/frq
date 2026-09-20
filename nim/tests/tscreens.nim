@@ -333,21 +333,27 @@ suite "the sender's row":
 
   test "on a wide window the chips are carried to the right edge":
     # `align: end` on the chips never did anything: the row was a Wrap, which
-    # packs from the left and has no slack to align with. A stretch in a row
-    # that does not wrap is what moves them.
+    # packs from the left and has no slack to align with. What moves them is
+    # the name expanding — it is drawn at the left of a box that grows, so
+    # everything after it ends up against the far edge.
     s.windowWidth = wideWidth
     let t = cht.chatScreen(s, true)
-    check t.find("spacer").anyIt(it.props{"expand"}.getBool())
-    check t.find("hbox").anyIt(not it.props{"wrap"}.getBool() and
-                               it.children.anyIt(it.tag == "avatar"))
+    let senderRows = t.find("hbox").filterIt(
+      it.children.anyIt(it.tag == "avatar"))
+    check senderRows.len == 1
+    check not senderRows[0].props{"wrap"}.getBool()
+    check senderRows[0].children.anyIt(
+      it.tag == "button" and it.props{"expand"}.getBool())
 
   test "on a narrow one it wraps instead, and nothing is pushed off":
     # With the name shrunk to nothing the face, the time and three chips
-    # still ask for more than a phone has, so there the row wraps as before.
+    # still ask for more than a phone has, so there the row wraps as before —
+    # and nothing expands, because a Wrap has no slack to give.
     s.windowWidth = wideWidth - 1  # one pane at a time
     let t = cht.chatScreen(s, true)
-    check not t.find("spacer").anyIt(it.props{"expand"}.getBool())
     let senderRows = t.find("hbox").filterIt(
       it.children.anyIt(it.tag == "avatar"))
     check senderRows.len == 1
     check senderRows[0].props{"wrap"}.getBool()
+    check not senderRows[0].children.anyIt(
+      it.tag == "button" and it.props{"expand"}.getBool())

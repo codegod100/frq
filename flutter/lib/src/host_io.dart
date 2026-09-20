@@ -7,6 +7,7 @@
 /// here, behind the conditional in `host.dart`.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
@@ -41,3 +42,21 @@ const List<String> emojiFonts = <String>[
   'Apple Color Emoji',     // macOS, iOS
   'Segoe UI Emoji',        // Windows
 ];
+
+/// Open a URL in whatever the desktop uses for one.
+///
+/// `xdg-open` on Linux, which is the only desktop this builds for; the other
+/// two are named anyway, because the cost of being wrong about them is a
+/// link that silently does nothing and the cost of saying so is one line.
+///
+/// Best effort and deliberately quiet: a machine with no handler for http is
+/// a machine where a link cannot be opened, and that is not worth an error
+/// over the conversation.
+void openUrl(String url) {
+  final cmd = Platform.isMacOS ? 'open' : (Platform.isWindows ? 'start' : 'xdg-open');
+  try {
+    unawaited(Process.run(cmd, [url]));
+  } catch (_) {
+    // Nothing to do, and nothing worth saying.
+  }
+}

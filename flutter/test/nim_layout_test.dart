@@ -357,6 +357,29 @@ void main() {
     });
   });
 
+  group('the sender row', () {
+    testWidgets('the chips sit against the right edge of the row',
+        (tester) async {
+      // They used to stop well short of it. The name was `Flexible`, whose
+      // flex is 1, so it competed with the `Spacer` beside it for the free
+      // space and took half — using the seventy points a name needs and
+      // leaving the rest as a hole at the end of the row. Measured, because
+      // "right-aligned" was true of the tree and false of the pixels.
+      core.demoUi();
+      core.dispatch('window.size', '1280x800');
+      await layOut(tester, sizes['desktop']!);
+      await tester.pump(const Duration(milliseconds: 150));
+
+      final row = tester.getRect(find.byType(Row).at(1));
+      final chip = tester.getRect(find.text('🙂').first);
+      expect(chip.right, greaterThan(row.right - 60),
+          reason: 'the chips are ${row.right - chip.right} short of the edge');
+      // And the name is still at the left of it, not centred in the slack.
+      final name = tester.getRect(find.text('alice').first);
+      expect(name.left, lessThan(row.left + 60));
+    });
+  });
+
   group('identity', () {
     // Duplicate keys among siblings are an error Flutter throws at build
     // time, so this is mostly a guard on the tree the core emits: every
