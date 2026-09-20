@@ -45,6 +45,18 @@ LIMIT = 12 * 1024 * 1024
 
 
 class Handler(SimpleHTTPRequestHandler):
+    # `http.server` answers HTTP/1.0 and closes the connection after every
+    # response, which is a new one for each of the fifteen-odd files a load
+    # asks for. The base class already sends an accurate Content-Length,
+    # which is what 1.1 needs to be honest about, so keep-alive costs
+    # nothing here.
+    #
+    # It was tried first as a guess at why the preview browser would not
+    # register a service worker, and it was not the reason -- that browser
+    # refuses whatever it is served. Kept because connection reuse is worth
+    # having on its own, not because it fixed anything.
+    protocol_version = "HTTP/1.1"
+
     def end_headers(self):
         """Revalidate everything, because no name here promises anything.
 

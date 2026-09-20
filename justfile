@@ -194,22 +194,14 @@ _web-bundle:
     # is `localhost` only when it is. Guest works everywhere.
     python3 tools/client-metadata.py "${FRQ_WEB_ORIGIN:-http://localhost:8000}" \
         > flutter/web/client-metadata.json
-    # No service worker, via `--pwa-strategy=none` below. Flutter installs
-    # one for offline use and this app has no offline: it is a window onto a
-    # live IRC connection, so a cached copy of it can show nothing anybody
-    # wants. What the worker did instead was hold a deploy back -- a new one
-    # downloads, but the spec leaves it *waiting* until every tab on the
-    # origin is closed, so reloading kept serving the previous bundle and
-    # the only cure was clearing the site data by hand. Twice in one
-    # afternoon a fix looked broken because of it.
-    #
-    # For workers already installed out there it is less immediate than it
-    # looks. `none` still emits `flutter_service_worker.js`, empty -- a 200
-    # of zero bytes rather than a 404 -- so a browser holding the old one
-    # fetches it, sees it changed, and installs the empty worker, which
-    # waits its turn like any other. It has no fetch handler once it takes
-    # over, so nothing is served from a cache after that; and the page
-    # unregisters it outright, which is what `index.html` does.
+    # `--pwa-strategy=none` leaves out Flutter's service worker, and
+    # `flutter/web/frq_sw.js` is registered in its place. The page is still
+    # a PWA -- a browser will not offer to install one without a worker that
+    # handles fetches -- but not that worker: Flutter's is offline-first, so
+    # a new copy of it waits for every tab on the origin to close before it
+    # takes over, and until then the app serves the bundle it already had.
+    # Twice in one afternoon a working fix read as broken because of it.
+    # Ours is network-first and claims its clients at once.
     #
     # The comment lives out here rather than inside the quoted script below,
     # which is single-quoted -- an apostrophe in there ends the string, and

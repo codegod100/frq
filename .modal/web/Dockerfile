@@ -32,9 +32,9 @@ COPY . .
 # and is not worth an install for one call. Inlined means duplicated, so the
 # flags have to be kept in step with that recipe -- `--pwa-strategy=none`
 # below is one of them, and the deployment is the place it matters most,
-# being the one people reach for by URL. See that recipe for what it does
-# and what it does not: an already-installed worker is replaced by an empty
-# one rather than removed, and `flutter/web/index.html` removes it. The core is compiled to
+# being the one people reach for by URL and the only one anybody installs.
+# It leaves out Flutter's service worker; `flutter/web/frq_sw.js` is
+# registered instead, and that recipe says why. The core is compiled to
 # JavaScript and copied into `flutter/web/` rather than into the output,
 # because `flutter build web` copies that directory into the bundle -- which
 # is what makes the page's `<script src="frq_core.js">` resolve the same
