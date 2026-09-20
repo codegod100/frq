@@ -6,10 +6,14 @@ description = "the web bundle CI built, served at a URL"
 # spec is read, so the tag is whatever commit the deploy job is deploying.
 # Unset, it fails loudly rather than deploying something stale.
 registry    = "${FRQ_WEB_IMAGE}"
-# The GitLab container registry is private, so Modal needs credentials to
-# pull. A Modal Secret of this name holding REGISTRY_USERNAME and
-# REGISTRY_PASSWORD -- a GitLab deploy token with `read_registry` is enough.
-registry_secret = "gitlab-registry"
+# Images on registry.rickub.com are private by default, so Modal needs
+# credentials to pull -- and it pulls on every cold start, not once at deploy
+# time, so the CI job's own registry token is no use: it is short-lived by
+# design. A Modal Secret of this name holds REGISTRY_USERNAME and
+# REGISTRY_PASSWORD for a rickub *deploy* token, which is pull-only by
+# construction. The username is a label of your choosing; only the token is
+# checked.
+registry_secret = "rickub-registry"
 # Not a Sandbox: a Sandbox is a run that ends, and this is meant to stay up
 # between pushes. `web` is a Function that Modal fronts with a stable https
 # URL and `modal deploy` leaves running.

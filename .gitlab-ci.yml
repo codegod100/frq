@@ -5,7 +5,7 @@
 # push. There used to be a second, scheduled job that re-resolved the
 # jolt-native flake input; there is no jolt half any more and no input to
 # follow, so there is nothing for a schedule to do.
-stages: [check, image, deploy]
+stages: [check]
 
 # Two toolchains and one artifact between them.
 #
@@ -61,63 +61,3 @@ dart-test:
     - apt-get update -qq && apt-get install -y -qq libssl3
   script:
     - cd dart/frq_core && dart pub get && dart test -r expanded
-
-# The web bundle, as an image, built by CI.
-#
-# Kaniko rather than docker: a GitLab runner has no docker daemon to lend and
-# this needs no privileged mode. The context is the repo and the Dockerfile
-# is `.modal/web/Dockerfile`, whose first stage is the same pinned Flutter and
-# Nim that `just build web` uses -- so this is not a second way to build the
-# web target, it is the first one inside an image.
-#
-# `--cache=true` makes the toolchain layer a pull rather than a fetch on every
-# push: the apt line and the COPY above it change rarely, and the gigabyte
-# behind them is the slow half.
-build-web-image:
-  stage: image
-  needs: [nim-test]
-  image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
-    entrypoint: [""]
-  script:
-    - mkdir -p /kaniko/.docker
-    - |
-      cat > /kaniko/.docker/config.json <<EOF
-      {"auths":{"$CI_REGISTRY":{"username":"$CI_REGISTRY_USER","password":"$CI_REGISTRY_PASSWORD"}}}
-      EOF
-    - /kaniko/executor
-        --context "$CI_PROJECT_DIR"
-        --dockerfile "$CI_PROJECT_DIR/.modal/web/Dockerfile"
-        --destination "$CI_REGISTRY_IMAGE/web:$CI_COMMIT_SHA"
-        --destination "$CI_REGISTRY_IMAGE/web:latest"
-        --cache=true
-        --cache-repo "$CI_REGISTRY_IMAGE/web-cache"
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-# ...and Modal deploys that image, without rebuilding it.
-#
-# `modal deploy` and not `modal run`: a run is a job that ends, and this is a
-# URL that should still be there on the next push. The app is named by
-# `[container] name` in `.modal/web/container.toml`, so deploying again
-# replaces the running one rather than starting a second.
-#
-# Two things have to exist outside this file. MODAL_TOKEN_ID and
-# MODAL_TOKEN_SECRET are CI variables (masked, protected); and a Modal Secret
-# named `gitlab-registry` holds REGISTRY_USERNAME / REGISTRY_PASSWORD for a
-# GitLab deploy token with `read_registry`, because the image above is private
-# and Modal pulls it on every cold start rather than once here.
-deploy-web:
-  stage: deploy
-  needs: [build-web-image]
-  image: python:3.13-slim
-  variables:
-    # The tag, not `latest`: `${FRQ_WEB_IMAGE}` in container.toml expands to
-    # this, so what is deployed is the commit that was built and no other.
-    FRQ_WEB_IMAGE: "$CI_REGISTRY_IMAGE/web:$CI_COMMIT_SHA"
-  before_script:
-    - pip install --quiet --no-cache-dir modal
-  script:
-    - modal deploy .modal/web/container.py
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

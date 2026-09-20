@@ -140,13 +140,13 @@ modal container="dev" *args:
 
 # Deploy, rather than run: a URL that stays up between pushes.
 #
-# Nothing is built here. `.modal/web/` points at an image CI already made and
-# pushed, and FRQ_WEB_IMAGE is which tag of it — so this is the same command
-# the `deploy-web` job runs, with the tag named by hand instead of by the
-# commit. Normally you want the job; this is for deploying an older tag, or a
+# Nothing is built here. `.modal/web/` points at an image rickub already made
+# and pushed, and FRQ_WEB_IMAGE is which tag of it — so this is the same
+# command the `web` workflow's deploy job runs, with the tag named by hand
+# instead of by the commit. Normally you want the job; this is for deploying an older tag, or a
 # first deploy before CI has one.
 #
-#   FRQ_WEB_IMAGE=registry.gitlab.com/<ns>/frq/web:<sha> just deploy web
+#   FRQ_WEB_IMAGE=registry.rickub.com/nandi/frq-web:<sha> just deploy web
 [doc('deploy a .modal/ container as a URL (needs FRQ_WEB_IMAGE)')]
 deploy container="web":
     #!/usr/bin/env bash

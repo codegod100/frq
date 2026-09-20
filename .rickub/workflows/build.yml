@@ -2,11 +2,13 @@
 # deliberately builds nothing. This is the other half: three suites, each one
 # checking a different seam.
 #
-# Nothing here is handed to Modal. The header used to say this job passed the
-# work to a Sandbox against the `devshell` volume — that was the web bundle,
-# and both the web target and the container that built it are gone. What runs
-# now is small enough for a runner: Nim in about a second, Dart in less, and
+# Nothing here is handed to Modal, and nothing here is built for keeps. What
+# runs is small enough for a runner: Nim in about a second, Dart in less, and
 # Flutter for as long as a Flutter toolchain takes to arrive.
+#
+# The web bundle is next door in `web.yml`, because it is the other size of
+# thing — a Flutter SDK inside a docker build, pushed to the registry and
+# deployed to Modal, and only for what actually gets served.
 #
 # Every toolchain is a sha256-pinned tarball rather than an apt package or a
 # third-party setup action, which is this repo's habit — see

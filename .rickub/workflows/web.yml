@@ -1,0 +1,78 @@
+# The web bundle: built into an image here, served by Modal from that image.
+#
+# Separate from `build.yml` because it is a different size of thing. That one
+# is three suites and a few minutes; this is a Flutter SDK inside a docker
+# build, and it only has to happen for what actually gets served — so it runs
+# on the default branch and nowhere else.
+#
+# The split is by what each side has. rickub has a registry, and docker is
+# already logged into it before the first step runs, so this builds and
+# pushes. Modal has somewhere to run it, so it pulls that exact tag and
+# compiles nothing. What ends up on the internet is the commit that was
+# built, by construction rather than by care.
+#
+# See .modal/web/README.md for the two credentials this needs, and
+# https://rickub.com/docs/container-registry for why there is no login step.
+
+name: web
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    # Claims the image name on the first push. Without it the push is denied
+    # for a name that does not exist yet, which reads as an auth failure.
+    permissions:
+      packages: write
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # `$RICKUB_REGISTRY_HOST` and the token behind it are injected into the
+      # run; docker is authenticated before this step. A `docker login` here
+      # would be a second, worse copy of that.
+      #
+      # Tagged by the full commit sha and not `latest`: the deploy below
+      # names the same string, so the thing deployed cannot drift from the
+      # thing built. `latest` moves too, as a convenience for a human pulling
+      # it by hand.
+      - name: Build and push
+        id: build
+        run: |
+          set -euo pipefail
+          image="$RICKUB_REGISTRY_HOST/${{ github.repository }}-web:${{ github.sha }}"
+          moving="$RICKUB_REGISTRY_HOST/${{ github.repository }}-web:latest"
+          docker build -f .modal/web/Dockerfile -t "$image" -t "$moving" .
+          docker push "$image"
+          docker push "$moving"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+  # ...and Modal serves it.
+  #
+  # `modal deploy` and not `modal run`: a run is a job that ends, and this is
+  # a URL that should still be there on the next push. The app is named by
+  # `[container] name` in `.modal/web/container.toml`, so deploying again
+  # replaces the running one rather than standing a second one beside it.
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [image]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --quiet modal
+      - name: Deploy
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          # What `${FRQ_WEB_IMAGE}` in container.toml expands to. The job
+          # above computed it; passing it forward rather than recomputing it
+          # keeps one place saying what the tag is.
+          FRQ_WEB_IMAGE: ${{ needs.image.outputs.image }}
+        run: modal deploy .modal/web/container.py
