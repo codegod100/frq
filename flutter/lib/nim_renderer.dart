@@ -73,6 +73,11 @@ class _NimAppState extends State<NimApp> {
   // nobody asked to be moved.
   final _bottomTicks = <String, int>{};
 
+  // Whether each scroll is at the present, as last reported to the core.
+  // Only the changes are sent: a notification arrives per pixel of a drag,
+  // and the core has one question, not a thousand.
+  final _atPresent = <String, bool>{};
+
   @override
   void initState() {
     super.initState();
@@ -275,6 +280,10 @@ class _NimAppState extends State<NimApp> {
     // What this node's own children are being built into.
     final childAxis = switch (n.tag) {
       'page' || 'vbox' || 'card' || 'scroll' || 'dialog' => _column,
+      // A stack's children are laid out by the stack, not by a flex: an
+      // `Expanded` among them is illegal, so they must not think they are
+      // in one.
+      'overlay' => _noAxis,
       // Wrapping unless the row says otherwise. Flipping this default was
       // tried and reverted: only 4 of 15 `hbox` call sites state `wrap` at
       // all, so the other 11 became Rows and overflowed — the tree's habit is
@@ -310,6 +319,31 @@ class _NimAppState extends State<NimApp> {
             ),
           ),
         );
+
+      /// A node with others floating over it — the backlog, with the button
+      /// that takes you back to the present sitting on top of it.
+      ///
+      /// The floating children are given no height of their own, which is
+      /// the whole point: a control that belongs to the backlog should not
+      /// take a row away from it, and on a short window that row is what
+      /// makes the screen overflow.
+      case 'overlay':
+        {
+          final base = kids.isNotEmpty ? kids.first : const SizedBox.shrink();
+          final over = kids.skip(1).toList();
+          return expanded(Stack(
+            children: [
+              Positioned.fill(child: base),
+              for (final o in over)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: t.spaceS,
+                  child: Align(alignment: Alignment.bottomCenter, child: o),
+                ),
+            ],
+          ));
+        }
 
       case 'vbox':
         {
@@ -694,6 +728,11 @@ class _NimAppState extends State<NimApp> {
               );
             });
           }
+          // How far from the present counts as having left it. Enough that
+          // the last line being taller than the gap does not toggle this on
+          // its own, and little enough that a nudge upward and back does not
+          // leave the button on screen.
+          const away = 120.0;
           Widget body = SingleChildScrollView(
             controller: c,
             // The backlog reads from the bottom; a settings list from the top.
@@ -703,6 +742,26 @@ class _NimAppState extends State<NimApp> {
                 children: _spaced(kids, spacing, vertical: true)),
           );
           body = Scrollbar(controller: c, child: body);
+
+          // Only the backlog reports this. A settings list has no present to
+          // be at, and telling the core about one would put the chat
+          // screen's button on the wrong screen's scrolling.
+          if (stick) {
+            body = NotificationListener<ScrollNotification>(
+              onNotification: (note) {
+                if (note.depth != 0) return false;
+                final m = note.metrics;
+                // Reversed, so the present is the zero end.
+                final here = m.pixels <= m.minScrollExtent + away;
+                if (_atPresent[scrollKey] != here) {
+                  _atPresent[scrollKey] = here;
+                  _send(here ? 'present.back' : 'present.left');
+                }
+                return false;
+              },
+              child: body,
+            );
+          }
           // A scroll takes what the column has left. Outside a Flex there is
           // nothing to take, and the tree is malformed — `_strandedScroll` is
           // a visible size rather than a correct one, so the layout tests see

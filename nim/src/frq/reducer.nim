@@ -421,6 +421,17 @@ proc dispatch*(event: JsonNode) =
     app.atPresent = true
     app.jumpTick += 1
 
+  # Where the reader is in the backlog, as the renderer sees it. The core
+  # cannot know this on its own: a scroll offset belongs to the thing doing
+  # the scrolling, and nothing else here has one.
+  #
+  # Without these `atPresent` only ever became true — at startup, on opening
+  # a room, and on pressing the button — so the button that takes you back to
+  # the present was never shown, there being no state in which the reader had
+  # left it.
+  of "present.left": app.atPresent = false
+  of "present.back": app.atPresent = true
+
   # ------------------------------------------------------------ the compose
   of "draft.change": app.draft = value
   of "send": sendDraft()

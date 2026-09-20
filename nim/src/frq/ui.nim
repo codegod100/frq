@@ -126,6 +126,18 @@ func image*(src: string, maxWidth = 0, maxHeight = 0, onClick = ""): Node =
   if onClick.len > 0: p["onClick"] = %onClick
   n("image", p)
 
+func overlay*(props: JsonNode, base: Node, over: varargs[Node]): Node =
+  ## One node with others floating over it, bottom-centred.
+  ##
+  ## For the controls that belong *to* the backlog rather than beside it.
+  ## "Jump to present" as a row of its own is a row the conversation does not
+  ## get, and on a short window it is the row that makes the screen overflow
+  ## — the chrome around the backlog already asks for more height than a 300
+  ## by 500 window has.
+  result = n("overlay", props, @[base])
+  for o in over:
+    if not o.isNil: result.children.add o
+
 func avatar*(url, fallback: string, size = 24, onClick = ""): Node =
   ## A profile picture, or the letter to draw where there is none. The
   ## fallback is here rather than in the renderer because which letter is a

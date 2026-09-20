@@ -251,7 +251,7 @@ void main() {
       // to do and the target is already on screen — which is what the first
       // version of this test proved: the offset stayed at zero because
       // `ensureVisible` was right not to move.
-      await layOut(tester, const Size(700, 260));
+      await layOut(tester, const Size(700, 420));
       final c = tester
           .widget<Scrollable>(find.byType(Scrollable).first)
           .controller!;
@@ -277,12 +277,83 @@ void main() {
       // A `jumpTo` left set would scroll back to that row on every frame,
       // which is scrolling taken away from the reader.
       core.demoUi();
-      await layOut(tester, const Size(700, 260));
+      await layOut(tester, const Size(700, 420));
       await tester.tap(find.text('→').first);
       await tester.pumpAndSettle();
       expectLaidOut(tester, 'the backlog after the arrow');
       expect(core.dispatchFrame('noop').json.contains('"scrollHere":true'),
           isFalse, reason: 'the core still thinks it has somewhere to go');
+    });
+  });
+
+  group('jump to present', () {
+    // The button only shows when the reader has left the present, and
+    // nothing ever said they had: `atPresent` was set true at startup, on
+    // opening a room and by the button itself, and false by nobody. So the
+    // button was never on screen, which is what "jump to present not
+    // working" looked like from outside.
+    testWidgets('appears once the backlog is scrolled away from',
+        (tester) async {
+      core.demoUi();
+      await layOut(tester, const Size(700, 420));
+      expect(find.text('↓ Jump to present'), findsNothing);
+
+      final c = tester
+          .widget<Scrollable>(find.byType(Scrollable).first)
+          .controller!;
+      c.jumpTo(c.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      expect(find.text('↓ Jump to present'), findsOneWidget,
+          reason: 'the core was never told the reader had left');
+    });
+
+    testWidgets('and takes the view back, and goes away again',
+        (tester) async {
+      core.demoUi();
+      await layOut(tester, const Size(700, 420));
+      final c = tester
+          .widget<Scrollable>(find.byType(Scrollable).first)
+          .controller!;
+      c.jumpTo(c.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('↓ Jump to present'));
+      await tester.pumpAndSettle();
+      // Reversed, so the present is the zero end.
+      expect(c.offset, closeTo(c.position.minScrollExtent, 1.0));
+      expect(find.text('↓ Jump to present'), findsNothing);
+      expectLaidOut(tester, 'the backlog back at the present');
+    });
+
+    testWidgets('and the button fits the cramped window too', (tester) async {
+      // It is a row the chat screen did not have before, and every row is
+      // height the backlog does not get. At 260 points tall this overflows
+      // by a pixel, which is how the first run of these tests failed; the
+      // cramped size the rest of the suite uses is the one that has to hold.
+      core.demoUi();
+      await layOut(tester, sizes['cramped']!);
+      final c = tester
+          .widget<Scrollable>(find.byType(Scrollable).first)
+          .controller!;
+      c.jumpTo(c.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      expect(find.text('↓ Jump to present'), findsOneWidget);
+      expectLaidOut(tester, 'cramped, with the jump button up');
+    });
+
+    testWidgets('a settings list has no present to be at', (tester) async {
+      // It would be the chat screen's button on the wrong screen's
+      // scrolling.
+      core.demoUi();
+      core.dispatch('screen.settings');
+      await layOut(tester, const Size(700, 420));
+      final c = tester
+          .widget<Scrollable>(find.byType(Scrollable).first)
+          .controller!;
+      c.jumpTo(c.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      expect(find.text('↓ Jump to present'), findsNothing);
+      expectLaidOut(tester, 'settings scrolled');
     });
   });
 

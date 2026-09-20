@@ -481,13 +481,16 @@ proc chatScreen*(s: State, connected: bool): Node =
     # `expand` on the row itself: it is the thing that takes the column's
     # remaining height. The renderer used to infer that by looking at this
     # row's children, which is the prop being on the wrong node.
-    n("hbox", %*{"spacing": 8, "wrap": false, "expand": true},
-      @[messages, peoplePane]),
+    # The jump button floats over the backlog rather than taking a row of
+    # its own; see `ui.overlay`.
+    overlay(%*{"key": "backlog", "expand": true},
+      n("hbox", %*{"spacing": 8, "wrap": false, "expand": true},
+        @[messages, peoplePane]),
+      jump),
     overview,
     profile,
     lightbox,
     returnRow,
-    jump,
     banners,
     separator(),
     compose)
