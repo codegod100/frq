@@ -182,9 +182,19 @@
   // It proves the proof is accepted before one is handed to freeq, since this
   // is the very call freeq will make with it. And it collects the nonce the
   // PDS wants, so the proof minted at connect carries one already.
+  //
+  // It fails loudly, and that is the third thing. A refusal here used to
+  // return null and let the sign-in carry on with whatever the token
+  // response happened to say, which is how a rejected token became a guest
+  // on the server with no word about why -- and, from the outside, an
+  // unexplained 401 in the console. Whoever the PDS will not vouch for is
+  // not signed in.
   async function whoami(pds, token) {
     const r = await getWithDpop(sessionUrl(pds), token, '');
-    if (r.status !== 200) return null;
+    if (r.status !== 200) {
+      throw new Error('The PDS would not accept the token (' + r.status +
+        '): ' + r.body);
+    }
     const j = JSON.parse(r.body);
     return { handle: j.handle || '', did: j.did || '', nonce: r.nonce || '' };
   }
@@ -275,14 +285,27 @@
     if (r.status !== 200) throw new Error('Sign-in failed: ' + r.body);
 
     const t = JSON.parse(r.body);
+
+    // What was granted, which is not always what was asked for. The profile
+    // requires servers to return the granted scopes and clients to reject a
+    // response without `atproto` -- and the failure this catches is the
+    // quiet one: a token granted a narrower scope than requested works for
+    // nothing and says so only much later, as a 401 from the PDS with no
+    // hint that a scope was the reason.
+    const granted = String(t.scope || '').split(/\s+/);
+    if (!granted.includes('atproto')) {
+      throw new Error('Signed in without the atproto scope: ' +
+        (t.scope || 'none granted'));
+    }
+
     const who = await whoami(pending.pds, t.access_token);
     const session = {
-      did: (who && who.did) || t.sub || pending.did,
-      handle: (who && who.handle) || pending.handle || '',
+      did: who.did || t.sub || pending.did,
+      handle: who.handle || pending.handle || '',
       accessJwt: t.access_token,
       refresh: t.refresh_token || '',
       pds: pending.pds,
-      dpopNonce: (who && who.nonce) || '',
+      dpopNonce: who.nonce || '',
     };
     drop(PENDING);
     save(SESSION, session);
@@ -313,12 +336,10 @@
     const s = saved();
     if (!s) throw new Error('not signed in');
     const who = await whoami(s.pds, s.accessJwt);
-    if (who) {
-      if (who.handle) s.handle = who.handle;
-      if (who.did) s.did = who.did;
-      if (who.nonce) s.dpopNonce = who.nonce;
-      save(SESSION, s);
-    }
+    if (who.handle) s.handle = who.handle;
+    if (who.did) s.did = who.did;
+    if (who.nonce) s.dpopNonce = who.nonce;
+    save(SESSION, s);
     s.dpopProof = await dpop().proof(
       'GET', sessionUrl(s.pds), s.dpopNonce || '', s.accessJwt);
     return s;
