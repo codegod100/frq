@@ -109,7 +109,8 @@ test suite="all" *args:
                 just _flutter layout test ;;
         nim)    just _nim-test "$@" ;;
         web)    just _nim-js
-                exec node nim/web/test/smoke.js build/web/frq_core.js ;;
+                node nim/web/test/smoke.js build/web/frq_core.js
+                exec node nim/web/test/session.js ;;
         dart)   just _nim-lib
                 exec "{{tc}}" exec -- bash -c \
                     'cd dart/frq_core && dart pub get && dart test -r expanded' ;;

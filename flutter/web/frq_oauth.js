@@ -305,6 +305,10 @@
       accessJwt: t.access_token,
       refresh: t.refresh_token || '',
       pds: pending.pds,
+      // Where a refresh goes. Discovery would find it again, but it is two
+      // round trips to learn something already known, on the path taken
+      // every time the app opens.
+      token: pending.token,
       dpopNonce: who.nonce || '',
     };
     drop(PENDING);
@@ -322,6 +326,42 @@
     dpop().forget();
   }
 
+  // Trade the refresh token for a fresh access token.
+  //
+  // This was the missing half of the session: `resume` stored a
+  // `refresh_token` and nothing ever spent it. An access token is good for
+  // minutes -- the profile says under thirty and recommends five -- so a
+  // reader who signed in and came back an hour later had a session that
+  // looked complete, a PDS that refused it, and a client that shrugged and
+  // connected as a guest.
+  //
+  // The new refresh token replaces the old one and the old one is spent:
+  // they are single-use, so it is saved before anything else can fail.
+  async function refresh() {
+    const s = saved();
+    if (!s || !s.refresh) throw new Error('not signed in');
+    const where = s.token || (await discover(s.pds)).token;
+    const r = await postForm(where, form([
+      ['grant_type', 'refresh_token'],
+      ['refresh_token', s.refresh],
+      ['client_id', clientId()],
+    ]), null);
+    if (r.status !== 200) {
+      // The refresh token is gone or was revoked, and no retry will bring it
+      // back. Clearing the session is what turns "signed in, and nothing
+      // works" into a sign-in button.
+      forget();
+      throw new Error('The session has expired; sign in again (' +
+        r.status + '): ' + r.body);
+    }
+    const t = JSON.parse(r.body);
+    s.accessJwt = t.access_token;
+    if (t.refresh_token) s.refresh = t.refresh_token;
+    s.token = where;
+    save(SESSION, s);
+    return s;
+  }
+
   // Mint the proof freeq will present to the PDS on our behalf.
   //
   // For `GET {pds}/xrpc/com.atproto.server.getSession` and bound to the
@@ -333,9 +373,19 @@
   // access token lives about an hour, and the only thing that comes back
   // through IRC when it has expired is a bare failure.
   async function prepare() {
-    const s = saved();
+    let s = saved();
     if (!s) throw new Error('not signed in');
-    const who = await whoami(s.pds, s.accessJwt);
+    let who;
+    try {
+      who = await whoami(s.pds, s.accessJwt);
+    } catch (e) {
+      // Asking who the token belongs to is also how its age is discovered.
+      // A refusal here is nearly always an expired access token, so spend
+      // the refresh token and ask once more; if that fails it throws, and
+      // saying so beats connecting as somebody else.
+      s = await refresh();
+      who = await whoami(s.pds, s.accessJwt);
+    }
     if (who.handle) s.handle = who.handle;
     if (who.did) s.did = who.did;
     if (who.nonce) s.dpopNonce = who.nonce;
@@ -345,5 +395,5 @@
     return s;
   }
 
-  window.frqOauth = { begin, resume, saved, forget, prepare };
+  window.frqOauth = { begin, resume, saved, forget, prepare, refresh };
 })();
