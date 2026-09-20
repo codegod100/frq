@@ -29,7 +29,10 @@ WORKDIR /src
 COPY . .
 
 # The same two steps as `just build web`, inlined because `just` is not here
-# and is not worth an install for one call. The core is compiled to
+# and is not worth an install for one call. Inlined means duplicated, so the
+# flags have to be kept in step with that recipe -- `--pwa-strategy=none`
+# below is one of them, and the deployment is the place it matters most,
+# being the one people reach for by URL. The core is compiled to
 # JavaScript and copied into `flutter/web/` rather than into the output,
 # because `flutter build web` copies that directory into the bundle -- which
 # is what makes the page's `<script src="frq_core.js">` resolve the same
@@ -47,12 +50,14 @@ RUN tools/toolchain.sh exec -- bash -euo pipefail -c '\
       nim js -d:release --hints:off --path:src --path:web \
           --out:/src/build/web/frq_core.js web/frq_web.nim && \
       cp /src/build/web/frq_core.js /src/flutter/web/frq_core.js && \
-      cd /src/flutter && flutter pub get && flutter build web'
+      cd /src/flutter && flutter pub get && \
+      flutter build web --pwa-strategy=none'
 
 # python:*-slim and not debian:*-slim, for two reasons that happen to agree:
 # Modal runs its own client inside the container, so the image needs a Python
-# it can use, and the server is `http.server` -- the same one `just run web`
-# starts on localhost, so what is served here is served the same way there.
+# it can use, and the server is `tools/webserve.py` -- the same one
+# `just run web` starts on localhost, so what is served here is served the
+# same way there.
 FROM python:3.13-slim
 
 COPY --from=build /src/flutter/build/web /srv/web

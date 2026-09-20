@@ -618,4 +618,26 @@ void main() {
           reason: 'the arrow button is back');
     });
   });
+
+  group('a field holding an identifier', () {
+    testWidgets('asks the keyboard for no help at all', (tester) async {
+      // A phone keyboard puts a space after a full stop, because a full stop
+      // ends a sentence — and is also the middle of `alice.bsky.social`.
+      // These are the properties that turn that off; the tree carrying a
+      // `verbatim` prop proves nothing if the renderer drops it.
+      core.dispatch('screen.connect');
+      core.dispatch('auth.mode:bluesky');
+      await layOut(tester, sizes['phone']!);
+
+      final fields = tester.widgetList<TextField>(find.byType(TextField));
+      expect(fields, isNotEmpty);
+      for (final f in fields) {
+        expect(f.autocorrect, isFalse, reason: 'autocorrect is on');
+        expect(f.enableSuggestions, isFalse, reason: 'suggestions are on');
+        expect(f.textCapitalization, TextCapitalization.none);
+        expect(f.keyboardType, TextInputType.url);
+      }
+      expectLaidOut(tester, 'the connect fields');
+    });
+  });
 }

@@ -81,6 +81,27 @@ def main():
             assert b"across the origin boundary" in r.read()
         ok("it still serves the bundle")
 
+        # Every name in this bundle is stable and its contents change on
+        # every deploy, so a cached copy is a stale one and the browser has
+        # no way to know. `no-cache` keeps the copy and revalidates it.
+        with urllib.request.urlopen(base + "/serve.py", timeout=5) as r:
+            assert r.headers.get("Cache-Control") == "no-cache", \
+                r.headers.get("Cache-Control")
+        ok("and asks the browser to revalidate what it serves")
+
+        # A conditional request still answers 304, which is the whole reason
+        # this costs a round trip rather than a download.
+        req = urllib.request.Request(base + "/serve.py", headers={
+            "If-Modified-Since": r.headers.get("Last-Modified")})
+        code = 0
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r2:
+                code = r2.status
+        except urllib.error.HTTPError as e:
+            code = e.code
+        assert code == 304, code
+        ok("and an unchanged file comes back 304, with no body")
+
         # The relay, with the body and its multipart boundary intact --
         # without the Content-Type the body is unreadable at the far end.
         status, body = post(base + "/api/v1/upload", b"--b\r\npicture\r\n--b--",

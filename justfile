@@ -194,10 +194,26 @@ _web-bundle:
     # is `localhost` only when it is. Guest works everywhere.
     python3 tools/client-metadata.py "${FRQ_WEB_ORIGIN:-http://localhost:8000}" \
         > flutter/web/client-metadata.json
+    # No service worker, via `--pwa-strategy=none` below. Flutter installs
+    # one for offline use and this app has no offline: it is a window onto a
+    # live IRC connection, so a cached copy of it can show nothing anybody
+    # wants. What the worker did instead was hold a deploy back -- a new one
+    # downloads, but the spec leaves it *waiting* until every tab on the
+    # origin is closed, so reloading kept serving the previous bundle and
+    # the only cure was clearing the site data by hand. Twice in one
+    # afternoon a fix looked broken because of it.
+    #
+    # It also retires the workers already installed out there: with no
+    # `flutter_service_worker.js` left to fetch, a browser update check 404s
+    # and the registration is dropped.
+    #
+    # The comment lives out here rather than inside the quoted script below,
+    # which is single-quoted -- an apostrophe in there ends the string, and
+    # the build silently stopped after `pub get` and still exited 0.
     exec "{{tc}}" exec -- bash -euo pipefail -c '
         cd flutter
         flutter pub get
-        flutter build web
+        flutter build web --pwa-strategy=none
         rm -rf ../build/web
         cp -r build/web ../build/web
         echo "built build/web"'
