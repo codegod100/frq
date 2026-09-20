@@ -266,6 +266,26 @@ suite "the overview":
       .anyIt("hello" in it.props{"text"}.getStr() and
              it.props{"text"}.getStr() != "hello")
 
+  test "the newest is last, and the strip opens at its end":
+    # Oldest first, the way a conversation runs -- and so the strip is
+    # opened at the bottom, because a conversation is not something you
+    # join at the beginning. `fromBottom` and not `stickToBottom`: the
+    # latter also reports whether the reader is at the present, and only
+    # the backlog has one.
+    app.overview = true
+    var later = app.rooms["#other"]
+    later.messages.add Message(id: "o2", frm: "zoe", text: "later",
+                               at: 1_700_000_900_000)
+    app.rooms["#other"] = later
+    let t = cs.chatScreen(app, true)
+    let texts = t.find("text").mapIt(it.props{"text"}.getStr())
+    check texts.find("elsewhere") < texts.find("later")
+    let sc = t.find("scroll").filterIt(
+      it.props{"scrollKey"}.getStr() == "overview")
+    check sc.len == 1
+    check sc[0].props{"fromBottom"}.getBool() == true
+    check sc[0].props{"stickToBottom"}.getBool() == false
+
   test "each line is a card that is itself the way there":
     # It used to be a row ending in a "→" button. In a Wrap on a phone the
     # button landed on a line of its own, so every entry cost three rows and

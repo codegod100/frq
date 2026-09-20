@@ -132,9 +132,12 @@ suite "recentEverywhere":
     chans["#c"] = c
     check recentEverywhere(chans, "").allIt(it.text != "joined")
 
-  test "newest first":
+  test "oldest first, the way a conversation runs":
+    # The strip scrolls now, so the newest belongs at the bottom where the
+    # eye finishes and where it is in every backlog beside it. Newest-first
+    # was right while nothing here scrolled and the top was all there was.
     let ats = recentEverywhere(chans, "").mapIt(it.at)
-    check ats == ats.sorted(SortOrder.Descending)
+    check ats == ats.sorted(SortOrder.Ascending)
 
   test "a turn each, so a busy room cannot crowd a quiet one out":
     # The reason for round-robin: taking the newest N outright would answer

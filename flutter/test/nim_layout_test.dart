@@ -603,6 +603,24 @@ void main() {
       await tester.pumpAndSettle();
       expectLaidOut(tester, 'the overview scrolled to its end');
     });
+
+    testWidgets('opens at the newest, not the oldest', (tester) async {
+      // The entries read oldest-first, the way a conversation does -- and a
+      // conversation is not something you join at the beginning. What you
+      // came to the strip for is what has just happened, so it should be
+      // under your eyes without scrolling for it.
+      core.demoUi();
+      core.dispatch('overview.toggle');
+      await layOut(tester, sizes['phone']!);
+
+      final newest = find.textContaining('line 12 of a long day');
+      expect(newest, findsOneWidget, reason: 'the newest entry is not built');
+
+      final view = Offset.zero & sizes['phone']!;
+      expect(view.contains(tester.getRect(newest).center), isTrue,
+          reason: 'the newest entry is off screen when the strip opens');
+      expectLaidOut(tester, 'the overview opened at its end');
+    });
     testWidgets('and the whole entry is the control, not an arrow',
         (tester) async {
       core.demoUi();

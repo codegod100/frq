@@ -942,6 +942,12 @@ class _NimAppState extends State<NimApp> {
           final scrollKey = n.prop('scrollKey', 'scroll');
           final c = _scrollers.putIfAbsent(scrollKey, ScrollController.new);
           final stick = n.prop('stickToBottom', false);
+          // Opens at its end, which is a different thing from being the
+          // backlog. `stickToBottom` carries two meanings -- read from the
+          // bottom, and report whether the reader is at the present -- and
+          // only the backlog has a present to be at. The overview wants the
+          // first of those and not the second.
+          final fromBottom = n.prop('fromBottom', false);
 
           // "Jump to present": a tick that goes up, rather than a flag that
           // would have to be cleared. A reverse scroll holds the present at
@@ -967,7 +973,7 @@ class _NimAppState extends State<NimApp> {
           Widget body = SingleChildScrollView(
             controller: c,
             // The backlog reads from the bottom; a settings list from the top.
-            reverse: stick,
+            reverse: stick || fromBottom,
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: _spaced(kids, spacing, vertical: true)),

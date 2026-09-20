@@ -280,7 +280,7 @@ proc visible(s: State, messages: seq[Message]): seq[Message] =
     result.add m
 
 proc overviewPane(s: State): Node =
-  ## What is happening in every room but this one, newest first.
+  ## What is happening in every room but this one, oldest first.
   ##
   ## A turn to each room rather than the newest lines outright — see
   ## `rooms.recentEverywhere`. Taking the newest hundred would be the strip
@@ -326,7 +326,14 @@ proc overviewPane(s: State): Node =
   # a scrolling list wants an `Expanded` inside this pane, and `expand` is
   # already how the pane claims its own share of the column; a second one
   # nested in the first asks a Column to shrink-wrap and fill at once.
-  result = scroll(%*{"scrollKey": "overview", "orientation": "vertical"},
+  # Opened at its end, where the newest is. The entries read oldest-first
+  # now, the way a conversation does, and a conversation is not something
+  # you join at the beginning: what you came to the strip for is what has
+  # just happened, and it should be under your eyes without scrolling for
+  # it. `fromBottom` and not `stickToBottom` -- the latter also reports
+  # whether the reader is at the present, and only the backlog has one.
+  result = scroll(%*{"scrollKey": "overview", "orientation": "vertical",
+                     "fromBottom": true},
     vbox(%*{"spacing": 4}, title2("Overview"), list))
 
 proc lightboxPane(s: State): Node =

@@ -117,7 +117,7 @@ func roundRobin(colls: seq[seq[Message]]): seq[Message] =
 
 func recentEverywhere*(channels: OrderedTable[string, Room],
                        current: string): seq[Message] =
-  ## The newest lines from every buffer at once, newest first, and at most
+  ## The newest lines from every buffer at once, oldest first, and at most
   ## `overviewLimit` of them — a turn to each room until they run out.
   ##
   ## Bounded per room before anything else, so the cost is the number of rooms
@@ -140,11 +140,16 @@ func recentEverywhere*(channels: OrderedTable[string, Room],
   result = roundRobin(colls)
   if result.len > overviewLimit:
     result = result[0 ..< overviewLimit]
-  # Newest at the top, the other way round from a conversation and right for
-  # the same reason a conversation is the way it is: what you came to the
-  # strip for is what has just happened. The turn-taking above is about which
-  # lines are in it, not where they sit.
-  result.sort(proc (a, b: Message): int = cmp(b.at, a.at))
+  # Oldest at the top, the way a conversation runs, now that the strip
+  # scrolls: the newest is at the bottom where the eye finishes, and where
+  # it is in every backlog on the screen. It read newest-first while nothing
+  # here scrolled, when the top was all there was and the bottom was
+  # wherever the list happened to be cut off.
+  #
+  # The turn-taking above is untouched, and the distinction matters: it
+  # decides *which* lines are here -- the newest from each room, a turn each
+  # -- and this decides only where they sit.
+  result.sort(proc (a, b: Message): int = cmp(a.at, b.at))
 
 func afterMarker*(ch: Room): seq[Message] =
   ## The messages the reader has not seen: everything after the read marker.
