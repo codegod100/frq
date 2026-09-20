@@ -17,10 +17,12 @@ FROM debian:13-slim AS build
 
 # The toolchain's own needs (git, because Flutter shells out to it against
 # its SDK checkout; the unpackers; ca-certificates for curl) and Nim's one
-# host dependency, a C compiler. No GTK here and no CMake: the Linux desktop
-# target wants those, and this is the web one.
+# host dependency, a C compiler. `python3` is one too — CLAUDE.md lists it
+# among what the host brings, and this image is the host here: it writes the
+# OAuth client metadata below. No GTK and no CMake: the Linux desktop target
+# wants those, and this is the web one.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential ca-certificates curl git tar unzip xz-utils \
+        build-essential ca-certificates curl git python3 tar unzip xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
