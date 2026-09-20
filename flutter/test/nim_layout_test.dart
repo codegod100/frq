@@ -370,7 +370,13 @@ void main() {
       await layOut(tester, sizes['desktop']!);
       await tester.pump(const Duration(milliseconds: 150));
 
-      final row = tester.getRect(find.byType(Row).at(1));
+      // The row the chip is actually in, found by ancestry rather than by
+      // index. `Row.at(1)` meant "the second Row in the tree", which is a
+      // fact about everything above this one -- it moved the day the header
+      // stopped being a Wrap.
+      final row = tester.getRect(find
+          .ancestor(of: find.text('🙂').first, matching: find.byType(Row))
+          .first);
       final chip = tester.getRect(find.text('🙂').first);
       expect(chip.right, greaterThan(row.right - 60),
           reason: 'the chips are ${row.right - chip.right} short of the edge');
@@ -470,6 +476,61 @@ void main() {
         expect(g.style?.fontFamilyFallback, contains('Noto Color Emoji'),
             reason: 'a bare glyph without the emoji font: ${g.data}');
       }
+    });
+  });
+
+  group('the room header', () {
+    // "On one line" is a fact about pixels, not about the tree: the tree said
+    // hbox all along and Overview was still on a second row.
+    Future<void> headerFits(WidgetTester tester, Size size, String what) async {
+      core.demoUi();
+      await layOut(tester, size);
+      final back = tester.getRect(find.text('←').first);
+      final people = tester.getRect(find.textContaining('People').first);
+      final overview = tester.getRect(find.text('Overview').first);
+      expect(people.top, back.top,
+          reason: '$what: People is on another line from the back arrow');
+      expect(overview.top, back.top,
+          reason: '$what: Overview wrapped to its own line');
+      expect(overview.right, lessThanOrEqualTo(size.width),
+          reason: '$what: Overview runs ${overview.right - size.width} '
+              'past the right edge');
+    }
+
+    testWidgets('fits on one line on a phone', (tester) async {
+      await headerFits(tester, sizes['phone']!, 'phone');
+      expectLaidOut(tester, 'the phone header');
+    });
+
+    testWidgets('and on a cramped one it wraps rather than overflowing',
+        (tester) async {
+      // 300 points is narrower than any phone and the three chips do not fit
+      // it. What matters there is that the row gives way by wrapping -- the
+      // safety net -- instead of painting a control off the edge where it
+      // cannot be pressed.
+      core.demoUi();
+      await layOut(tester, sizes['cramped']!);
+      final overview = tester.getRect(find.text('Overview').first);
+      expect(overview.right,
+          lessThanOrEqualTo(sizes['cramped']!.width),
+          reason: 'Overview runs past the right edge of a cramped window');
+      expectLaidOut(tester, 'the cramped header');
+    });
+
+    testWidgets('a long room name ellipsises rather than pushing a control off',
+        (tester) async {
+      // The case that made wrapping look necessary. The name is the only
+      // element with no upper bound, so it is the one that yields -- and a
+      // reader still knows the room from its first few characters, where a
+      // control shoved onto a second line costs a row of the backlog.
+      core.demoUi();
+      core.dispatch('room.open:#a-very-long-channel-name-indeed-for-testing');
+      await layOut(tester, sizes['phone']!);
+      final overview = tester.getRect(find.text('Overview').first);
+      final back = tester.getRect(find.text('←').first);
+      expect(overview.top, back.top, reason: 'a long name pushed Overview off');
+      expect(overview.right, lessThanOrEqualTo(sizes['phone']!.width));
+      expectLaidOut(tester, 'a long room name');
     });
   });
 }

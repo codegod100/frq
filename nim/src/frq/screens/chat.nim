@@ -386,17 +386,48 @@ proc chatScreen*(s: State, connected: bool): Node =
   # same thing, one of them cramped.
   let showChatList = s.wide and not s.hideChatList
 
-  # Wrapping, because on a phone this row asks for more than there is: ← Chats,
-  # the room's name, People and Overview do not fit across 360 points, and in a
-  # Row every one of them is a flex child sharing what there is — so Overview
-  # was allotted a quarter of the width and painted itself "Overvi…".
-  var headRow = hbox(%*{"spacing": 8, "wrap": true})
+  # What shares a line, and what gets one to itself.
+  #
+  # Every control used to sit beside the room's name and the row wrapped,
+  # which put Overview alone on a second line looking like an orphan. The
+  # measurements say why nothing subtler works: a chip here is 160.8 points,
+  # of which 48 is Material's padding, so the three of them are 385 before
+  # the name is drawn on a screen 360 wide. No amount of shrinking the name
+  # fits that; at 360 it would be left about twenty points, which is not a
+  # name, it is a hint.
+  #
+  # So the split is made deliberately instead of by overflow. The controls
+  # are few, fixed and related, and they go together on one line in their
+  # compact form. The name is the one element with no upper bound, and it
+  # gets the width to itself -- which is also the answer to a long channel
+  # name, where before it squeezed the controls and now it simply has the
+  # room. Two lines either way, and this is the pair worth having.
+  #
+  # Not a horizontal scroll: a row you must drag to find a button in is a
+  # worse answer than a name that trails off.
+  let compact = not s.wide
+  let chip = proc(text, event: string, on: bool): Node =
+    if compact:
+      button(text, event, if on: "compact-on" else: "compact")
+    else:
+      button(text, event, if on: "primary" else: "default")
+
+  # `wrap` stays on where the name is not in this row: nothing in it is
+  # flexible then, so wrapping is a safety net that costs nothing and never
+  # fires at a real phone's width -- the three compact chips come to 352 of
+  # 360. On a wide window the name is here and is `Flexible`, which a Wrap
+  # cannot hold, so the row is a Row.
+  var headRow = hbox(%*{"spacing": 8, "wrap": compact})
 
   # Each control that comes and goes is in a wrapper of its own, so a child
   # appearing does not renumber the row for the renderer.
   var back = vbox(%*{"key": "back"})
   if not s.wide:
-    back.children.add button("← Chats", "screen.chats")
+    # The arrow without the word. "← Chats" measures 111 points of the 360
+    # there are, and the row is 35 over with it; what dropping it buys is
+    # People and Overview side by side, which is what this row is for. A
+    # lone back arrow at the top left is not a thing anybody has to learn.
+    back.children.add chip("←", "screen.chats", false)
   headRow.children.add back
 
   var fold = vbox(%*{"key": "fold"})
@@ -404,24 +435,34 @@ proc chatScreen*(s: State, connected: bool): Node =
     # One label, lit while the list is up. It used to drop to a bare "☰" with
     # the list showing, which made the switch two different-looking controls in
     # the same slot and left the reader guessing which state they were in.
-    fold.children.add button("☰ Chats", "chat-list.toggle",
-                             if not s.hideChatList: "primary" else: "default")
+    fold.children.add chip("☰ Chats", "chat-list.toggle", not s.hideChatList)
   headRow.children.add fold
 
-  headRow.children.add title(name)
+  # On a wide window the name still rides with the controls -- there is room
+  # for it there, and a heading on a line of its own above four chips would
+  # be a lot of empty space.
+  if not compact:
+    headRow.children.add title(name, shrink = true)
 
   var people = vbox(%*{"key": "people"})
   if isChannel:
-    people.children.add button("People " & $room.users.len, "users.toggle",
-                               if s.showUsers: "primary" else: "default")
+    people.children.add chip("People " & $room.users.len, "users.toggle",
+                             s.showUsers)
   headRow.children.add people
 
   # Not in a conditional wrapper: the overview is about every room rather than
   # this one, so it is offered in a DM and in a channel alike.
-  headRow.children.add n("button",
-    %*{"key": "overview-toggle", "label": "Overview",
-       "kind": (if s.overview: "primary" else: "default"),
-       "onClick": "overview.toggle"})
+  headRow.children.add chip("Overview", "overview.toggle", s.overview)
+
+  # The name, under the controls and across the whole width, on a narrow
+  # window only.
+  var heading = vbox(%*{"key": "room-name"})
+  if compact:
+    # `wrap: false`, because a shrinking title is `Flexible` and a Wrap
+    # cannot hold one -- and without the Row there is nothing to shrink
+    # against, so a long name would run off the edge instead of ellipsising.
+    heading.children.add hbox(%*{"spacing": 0, "wrap": false},
+                              title(name, shrink = true))
 
   # The backlog. Not a page — a page scrolls everything, which would carry the
   # compose bar off the bottom with the messages.
@@ -567,6 +608,7 @@ proc chatScreen*(s: State, connected: bool): Node =
 
   vbox(%*{"spacing": 8, "margin": 12, "expand": true},
     headRow,
+    heading,
     errorNote(s),
     # `expand` on the row itself: it is the thing that takes the column's
     # remaining height. The renderer used to infer that by looking at this

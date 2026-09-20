@@ -309,7 +309,7 @@ suite "the chat screen's panes":
     s.windowWidth = wideWidth - 1
     let t = cht.chatScreen(s, true)
     check "Discover" notin t.labels("button")
-    check "← Chats" in t.labels("button")
+    check "←" in t.labels("button")
 
   test "a room in the strip opens it, and the current one is lit":
     s.hideChatList = false

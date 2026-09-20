@@ -522,9 +522,18 @@ class _NimAppState extends State<NimApp> {
         );
 
       case 'title':
-        return Text(n.prop('label', ''),
+        final shrinks = n.prop('shrink', false);
+        final heading = Text(n.prop('label', ''),
+            maxLines: shrinks ? 1 : null,
+            overflow: shrinks ? TextOverflow.ellipsis : TextOverflow.clip,
             style: _style(t.textTitle3, t.onBg)
                 .copyWith(fontWeight: FontWeight.bold));
+        // `Flexible` and deliberately not `Expanded`: a room's name should
+        // take the width it needs and no more, so the controls stay gathered
+        // beside it instead of being flung to the far edge. What it gives up
+        // is only the width it does not have -- a name longer than the row
+        // ellipsises, where before it pushed a control onto a second line.
+        return shrinks && flex ? Flexible(child: heading) : heading;
 
       case 'title-2':
         return Padding(
@@ -647,6 +656,42 @@ class _NimAppState extends State<NimApp> {
                 ? Expanded(
                     child: Align(alignment: Alignment.centerLeft, child: plain))
                 : plain;
+          }
+          // A control in a row that has more of them than a phone is wide.
+          //
+          // Measured: an ordinary chip here is 160.8 points, of which 48 is
+          // Material's own horizontal padding and the rest a short word.
+          // Three of them come to 385 before a room's name is drawn, on a
+          // screen 360 wide -- so the padding, not the wording, is what
+          // there is no room for. This keeps every label and spends the
+          // space on them instead.
+          if (kind == 'compact') {
+            return OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                minimumSize: const Size(0, 36),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                textStyle: _style(t.textBody, t.onBg)
+                    .copyWith(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              onPressed: () => _send(onClick),
+              child: label,
+            );
+          }
+          if (kind == 'compact-on') {
+            return FilledButton(
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                minimumSize: const Size(0, 36),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                textStyle: _style(t.textBody, t.onBg)
+                    .copyWith(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              onPressed: () => _send(onClick),
+              child: label,
+            );
           }
           if (kind == 'destructive') {
             return FilledButton(

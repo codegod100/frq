@@ -159,10 +159,10 @@ suite "the chat screen":
     check "Picture attached" in cs.chatScreen(s, true).labels("dim-label")
 
   test "Back to chats on a narrow window, fold on a wide one":
-    check "← Chats" in cs.chatScreen(s, true).labels("button")
+    check "←" in cs.chatScreen(s, true).labels("button")
     s.windowWidth = 1200
     let wide = cs.chatScreen(s, true)
-    check "← Chats" notin wide.labels("button")
+    check "←" notin wide.labels("button")
     check "☰ Chats" in wide.labels("button")
 
   test "People is offered in a channel and not in a DM":

@@ -61,7 +61,13 @@ func page*(props: JsonNode, children: varargs[Node]): Node =
 
 func label*(text: string): Node = n("label", %*{"label": text})
 func dimLabel*(text: string): Node = n("dim-label", %*{"label": text})
-func title*(text: string): Node = n("title", %*{"label": text})
+func title*(text: string, shrink = false): Node =
+  ## `shrink` is a title that yields: it takes what a row has left over and
+  ## ellipsises rather than pushing what follows it off the end. Distinct
+  ## from `expand`, which claims the slack instead of giving it up.
+  var p = %*{"label": text}
+  if shrink: p["shrink"] = %true
+  n("title", p)
 func title2*(text: string): Node = n("title-2", %*{"label": text})
 func spinner*(): Node = n("spinner")
 
