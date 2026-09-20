@@ -20,10 +20,19 @@ import subprocess
 
 import modal
 
-# The tag CI just built and pushed. No default: unset, this fails here rather
-# than deploying whatever was current the last time somebody ran it.
+# This file is read twice: here, by `modal deploy`, and again inside the
+# container, where Modal imports it to find `serve` by name. Everything at
+# module level therefore runs in both places — and the environment is not the
+# same in both. `FRQ_WEB_IMAGE` is set by whoever deploys and by nobody in the
+# container, so a bare `raise` here killed every container on start, the port
+# never opened, and the URL hung while the deploy reported success.
+#
+# The tag CI just built and pushed. No default when deploying: unset, this
+# fails rather than serving whatever was current the last time somebody ran
+# it. In the container the tag is beside the point — the image is already the
+# one that was deployed — so a placeholder stands in and is never built.
 IMAGE = os.environ.get("FRQ_WEB_IMAGE", "")
-if not IMAGE:
+if modal.is_local() and not IMAGE:
     raise SystemExit(
         "FRQ_WEB_IMAGE is unset. It is the image to serve, e.g.\n"
         "  FRQ_WEB_IMAGE=registry.rickub.com/nandi/frq-web:<sha> \\\n"
@@ -41,7 +50,7 @@ if not IMAGE:
 # To go the other way, set the image private on rickub and pass
 # `secret=modal.Secret.from_name("rickub-registry")` below, naming a Secret
 # with REGISTRY_USERNAME / REGISTRY_PASSWORD for a pull-only token.
-image = modal.Image.from_registry(IMAGE)
+image = modal.Image.from_registry(IMAGE or "python:3.13-slim")
 
 # Named, and the name is what makes a second deploy replace the running one
 # rather than stand another beside it.
