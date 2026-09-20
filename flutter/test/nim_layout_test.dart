@@ -241,6 +241,51 @@ void main() {
     });
   });
 
+  group('going to a message', () {
+    // The core has always marked the row a reply points at with
+    // `scrollHere`, and the renderer ignored the prop — so the arrow on a
+    // reply chip highlighted the message and left the view where it was.
+    testWidgets('the target is scrolled into view', (tester) async {
+      core.demoUi();
+      // Short enough that the backlog does not fit, or a scroll has nothing
+      // to do and the target is already on screen — which is what the first
+      // version of this test proved: the offset stayed at zero because
+      // `ensureVisible` was right not to move.
+      await layOut(tester, const Size(700, 260));
+      final c = tester
+          .widget<Scrollable>(find.byType(Scrollable).first)
+          .controller!;
+
+      // Away from the present, where the answered message is not.
+      c.jumpTo(c.position.maxScrollExtent);
+      await tester.pump();
+      final before = c.offset;
+      expect(before, greaterThan(0.0), reason: 'nothing to scroll here');
+
+      core.dispatch('goto:5');
+      await tester.pump(const Duration(milliseconds: 150));
+      // Settled, not a timed pump: one pump of 400ms advances the clock but
+      // does not run the scroll animation out, and the offset comes back
+      // unchanged as though nothing had happened.
+      await tester.pumpAndSettle();
+      expectLaidOut(tester, 'the backlog after going to a message');
+      expect(c.offset, lessThan(before), reason: 'the view did not move');
+    });
+
+    testWidgets('and the core is told, so the view is not pinned there',
+        (tester) async {
+      // A `jumpTo` left set would scroll back to that row on every frame,
+      // which is scrolling taken away from the reader.
+      core.demoUi();
+      await layOut(tester, const Size(700, 260));
+      await tester.tap(find.text('→').first);
+      await tester.pumpAndSettle();
+      expectLaidOut(tester, 'the backlog after the arrow');
+      expect(core.dispatchFrame('noop').json.contains('"scrollHere":true'),
+          isFalse, reason: 'the core still thinks it has somewhere to go');
+    });
+  });
+
   group('identity', () {
     // Duplicate keys among siblings are an error Flutter throws at build
     // time, so this is mostly a guard on the tree the core emits: every

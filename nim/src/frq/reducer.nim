@@ -503,6 +503,13 @@ proc dispatch*(event: JsonNode) =
     app.jumpTo = arg
     app.highlight = arg
 
+  of "jump.done":
+    # The renderer, saying it has scrolled there. The target is taken off
+    # again because a `jumpTo` that stayed set would pin the view to that
+    # message and take scrolling away from the reader — the highlight stays,
+    # since that is what says "this is the one you asked for".
+    app.jumpTo = ""
+
   of "overview.goto":
     # The overview is the one place that moves the reader without their having
     # asked to leave where they were, so it is the one place that owes them

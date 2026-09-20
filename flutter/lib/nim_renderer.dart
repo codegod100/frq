@@ -60,6 +60,19 @@ class _NimAppState extends State<NimApp> {
   // switching rooms is a different backlog at a different offset.
   final _scrollers = <String, ScrollController>{};
 
+  // Where a "go to that message" is pointing, for the one frame it is
+  // pointing there. The core marks the row with `scrollHere`, this finds it
+  // after the frame is laid out — `ensureVisible` needs a built element, so
+  // it cannot happen during the build that asks for it — and then tells the
+  // core it has arrived, which takes the mark off. Leaving it on would pin
+  // the view to that row and take scrolling away from the reader.
+  final _jumpKey = GlobalKey();
+
+  // The last `scrollToBottom` tick acted on, per scroll. The core counts up
+  // when "Jump to present" is pressed; an unchanged count is a frame where
+  // nobody asked to be moved.
+  final _bottomTicks = <String, int>{};
+
   @override
   void initState() {
     super.initState();
@@ -230,7 +243,28 @@ class _NimAppState extends State<NimApp> {
     // holds per element is at stake: text controllers, scroll offsets, and
     // the selectables a live text selection is made of.
     final key = n.prop('key', '');
-    final w = _buildNode(n, axis);
+    var w = _buildNode(n, axis);
+
+    // The row a reply's arrow is aiming at. Two keys on one widget is not a
+    // thing, so they nest: the ValueKey keeps the element across rebuilds,
+    // and the GlobalKey is how this frame finds it afterwards.
+    if (n.prop('scrollHere', false)) {
+      w = KeyedSubtree(key: _jumpKey, child: w);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = _jumpKey.currentContext;
+        if (ctx == null || !mounted) return;
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+          // A little down from the top, so the message that was replied to
+          // is read with what came after it rather than alone against the
+          // ceiling.
+          alignment: 0.2,
+        );
+        _send('jump.done');
+      });
+    }
     return key.isEmpty ? w : KeyedSubtree(key: ValueKey(key), child: w);
   }
 
@@ -640,12 +674,30 @@ class _NimAppState extends State<NimApp> {
       case 'scroll':
         {
           // Both ends of the same scroll, named so they are the same one.
-          final c = _scrollers.putIfAbsent(
-              n.prop('scrollKey', 'scroll'), ScrollController.new);
+          final scrollKey = n.prop('scrollKey', 'scroll');
+          final c = _scrollers.putIfAbsent(scrollKey, ScrollController.new);
+          final stick = n.prop('stickToBottom', false);
+
+          // "Jump to present": a tick that goes up, rather than a flag that
+          // would have to be cleared. A reverse scroll holds the present at
+          // offset zero, which is why this is not maxScrollExtent.
+          final tick = n.prop('scrollToBottom', 0);
+          if (_bottomTicks[scrollKey] != tick) {
+            _bottomTicks[scrollKey] = tick;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!c.hasClients) return;
+              c.animateTo(
+                stick ? c.position.minScrollExtent
+                      : c.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut,
+              );
+            });
+          }
           Widget body = SingleChildScrollView(
             controller: c,
             // The backlog reads from the bottom; a settings list from the top.
-            reverse: n.prop('stickToBottom', false),
+            reverse: stick,
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: _spaced(kids, spacing, vertical: true)),
