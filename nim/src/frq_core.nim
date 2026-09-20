@@ -203,6 +203,12 @@ proc frq_ui_poll*(): cstring {.exportc, dynlib.} =
   ## anything happened. Same work as render; named for what the caller means.
   dup(currentTree())
 
+proc frq_ui_wanted_picture*(): cstring {.exportc, dynlib.} =
+  ## What an upload needs — `{host, did, channel}` — or empty where none is
+  ## wanted. Picking a file and posting it are the host's; this is the core
+  ## saying who is asking and where to.
+  dup(reducer.wantedPicture())
+
 proc frq_ui_demo*() {.exportc, dynlib.} =
   ## Fill a room with a representative conversation, for a test that wants to
   ## lay the chat screen out without a server.

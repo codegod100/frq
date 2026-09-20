@@ -194,6 +194,11 @@ UiFrame dispatchFrame(String id, [String value = '']) {
 }
 
 
+/// What an upload needs — `{host, did, channel}` as JSON — or empty where
+/// nothing is wanted. Taken as it is read: a file dialog opened twice is one
+/// the reader has to dismiss twice.
+String wantedPicture() => host.wantedPicture() ?? '';
+
 /// Fill a room with a representative conversation, so a test can lay the chat
 /// screen out without a server. See the Nim side for why it exists.
 void demoUi() => host.uiDemo();

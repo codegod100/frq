@@ -114,6 +114,10 @@ type
     joinInput*: string
     search*: string
 
+    picking*: bool
+      ## Whether the host has been asked for a picture. Taken as it is read,
+      ## so a dialog is opened once rather than on every frame.
+
     # The compose bar and its three companions.
     draft*: string
     editing*: EditTarget

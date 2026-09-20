@@ -65,3 +65,14 @@ external void _windowOpen(JSString url, JSString target);
 void openUrl(String url) {
   _windowOpen(url.toJS, '_blank'.toJS);
 }
+
+/// Not here: `frq_host.js` does this one.
+///
+/// The picture is chosen with the browser's own file input and posted with
+/// `fetch`, on the JavaScript side, where both are one line. Dart is not
+/// asked to reach through `dart:js_interop` for a `FormData` and a `File`.
+Future<String> pickAndUpload(
+        {required String host,
+        required String did,
+        required String channel}) async =>
+    '';

@@ -276,3 +276,59 @@ suite "being renamed":
     joined("#freeq")
     say(":stranger!s@h NICK someoneelse")
     check app.formNick == "alice"
+
+suite "sending a picture":
+  setup:
+    reset()
+    joined("#freeq")
+    dispatch(%*{"id": "room.open:#freeq"})
+    discard sent()
+
+  test "the button asks the host, and says who is asking":
+    # It had no handler at all: the press traced "no handler" and nothing
+    # happened, which is what "the image upload icon is not working" was.
+    #
+    # A guest cannot upload — freeq files one under an account — so the
+    # question is only asked when there is one.
+    check wantedPicture() == ""
+    dispatch(%*{"id": "image.pick"})
+    check wantedPicture() == ""          # no session yet: refused, with a reason
+    check app.hasError
+
+    app.hasError = false
+    dispatch(%*{"id": "window.size", "value": "1280x800"})
+    setSessionForTest("did:plc:abc", "https://pds.example")
+    dispatch(%*{"id": "image.pick"})
+    let want = parseJson(wantedPicture())
+    check want["did"].getStr() == "did:plc:abc"
+    check want["channel"].getStr() == "#freeq"
+    check want["host"].getStr() == "irc.freeq.at"
+
+  test "and is asked once, so one dialog opens":
+    setSessionForTest("did:plc:abc", "https://pds.example")
+    dispatch(%*{"id": "image.pick"})
+    check wantedPicture().len > 0
+    check wantedPicture() == ""
+
+  test "the URL that comes back goes out in the line":
+    # This is how a picture travels on IRC: the wire carries text, and every
+    # client finds the picture by looking for a link in it. It used to be put
+    # on the local copy alone, so a picture appeared for the sender and for
+    # nobody else.
+    dispatch(%*{"id": "attachment.ready:https://irc.freeq.at/api/v1/media/x/y/p.png"})
+    dispatch(%*{"id": "draft.change", "value": "look at this"})
+    dispatch(%*{"id": "send"})
+    check sent().anyIt(
+      it == "PRIVMSG #freeq :look at this " &
+            "https://irc.freeq.at/api/v1/media/x/y/p.png")
+
+  test "a picture with no words is a message too":
+    dispatch(%*{"id": "attachment.ready:https://irc.freeq.at/api/v1/media/x/y/p.png"})
+    dispatch(%*{"id": "send"})
+    check sent().anyIt(
+      it == "PRIVMSG #freeq :https://irc.freeq.at/api/v1/media/x/y/p.png")
+
+  test "and a failure is said rather than swallowed":
+    dispatch(%*{"id": "attachment.failed:Upload failed (413)"})
+    check app.hasError
+    check app.error == "Upload failed (413)"

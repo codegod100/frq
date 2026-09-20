@@ -16,6 +16,8 @@
 //     because the authorization leg leaves the page.
 //   * the profiles, which the core asks for through `fetch` (in the Nim, not
 //     here), so there is nothing to do for them.
+//   * a picture: the file dialog and the upload, because both are the
+//     platform's rather than the core's.
 //
 // Flutter draws. It reaches the core through `dart:js_interop`, and never
 // touches any of this.
@@ -84,6 +86,55 @@
     }
   }, 50);
 
+  // A picture: chosen with the browser's own file input, and posted to
+  // freeq's media endpoint as the multipart form it wants. The URL that
+  // comes back goes in the line — that is how a picture travels on IRC.
+  //
+  // The endpoint sends no `Access-Control-Allow-Origin`, so this is blocked
+  // by the browser from any origin but freeq's own. It is written the way it
+  // will work rather than left out: the same POST from the desktop build has
+  // no such limit, and one header on the server end is all this waits for.
+  function pickAndUpload(want) {
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = function () {
+      var file = input.files && input.files[0];
+      if (!file) { frq.dispatch(JSON.stringify({id: "attachment.failed",
+                                                value: ""})); return; }
+      // The endpoint's own cap, refused here rather than after several
+      // megabytes have crossed the wire to be turned down.
+      if (file.size > 10 * 1024 * 1024) {
+        frq.dispatch(JSON.stringify(
+          {id: "attachment.failed:That picture is over the 10MB the server takes."}));
+        return;
+      }
+      var form = new FormData();
+      form.append("did", want.did);
+      if (want.channel) form.append("channel", want.channel);
+      form.append("file", file, file.name || "picture.png");
+      fetch("https://" + want.host + "/api/v1/upload",
+            {method: "POST", body: form, credentials: "include"})
+        .then(function (r) { return r.text().then(function (t) {
+          return {ok: r.ok, status: r.status, body: t}; }); })
+        .then(function (r) {
+          var url = "";
+          try { url = JSON.parse(r.body).url || ""; } catch (e) { url = ""; }
+          if (r.ok && url) {
+            frq.dispatch(JSON.stringify({id: "attachment.ready:" + url}));
+          } else {
+            frq.dispatch(JSON.stringify({id: "attachment.failed:Upload failed ("
+                                             + r.status + ")"}));
+          }
+        })
+        .catch(function (e) {
+          frq.dispatch(JSON.stringify({id: "attachment.failed:" +
+            String(e && e.message ? e.message : e)}));
+        });
+    };
+    input.click();
+  }
+
   // The sign-in, which this page does itself — see `frq_oauth.js` for why
   // the broker cannot finish one here.
   //
@@ -116,6 +167,9 @@
         });
     }
     if (frq.needForget()) frqOauth.forget();
+
+    var upload = frq.wantedPicture();
+    if (upload) pickAndUpload(JSON.parse(upload));
   }, 50);
 
   frq.init("");

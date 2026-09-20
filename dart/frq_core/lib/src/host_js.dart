@@ -38,6 +38,11 @@ String? uiDispatch(String event) => _frq.dispatch(event.toJS).toDart;
 
 void uiDemo() => _frq.demo();
 
+/// Never asked for here: `frq_host.js` takes this one, and whoever reads it
+/// first clears it. A file input and a `FormData` are one line of JavaScript
+/// and a reach through `dart:js_interop` from this side.
+String? wantedPicture() => null;
+
 void uiReset() => _frq.dispatch('{"id":"reset"}'.toJS);
 
 String hostVersion() => 'js';

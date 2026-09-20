@@ -201,6 +201,22 @@ when oa.hostSignsIn:
     session = webSession
     openSocket()
 
+proc setSessionForTest*(did, pds: string) =
+  ## A signed-in connection, for a test that is about what follows one.
+  session = Session(kind: skPdsOauth, did: did, pds: pds, accessJwt: "tok")
+
+proc wantedPicture*(): string =
+  ## What an upload needs, as JSON, or "" when none is wanted.
+  ##
+  ## Taken as it is read: a file dialog opened twice is a file dialog the
+  ## reader has to dismiss twice. The DID is who the upload is filed under —
+  ## freeq takes one with a live session, which is why a guest cannot — and
+  ## the channel is where it is going.
+  if not app.picking: return ""
+  app.picking = false
+  $(%*{"host": app.formHost.strip(), "did": session.did,
+       "channel": app.current})
+
 proc restore*() =
   ## What a previous run left on disk, back in the state.
   ##
@@ -354,26 +370,38 @@ proc connectNow() =
 
 proc sendDraft() =
   let text = app.draft.strip()
-  if text.len == 0 or app.current.len == 0: return
+  # A picture with no words is a message; words with no picture are too.
+  let picture = app.attachment.url
+  if (text.len == 0 and picture.len == 0) or app.current.len == 0: return
+  # The URL goes *in the line*, because that is how a picture travels on IRC:
+  # the wire carries text, and every client — this one included — finds the
+  # picture by looking for a link in it. `textruns.firstImageUrl` is the other
+  # half of this, and it is how every incoming picture is found.
+  #
+  # It used to be set on the local copy alone, so a picture appeared for the
+  # sender and for nobody else.
+  let line = if picture.len == 0: text
+             elif text.len == 0: picture
+             else: text & " " & picture
 
   if app.editing.has:
     # An edit is a fresh PRIVMSG tagged with what it replaces; the server
     # rewrites the original and echoes the revision back.
     send("@+draft/edit=" & app.editing.id & " PRIVMSG " & app.current &
-         " :" & text)
+         " :" & line)
     app.editing = EditTarget()
   elif app.replyingTo.has:
     send("@+draft/reply=" & app.replyingTo.id & " PRIVMSG " & app.current &
-         " :" & text)
+         " :" & line)
     app.replyingTo = ReplyTarget()
   else:
-    send("PRIVMSG " & app.current & " :" & text)
+    send("PRIVMSG " & app.current & " :" & line)
 
   # Echoed locally, because the server does not send your own PRIVMSG back
   # unless echo-message was negotiated — and every client that forgets this
   # looks like it dropped the message.
   var r = app.rooms[app.current]
-  var m = Message(frm: app.formNick, text: text, at: nowMs(),
+  var m = Message(frm: app.formNick, text: line, at: nowMs(),
                   localId: "local-" & $r.messages.len, pending: true)
   m.imageUrl = app.attachment.url
   r.messages.add m
@@ -561,6 +589,36 @@ proc dispatch*(event: JsonNode) =
   of "edit.cancel":
     app.editing = EditTarget()
     app.draft = ""
+
+  of "image.pick":
+    # Picking a file and uploading it are both the host's: a file dialog is
+    # the platform's, and so is a multipart POST. The core says who is asking
+    # and where to, and the host answers with a URL.
+    #
+    # This had no handler at all, so the button traced "no handler" and did
+    # nothing — which is what "the image upload icon is not working" was.
+    if session.did.len == 0:
+      setError("Sign in to send a picture — an upload is filed under your " &
+               "account.")
+    elif app.current.len == 0:
+      setError("Open a conversation to send a picture to.")
+    else:
+      app.picking = true
+      app.status = "Choosing a picture…"
+
+  of "attachment.ready":
+    # The URL freeq serves it back at. Held apart from the draft rather than
+    # pasted into it — see `cells.Attachment` — and put on the line by
+    # `sendDraft` when the message goes.
+    app.picking = false
+    if arg.len > 0:
+      app.attachment = Attachment(has: true, path: arg, url: arg,
+                                  status: usReady)
+      app.status = "Picture attached"
+
+  of "attachment.failed":
+    app.picking = false
+    setError(if arg.len > 0: arg else: "That picture could not be sent.")
 
   of "attachment.clear": app.attachment = Attachment()
 

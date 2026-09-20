@@ -123,6 +123,9 @@ proc frqWantedSignIn(): cstring {.exportc.} = oa.wantedSignIn().cstring
 proc frqNeedProof(): bool {.exportc.} = oa.needProof()
   ## Whether a connection is waiting on a DPoP proof.
 
+proc frqWantedPicture(): cstring {.exportc.} = wantedPicture().cstring
+  ## What an upload needs — `{host, did, channel}` — or empty.
+
 proc frqNeedForget(): bool {.exportc.} = oa.needForget()
   ## Whether the reader has asked to be forgotten.
 
@@ -180,6 +183,7 @@ globalThis.frq = {
   wantedSignIn: frqWantedSignIn,
   needProof: frqNeedProof,
   needForget: frqNeedForget,
+  wantedPicture: frqWantedPicture,
   proofReady: frqProofReady,
   signInFailed: frqSignInFailed,
   trace: frqTrace,

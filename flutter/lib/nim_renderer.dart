@@ -11,6 +11,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/gestures.dart';
 
@@ -108,7 +109,34 @@ class _NimAppState extends State<NimApp> {
       // an answer that is almost always no.
       final next = core.pollIfChanged(_frame.json);
       if (next != null) setState(() => _frame = next);
+
+      // A picture the reader asked for. Polled beside the tree because it is
+      // the same question — "has the core asked for anything?" — and because
+      // a file dialog cannot be opened from inside a build.
+      final want = core.wantedPicture();
+      if (want.isNotEmpty) _pickPicture(want);
     });
+  }
+
+  /// Choose a picture, upload it, and tell the core where it landed.
+  ///
+  /// Both halves are the platform's: a file dialog and a multipart POST. The
+  /// core knows who is asking and where to, and nothing else about it.
+  Future<void> _pickPicture(String want) async {
+    final j = jsonDecode(want) as Map<String, dynamic>;
+    try {
+      final url = await host.pickAndUpload(
+        host: j['host'] as String? ?? '',
+        did: j['did'] as String? ?? '',
+        channel: j['channel'] as String? ?? '',
+      );
+      if (!mounted) return;
+      // An empty URL is the reader closing the dialog, which is not a
+      // failure and should not be reported as one.
+      _send(url.isEmpty ? 'attachment.failed' : 'attachment.ready:$url');
+    } catch (e) {
+      if (mounted) _send('attachment.failed:$e');
+    }
   }
 
   void _send(String id, [String value = '']) {

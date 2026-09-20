@@ -94,6 +94,8 @@ final _uiRender = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_render');
 final _uiPoll = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_poll');
 final _uiDispatch = _lib.lookupFunction<_Str1Native, _Str1Dart>('frq_ui_dispatch');
 final _uiDemo = _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_demo');
+final _uiWantedPicture =
+    _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_wanted_picture');
 final _uiReset = _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_reset');
 final _str1 = <String, _Str1Dart>{};
 
@@ -187,6 +189,8 @@ String? uiDispatch(String event) {
 }
 
 void uiDemo() => _uiDemo();
+
+String? wantedPicture() => _takeString(_uiWantedPicture());
 void uiReset() => _uiReset();
 
 /// Static storage on the Nim side: the one return value that is NOT freed.
