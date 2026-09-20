@@ -90,10 +90,26 @@
   // freeq's media endpoint as the multipart form it wants. The URL that
   // comes back goes in the line — that is how a picture travels on IRC.
   //
-  // The endpoint sends no `Access-Control-Allow-Origin`, so this is blocked
-  // by the browser from any origin but freeq's own. It is written the way it
-  // will work rather than left out: the same POST from the desktop build has
-  // no such limit, and one header on the server end is all this waits for.
+  // From a browser this is blocked, and the shape of the block is worth
+  // writing down because it is not the one it looks like. freeq does send
+  // CORS headers -- `vary: origin`, an allow-methods and an allow-headers --
+  // and answers with `access-control-allow-origin: https://irc.freeq.at` for
+  // exactly one origin: its own. It is an allowlist, and we are not on it,
+  // for this build or the deployed one. Being added is somebody else's
+  // decision, the same one as the broker's `return_to` list.
+  //
+  // Sending no `Authorization` header is what makes it a *simple* request,
+  // which means no preflight -- so the POST is not stopped, only the answer
+  // is. The picture does upload; the URL naming it is withheld, and a URL
+  // nobody can read is a picture nobody can see. The endpoint wants no auth
+  // for a public upload (it says "No file provided", not "Unauthorized"),
+  // and no credentials are sent, which is deliberate: a request without
+  // them can be allowed by a plain `*`, where `credentials: "include"`
+  // would oblige the server to name this origin specifically. The smaller
+  // ask is the one more likely to be granted.
+  //
+  // Written the way it will work rather than left out -- the same POST from
+  // the desktop build has no such limit.
   function pickAndUpload(want) {
     var input = document.createElement("input");
     input.type = "file";
@@ -114,7 +130,7 @@
       if (want.channel) form.append("channel", want.channel);
       form.append("file", file, file.name || "picture.png");
       fetch("https://" + want.host + "/api/v1/upload",
-            {method: "POST", body: form, credentials: "include"})
+            {method: "POST", body: form})
         .then(function (r) { return r.text().then(function (t) {
           return {ok: r.ok, status: r.status, body: t}; }); })
         .then(function (r) {
