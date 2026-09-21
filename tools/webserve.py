@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve the web bundle, and relay the one request a browser may not make.
+"""Serve the web bundle, and relay the two requests a browser may not make.
 
 `python3 -m http.server` did this until the upload needed to work. freeq's
 media endpoint answers `access-control-allow-origin` for exactly one origin
@@ -17,12 +17,21 @@ no CORS at all -- the browser is not being circumvented, it is being told
 the truth. This process makes the cross-origin request, where the rule does
 not apply, and hands back what came.
 
-Two things this is deliberately not. It is not a general proxy: one path,
-one method, one upstream, fixed here rather than taken from the request, so
-it cannot be pointed at anything. And it is not a permanent answer -- one
-`Access-Control-Allow-Origin: *` on a public, unauthenticated endpoint would
-retire it, and that ask is now the small one because the page sends no
-credentials.
+`/api/v1/og` is here for the same reason and was found the same way: link
+previews shipped asking freeq directly, every fetch was blocked by the
+allowlist, and on the screen that read as a feature that simply did nothing.
+The difference from the upload is only which way the bytes go -- a GET with
+the page's `?url=` passed through, and the OpenGraph JSON handed back.
+
+Two things this is deliberately not. It is not a general proxy: two paths,
+one method each, one upstream, fixed here rather than taken from the
+request, so it cannot be pointed at anything. The `url` a caller passes is
+freeq's business, not this server's -- it is the one that fetches it, and it
+resolves the host and refuses the private ranges before it does.
+
+And it is not a permanent answer -- one `Access-Control-Allow-Origin: *` on
+a public, unauthenticated endpoint would retire both, and that ask is now
+the small one because the page sends no credentials.
 
     python3 tools/webserve.py [PORT] [DIRECTORY]
 
@@ -38,6 +47,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 UPSTREAM = os.environ.get("FRQ_API_ORIGIN", "https://irc.freeq.at").rstrip("/")
 UPLOAD = "/api/v1/upload"
+OG = "/api/v1/og"
 
 # The endpoint's own cap. Refused here rather than after twelve megabytes
 # have crossed this machine on their way to being turned down.
@@ -79,9 +89,50 @@ class Handler(SimpleHTTPRequestHandler):
         no body. A round trip per file, against a fix that does not arrive.
         """
         path = self.path.split("?")[0]
-        if not path.startswith(UPLOAD):
+        if path not in (UPLOAD, OG):
             self.send_header("Cache-Control", "no-cache")
         SimpleHTTPRequestHandler.end_headers(self)
+
+    def do_GET(self):
+        """The bundle, or the preview relay.
+
+        Everything but one path is a file, so the base class answers first
+        and this only steps in front of it.
+        """
+        if self.path.split("?")[0] != OG:
+            SimpleHTTPRequestHandler.do_GET(self)
+            return
+
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        if not query.startswith("url="):
+            self.send_error(400, "url is required")
+            return
+
+        # Nothing of the caller's is forwarded -- no cookies, no
+        # Authorization, nothing this server was trusted with. The query is
+        # already encoded by whoever built it and is passed through as it
+        # came, since re-encoding it here would be a second opinion about
+        # what the URL was.
+        req = urllib.request.Request(
+            UPSTREAM + OG + "?" + query, method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                status, body, kind = r.status, r.read(), r.headers.get_content_type()
+        except urllib.error.HTTPError as e:
+            # freeq's own refusal, passed through with its reason -- "Body
+            # too large" for a page over its cap, "Blocked" for a host it
+            # will not resolve. A 502 in place of those would lose the only
+            # sentence saying what happened.
+            status, body, kind = e.code, e.read(), "application/json"
+        except OSError as e:
+            status, body, kind = 502, str(e).encode(), "text/plain"
+
+        self.send_response(status)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         if self.path.split("?")[0] != UPLOAD:
@@ -143,7 +194,7 @@ def main() -> None:
     handler = partial(Handler, directory=directory)
     srv = ThreadingHTTPServer(("", port), handler)
     print(f"serving {directory} on http://localhost:{port}"
-          f" ({UPLOAD} relays to {UPSTREAM})", flush=True)
+          f" ({UPLOAD} and {OG} relay to {UPSTREAM})", flush=True)
     srv.serve_forever()
 
 

@@ -77,8 +77,24 @@ func domainOf*(url: string): string =
   rest = rest.toLowerAscii
   if rest.startsWith("www."): rest[4 .. ^1] else: rest
 
+func ogPath*(url: string): string =
+  ## freeq's preview proxy as a path, without a host on the front.
+  ##
+  ## Two callers want different halves of the same thing. The desktop asks
+  ## the server directly and needs the whole URL; the page may not — freeq
+  ## answers `access-control-allow-origin` for its own five origins and this
+  ## bundle is served from none of them — so it asks its own server for this
+  ## path and that server relays. Same reason `/api/v1/upload` is relayed,
+  ## and the same fixed upstream: `tools/webserve.py` says the rest.
+  ##
+  ## `usePlus = false`: a space comes out as %20 rather than as `+`, which is
+  ## form encoding and would make a literal plus — a real character in a path
+  ## — have to be escaped to survive. %20 is right for both.
+  "/api/v1/og?url=" & encodeUrl(url, usePlus = false)
+
 func ogEndpoint*(host, url: string): string =
-  ## freeq's preview proxy, on the server this client is connected to.
+  ## That path on the server this client is connected to, for a host that may
+  ## make the request itself.
   ##
   ## Port 6697 is the IRC socket and has nothing to do with this; the REST
   ## side is plain HTTPS, so whatever port the form carries is dropped.
@@ -86,10 +102,7 @@ func ogEndpoint*(host, url: string): string =
   let colon = h.find(':')
   if colon >= 0: h = h[0 ..< colon]
   if h.len == 0: return ""
-  # `usePlus = false`: a space comes out as %20 rather than as `+`, which is
-  # form encoding and means a literal plus in a path — a real one in a URL —
-  # would have to be escaped to survive. %20 is right for both.
-  "https://" & h & "/api/v1/og?url=" & encodeUrl(url, usePlus = false)
+  "https://" & h & ogPath(url)
 
 func parsePreview*(body: JsonNode): Preview =
   ## The card's fields out of an `/api/v1/og` answer. Every one of them is

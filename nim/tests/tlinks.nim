@@ -43,6 +43,13 @@ suite "domainOf":
     check domainOf("http://example.com:8080/x") == "example.com"
     check domainOf("https://user@example.com/x") == "example.com"
 
+suite "ogPath":
+  test "a path, for a page that must ask its own server":
+    check ogPath("https://example.com/a b") ==
+      "/api/v1/og?url=https%3A%2F%2Fexample.com%2Fa%20b"
+  test "a space is %20 and not a plus, so a literal plus survives":
+    check ogPath("https://e.com/a+b") == "/api/v1/og?url=https%3A%2F%2Fe.com%2Fa%2Bb"
+
 suite "ogEndpoint":
   test "freeq's proxy, on the server we are connected to":
     check ogEndpoint("irc.freeq.at", "https://example.com/a b") ==
