@@ -60,10 +60,25 @@ PORT = 8000
 SERVE = f"python3 /srv/webserve.py {PORT} /srv/web"
 
 
-@app.function(cpu=1, memory=1024, timeout=3600, min_containers=1)
+@app.function(cpu=1, memory=1024, timeout=3600, scaledown_window=300)
 # One container answering many requests: a static bundle costs nothing per
 # request, so scaling out on concurrency would buy cold starts and nothing
 # else.
+#
+# No `min_containers`, which is the difference between paying for a month and
+# paying for the hours anyone is here. Modal bills container uptime rather
+# than requests, so a warm container held for a page nobody is reading costs
+# the same as one serving it -- and this is a static bundle and a relay, with
+# nothing in memory that a restart would lose. The cost of that is a cold
+# start on the first hit after the window below: a registry pull of the small
+# second stage and a python, seconds rather than a compile, which is what the
+# two-stage Dockerfile bought.
+#
+# `scaledown_window` is what keeps that from being every visitor's problem.
+# Five minutes of idle before shutdown means a session pays the cold start
+# once and a reader clicking between channels never does -- and `/api/v1/og`
+# alone, one upstream fetch per link with no caching, keeps the container
+# busy for as long as anybody is actually reading.
 @modal.concurrent(max_inputs=100)
 # `web_server` waits for the port to accept a connection and then proxies to
 # it, so the command has to keep running — `Popen` and return, not `run`.
