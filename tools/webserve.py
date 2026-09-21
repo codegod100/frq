@@ -40,6 +40,8 @@ the small one because the page sends no credentials.
 
 import os
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from functools import partial
@@ -52,6 +54,60 @@ OG = "/api/v1/og"
 # The endpoint's own cap. Refused here rather than after twelve megabytes
 # have crossed this machine on their way to being turned down.
 LIMIT = 12 * 1024 * 1024
+
+# What a link turned out to be, kept for a while.
+#
+# This is not a speed optimisation, it is a fairness one. Every reader's
+# previews leave from this one process, so freeq sees one address for all of
+# them and rate-limits accordingly -- and uncached, a single page load asks
+# for a preview per link on screen, every time it is opened. One reader
+# scrolling a link-heavy backlog could spend the budget for everybody, and
+# what that looks like on the screen is somebody else's previews quietly
+# turning into 429s.
+#
+# An OpenGraph title is not news. A day is far inside how often one changes
+# and far outside how often a backlog is re-read, which is the pair of
+# numbers that matters -- and a stale card is a smaller wrong answer than an
+# absent one.
+#
+# Bounded, because this process is long-lived and a cache that only grows is
+# a slower leak rather than not one. At the cap the oldest third goes: enough
+# that eviction is rare rather than continuous, and `dict` preserves
+# insertion order, so "oldest" needs no bookkeeping of its own.
+#
+# Failures are cached too, for much less time. A host that is down is down
+# for the next reader a minute from now, and retrying it per page load is
+# how one dead link in a backlog becomes the thing spending the budget.
+OG_TTL = 24 * 60 * 60
+OG_FAIL_TTL = 60
+OG_MAX = 2048
+
+_og_cache: dict[str, tuple[float, int, bytes, str]] = {}
+_og_lock = threading.Lock()
+
+
+def og_cached(query):
+    """The stored answer for this query, or None."""
+    with _og_lock:
+        hit = _og_cache.get(query)
+        if hit is None:
+            return None
+        expires, status, body, kind = hit
+        if expires < time.monotonic():
+            # Expired rather than absent: dropped here so a URL nobody asks
+            # for again does not sit in the table until the cap evicts it.
+            del _og_cache[query]
+            return None
+        return status, body, kind
+
+
+def og_remember(query, status, body, kind):
+    ttl = OG_TTL if status == 200 else OG_FAIL_TTL
+    with _og_lock:
+        if len(_og_cache) >= OG_MAX:
+            for stale in list(_og_cache)[: OG_MAX // 3]:
+                del _og_cache[stale]
+        _og_cache[query] = (time.monotonic() + ttl, status, body, kind)
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -89,7 +145,20 @@ class Handler(SimpleHTTPRequestHandler):
         no body. A round trip per file, against a fix that does not arrive.
         """
         path = self.path.split("?")[0]
-        if path not in (UPLOAD, OG):
+        if path == OG:
+            # The one thing here that may be held without revalidating. A
+            # bundle file is a name whose contents change on every deploy;
+            # a preview is a URL's OpenGraph tags, which are not about this
+            # client at all and do not change because we shipped. An hour in
+            # the browser is a reload, a tab restore and a second visit that
+            # ask this server nothing -- and this server is where every
+            # reader's requests converge into the one address freeq counts.
+            #
+            # Shorter than the table's own day, deliberately: what a browser
+            # holds cannot be dropped when it turns out to be wrong, and an
+            # hour is the length of a sitting rather than of a habit.
+            self.send_header("Cache-Control", "max-age=3600")
+        elif path != UPLOAD:
             self.send_header("Cache-Control", "no-cache")
         SimpleHTTPRequestHandler.end_headers(self)
 
@@ -106,6 +175,21 @@ class Handler(SimpleHTTPRequestHandler):
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
         if not query.startswith("url="):
             self.send_error(400, "url is required")
+            return
+
+        # Answered from the table where it is there, which is most of the
+        # time: a backlog is re-read far more often than a page's OpenGraph
+        # tags change. The query string is the key rather than the decoded
+        # URL -- it is what would be sent upstream, so two requests sharing
+        # it share an answer by construction.
+        hit = og_cached(query)
+        if hit is not None:
+            status, body, kind = hit
+            self.send_response(status)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         # Nothing of the caller's is forwarded -- no cookies, no
@@ -127,6 +211,13 @@ class Handler(SimpleHTTPRequestHandler):
             status, body, kind = e.code, e.read(), "application/json"
         except OSError as e:
             status, body, kind = 502, str(e).encode(), "text/plain"
+
+        # A 429 is never stored. It is not what this link is, it is what
+        # freeq thought of us a moment ago -- and keeping it would turn one
+        # exhausted budget into a day of blank cards for a link that was
+        # fine.
+        if status != 429:
+            og_remember(query, status, body, kind)
 
         self.send_response(status)
         self.send_header("Content-Type", kind)
