@@ -400,9 +400,24 @@ proc sendDraft() =
   if app.editing.has:
     # An edit is a fresh PRIVMSG tagged with what it replaces; the server
     # rewrites the original and echoes the revision back.
-    send("@+draft/edit=" & app.editing.id & " PRIVMSG " & app.current &
-         " :" & line)
+    #
+    # Signed like every other change to a record already written: freeq keeps
+    # the original and says nothing an unsigned edit from an account asked
+    # for, so the line would simply never change.
+    let mid = app.editing.id
+    var tags = "+draft/edit=" & mid
+    for k, v in editTags(app.current, mid, line, "",
+                         peerDid(app.currentRoom, app.formNick), nowMs()):
+      tags.add ";" & k & "=" & v
+    send("@" & tags & " PRIVMSG " & app.current & " :" & line)
+    # Rewritten on screen now rather than when the echo lands, and — more to
+    # the point — *instead* of the local echo below, which would leave the
+    # original sitting above a copy of itself with the new wording.
+    discard app.rooms.applyEdit(app.current, mid, app.formNick, line, "")
     app.editing = EditTarget()
+    app.draft = ""
+    app.attachment = Attachment()
+    return
   elif app.replyingTo.has:
     send("@+draft/reply=" & app.replyingTo.id & " PRIVMSG " & app.current &
          " :" & line)
@@ -954,6 +969,28 @@ proc drain*() =
         # A message to us rather than to a channel belongs in a buffer named
         # for the sender: the target is our own nick and is nobody's room.
         let room = if target.startsWith("#"): target else: who
+        # A revision is not a new line: it replaces the one it names, under
+        # that line's own id — never the revision's own wire msgid, which
+        # nothing else refers to. Before the echo check below, because our
+        # own edit comes back this way too and is not a new message either.
+        let (editOf, isEdit) = block:
+          let (v, ok2) = tagValue(p.tags, "+edit")
+          if ok2: (v, true) else: tagValue(p.tags, "+draft/edit")
+        if isEdit and editOf.len > 0:
+          if app.rooms.applyEdit(room, editOf, who, p.params[^1], msgid) ==
+             erAbsent:
+            # The original is older than the backlog we hold, so show the
+            # current wording rather than dropping what was said.
+            var m = Message(id: editOf, frm: who, text: p.params[^1], at: at,
+                            edited: true)
+            if p.hasAccount: m.account = p.account
+            m.imageUrl = firstImageUrl(m.text)
+            let (rep, hasRep) = tagValue(p.tags, "+reply")
+            if hasRep: m.replyTo = rep
+            notePreviewTags(p.tags)
+            note(room, m)
+          continue
+
         # Our own line coming back is the copy we already showed, with the
         # msgid the server gave it — not a new message.
         if who == app.formNick and app.rooms.hasKey(room):
@@ -975,6 +1012,11 @@ proc drain*() =
         if hasRep: m.replyTo = rep
         let (tally, hasTally) = tagValue(p.tags, "+freeq.at/reacts")
         if hasTally: m.reactions = parseTally(tally)
+        # A replay sends one row per message, carrying the current text and
+        # no `+draft/edit` to say it is not the original. This tag is the
+        # only trace, so a message can arrive already edited.
+        let (wasEdited, hasEdited) = tagValue(p.tags, "+freeq.at/edited")
+        if hasEdited and wasEdited != "0": m.edited = true
         notePreviewTags(p.tags)
         note(room, m)
 
