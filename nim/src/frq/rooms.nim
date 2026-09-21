@@ -59,6 +59,23 @@ func channelList*(channels: OrderedTable[string, Room], search: string): seq[Roo
     else:
       cmp(a.name, b.name))
 
+func lastVisited*(channels: OrderedTable[string, Room]): string =
+  ## The room the reader had open when they last put the client down, or "".
+  ##
+  ## `accessed` is stamped by `openRoom` and saved beside the name, so the
+  ## largest one is the last room opened — the same key `channelList` sorts
+  ## by, which is why this always agrees with the top of that list.
+  ##
+  ## Zero is never-opened rather than long-ago: a channel the server put us
+  ## in, or a DM that arrived while we were reading something else. A list
+  ## with nothing but those has no last room, and the overview is the honest
+  ## answer for a reader who has not yet been anywhere.
+  var best: int64 = 0
+  for _, ch in channels:
+    if ch.accessed > best:
+      best = ch.accessed
+      result = ch.name
+
 func mine*(m: Message, me: string): bool =
   ## Whether we are the one who said this.
   ##

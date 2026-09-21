@@ -33,6 +33,14 @@ var
     ## What this connection is signing in as, settled before the socket opens.
   caps: HashSet[string]
     ## What the server has ACKed so far, threaded through `handshake.step`.
+  landed: bool
+    ## Whether this run has already been put back where it left off.
+    ##
+    ## A flag and not a check of the screen, because 001 arrives more than
+    ## once: a dropped socket reconnects and registers again, and a reader
+    ## who had deliberately gone out to the overview should not be thrown
+    ## back into a room by a network blip. The restore is a thing this run
+    ## does once, on the first connection it makes.
 
 proc setError(msg: string) =
   app.error = msg
@@ -924,6 +932,20 @@ proc drain*() =
       # landed with no list of its own, and stays that until the server's own
       # JOINs are what fills an empty one.
       if asked == 0: send("JOIN #test")
+
+      # Back into the room the reader was last in, rather than the list of
+      # them. The name is not stored separately: `accessed` is already saved
+      # per room and already means "when this was last opened", so the most
+      # recent of them is the answer and there is no second thing to keep in
+      # step with the first.
+      #
+      # Only on this run's first connection — see `landed`. And only where
+      # there is one: a first run has a list of rooms it has never opened,
+      # and lands on the overview as it always did.
+      if not landed:
+        landed = true
+        let last = app.rooms.lastVisited
+        if last.len > 0: openRoom(last)
 
     of "PRIVMSG":
       if p.params.len >= 2:

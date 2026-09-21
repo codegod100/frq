@@ -197,3 +197,35 @@ suite "adoptEcho":
 
   test "different text is not adopted":
     check not r.adoptEcho("me", "something else", "srv-9", 250, "")
+
+suite "lastVisited":
+  ## Where the client puts a returning reader down.
+  proc roomAt(name: string, accessed: int64): Room =
+    result = initRoom(name)
+    result.accessed = accessed
+
+  test "the most recently opened room":
+    var t = initOrderedTable[string, Room]()
+    t["#a"] = roomAt("#a", 100)
+    t["#b"] = roomAt("#b", 300)
+    t["#c"] = roomAt("#c", 200)
+    check t.lastVisited == "#b"
+
+  test "rooms that were never opened are not a last room":
+    # A channel the server put us in, or a DM that arrived while we were
+    # elsewhere: `accessed` is zero, and zero is never rather than long ago.
+    var t = initOrderedTable[string, Room]()
+    t["#a"] = roomAt("#a", 0)
+    t["#b"] = roomAt("#b", 0)
+    check t.lastVisited == ""
+
+  test "an empty list has no last room":
+    var t = initOrderedTable[string, Room]()
+    check t.lastVisited == ""
+
+  test "one opened room among unopened ones wins":
+    var t = initOrderedTable[string, Room]()
+    t["#a"] = roomAt("#a", 0)
+    t["#b"] = roomAt("#b", 42)
+    t["#c"] = roomAt("#c", 0)
+    check t.lastVisited == "#b"
