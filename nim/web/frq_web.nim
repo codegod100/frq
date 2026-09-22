@@ -34,6 +34,7 @@ proc currentTree(): string =
     case app.screen
     of scChat: scChatScreen.chatScreen(app, connected)
     of scChats: scChatsScreen.chatsScreen(app, connected)
+    of scDms: scChatsScreen.dmsScreen(app, connected)
     of scDiscover: scSettingsScreen.discoverScreen(app)
     of scSettings: scSettingsScreen.settingsScreen(app, connected, true)
     of scConnect: scConnectScreen.connectScreen(app)
