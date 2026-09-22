@@ -9,6 +9,7 @@ import frq/[ui, cells, model]
 import frq/screens/connect as cs
 import frq/screens/settings as ss
 import frq/screens/chat as cht
+import frq/screens/chats as ch
 import frq/[rooms]
 
 proc find*(node: Node, tag: string): seq[Node] =
@@ -139,6 +140,26 @@ suite "discover":
     check "Discover" in sel
     check t.find("scroll").len == 1
 
+suite "direct messages":
+  test "shows only direct-message buffers":
+    var s = initState()
+    var room = initRoom("#test"); room.joined = true
+    var direct = initRoom("alice")
+    s.rooms[room.name] = room
+    s.rooms[direct.name] = direct
+    let t = ch.dmsScreen(s, true)
+    check "alice" in t.labels("title-2")
+    check "#test" notin t.labels("title-2")
+    check "DMs" in t.labels("button")
+
+  test "the DMs tab is selected":
+    var s = initState()
+    s.screen = scDms
+    let selected = ch.dmsScreen(s, false).find("button")
+      .filterIt(it.props{"kind"}.getStr() == "primary")
+      .mapIt(it.props{"label"}.getStr())
+    check "DMs" in selected
+
 suite "settings":
   setup:
     var s = initState()
@@ -178,8 +199,6 @@ suite "settings":
             .props{"live"}.getBool()
     check not ss.settingsScreen(s, false, true).find("status")[0]
             .props{"live"}.getBool()
-
-import frq/screens/chats as ch
 
 suite "previewLine":
   test "collapses whitespace so a card reads as one line":
@@ -300,11 +319,12 @@ suite "the chat screen's panes":
     check t.find("scroll").anyIt(
       it.props{"scrollKey"}.getStr() == "messages-#test")
 
-  test "the way to Discover and Settings is on the screen":
+  test "the way to DMs, Discover and Settings is on the screen":
     # It was not: the chat screen never carried the tab bar, and on a wide
     # window there is no back button either — the room list is a strip. So
-    # from a conversation there was no way to either of them at all.
+    # from a conversation there was no way to any of them at all.
     let t = cht.chatScreen(s, true)
+    check "DMs" in t.labels("button")
     check "Discover" in t.labels("button")
     check "Settings" in t.labels("button")
 

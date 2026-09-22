@@ -4,7 +4,7 @@
 ## dropped rather than translated — there is no terminal frontend any more, so
 ## `conversation-row`'s two layouts collapse to the one a window uses.
 
-import std/[json, strutils]
+import std/[json, sequtils, strutils]
 import frq/[ui, cells, model, rooms, textruns]
 import frq/screens/[frame, connect]
 
@@ -42,24 +42,30 @@ func conversationRow(r: Room): Node =
         button("Open", "room.open:" & r.name),
         button("Close", "room.leave:" & r.name)))])
 
-func chatsScreen*(s: State, connected: bool): Node =
-  let buffers = channelList(s.rooms, s.search)
+func conversationListScreen(s: State, connected, direct: bool): Node =
+  ## The two kinds of conversation have their own tabs, but share the cards
+  ## and controls. A DM is identified by its name rather than by a second
+  ## collection in state, so it remains visible after reconnecting like rooms.
+  let buffers = channelList(s.rooms, s.search).filterIt(dm(it.name) == direct)
+  let section = if direct: "DMs" else: "Chats"
 
   var head = vbox(%*{"key": "head", "spacing": 8, "marginRight": listGutter},
-    title(if connected: "Logged in as " & s.formNick else: "Chats"),
+    title(if connected: "Logged in as " & s.formNick else: section),
     errorNote(s))
 
   # `@nick` opens a DM and `#room` joins a channel, and the button says which
   # so the reader is not guessing what Enter will do.
   var joinRow = hbox(%*{"spacing": 8, "align": "end"},
-    button(if s.joinInput.startsWith("@"): "Message" else: "Join", "join"),
-    entry("join-input", s.joinInput, "#channel or @nick", "join-input.change",
+    button(if direct or s.joinInput.startsWith("@"): "Message" else: "Join", "join"),
+    entry("join-input", s.joinInput,
+          if direct: "@nick" else: "#channel or @nick", "join-input.change",
           onSubmit = "join", verbatim = true))
 
   var searchRow = hbox(%*{"spacing": 8, "align": "end"})
   if s.search.len > 0:
     searchRow.children.add button("✕", "search.clear")
-  searchRow.children.add entry("search", s.search, "Search channels",
+  searchRow.children.add entry("search", s.search,
+                               if direct: "Search direct messages" else: "Search channels",
                                "search.change")
 
   head.children.add card(vbox(%*{"spacing": 8}, joinRow, searchRow))
@@ -71,7 +77,8 @@ func chatsScreen*(s: State, connected: bool): Node =
       body.children.add conversationRow(b)
   else:
     body = n("vbox", %*{"marginRight": listGutter}, @[
-      card(dimLabel("No conversations yet — join a channel."))])
+      card(dimLabel(if direct: "No direct messages yet — message someone."
+                    else: "No conversations yet — join a channel."))])
 
   vbox(%*{"spacing": 8, "margin": 12, "expand": true},
     head,
@@ -80,3 +87,9 @@ func chatsScreen*(s: State, connected: bool): Node =
     vbox(%*{"key": "foot", "spacing": 8},
       separator(),
       tabBar(s)))
+
+func chatsScreen*(s: State, connected: bool): Node =
+  conversationListScreen(s, connected, direct = false)
+
+func dmsScreen*(s: State, connected: bool): Node =
+  conversationListScreen(s, connected, direct = true)

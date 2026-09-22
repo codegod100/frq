@@ -496,6 +496,7 @@ proc dispatch*(event: JsonNode) =
   # ------------------------------------------------------------- navigation
   of "screen.connect": app.screen = scConnect
   of "screen.chats": app.screen = scChats
+  of "screen.dms": app.screen = scDms
   of "screen.discover": app.screen = scDiscover
   of "screen.settings": app.screen = scSettings
 

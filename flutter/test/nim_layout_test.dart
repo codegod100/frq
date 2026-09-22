@@ -168,7 +168,7 @@ void main() {
   });
 
   group('discover and settings', () {
-    for (final screen in ['discover', 'settings']) {
+    for (final screen in ['dms', 'discover', 'settings']) {
       for (final entry in sizes.entries) {
         testWidgets('$screen lays out at ${entry.key}', (tester) async {
           core.demoUi();
@@ -194,7 +194,7 @@ void main() {
       await tester.pump();
     }
 
-    for (final screen in ['chat', 'chats', 'discover', 'settings']) {
+    for (final screen in ['chat', 'chats', 'dms', 'discover', 'settings']) {
       // The platform has to be said out loud. A widget test runs as Android
       // by default, where a SingleChildScrollView *is* primary and attaches
       // to the very controller the scrollbar is looking at — so this passed

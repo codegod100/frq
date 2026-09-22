@@ -16,7 +16,7 @@ import frq/[model]
 type
   Screen* = enum
     scConnect = "connect", scChats = "chats", scChat = "chat",
-    scDiscover = "discover", scSettings = "settings"
+    scDms = "dms", scDiscover = "discover", scSettings = "settings"
 
   AuthMode* = enum
     amGuest = "guest", amBluesky = "bluesky", amAppPassword = "app-password"
