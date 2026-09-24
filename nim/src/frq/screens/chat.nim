@@ -255,10 +255,14 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
   if m.id.len > 0 and not m.system and m.reactions.len > 0:
     pills.children.add reactionRow(m, s.formNick)
 
-  # A card when the jump landed here, a plain box otherwise — the highlight is
-  # how a reader finds the line they were sent to.
-  n(if highlit: "card" else: "vbox",
-    %*{"key": (if highlit: "body-card" else: "body-plain"),
+  # A card when the jump landed here or the room is a task stream. A task
+  # stream needs its own visual rhythm when it sits beside ordinary chat; the
+  # renderer gives this marker a slightly raised surface and an accent rail.
+  # The highlight remains the stronger treatment, so a jump is still obvious.
+  let task = room.name == "#tasks"
+  n(if highlit or task: "card" else: "vbox",
+    %*{"key": (if highlit: "body-card" elif task: "body-task" else: "body-plain"),
+       "task": task,
        "spacing": 2, "margin": 0},
     @[who, body, picker, images, preview, pills])
 

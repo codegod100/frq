@@ -507,13 +507,23 @@ class _NimAppState extends State<NimApp> {
 
       // Container::Card in the Clojure: padding 12, fills its width.
       case 'card':
+        // Task streams share the conversation layout, but a task should read
+        // as a work item rather than disappear into nearby chat. The tree
+        // marks only those message cards with `task`; previews and dialogs
+        // remain ordinary cards.
+        final task = n.prop('task', false);
         final card = Container(
           width: double.infinity,
           margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
           padding: const EdgeInsets.all(t.spaceXs),
           decoration: BoxDecoration(
-            color: t.card,
+            color: task ? t.cardComponent : t.card,
             borderRadius: BorderRadius.circular(t.radiusS),
+            border: task
+                ? const Border(
+                    left: BorderSide(color: t.accent, width: 3),
+                  )
+                : null,
           ),
           child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

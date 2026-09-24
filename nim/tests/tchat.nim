@@ -46,6 +46,17 @@ suite "the chat screen":
     check "hello" in t.texts
     check "hi back" in t.texts
 
+  test "task messages carry their distinct card marker":
+    var taskState = withRoom()
+    var tasks = taskState.rooms["#test"]
+    tasks.name = "#tasks"
+    taskState.rooms.del("#test")
+    taskState.rooms["#tasks"] = tasks
+    taskState.current = "#tasks"
+    let taskBodies = cs.chatScreen(taskState, true).find("card")
+      .filterIt(it.props.hasKey("task") and it.props{"task"}.getBool())
+    check taskBodies.len == 2
+
   test "is pure":
     check $cs.chatScreen(s, true).toJson == $cs.chatScreen(s, true).toJson
 
