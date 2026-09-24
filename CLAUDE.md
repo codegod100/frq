@@ -32,12 +32,12 @@ Two containers, and they are not the same kind of thing — which is why they
 are not written the same way. `dev` is a build that ends, and is a
 `container.toml` read by `_loader.py`: a sandbox with a volume, a toolchain
 and a command that changes. `web` is a deploy, and is plain Modal in
-`.modal/web/app.py`, because four constants and a `Popen` did not need a spec
+`.modal/web/deploy.py`, because four constants and a `Popen` did not need a spec
 file to be read before the file itself made sense.
 
-`web` is a deploy: rickub builds `.modal/web/Dockerfile` into
-`registry.rickub.com` (`.rickub/workflows/web.yml`), and
-`modal deploy .modal/web/app.py` serves that exact tag at a URL,
+`web` is a deploy: GitHub Actions builds `.modal/web/Dockerfile` into GHCR
+(`.github/workflows/deploy.yml`), and
+`modal deploy .modal/web/deploy.py` serves that exact tag at a URL,
 building nothing. So `just build web` on a laptop and the thing
 on the internet come from the same two commands, run in different places —
 and a deploy is a pull rather than a compile.
@@ -71,6 +71,16 @@ output is not a terminal, so pass `--line-buffered` / `fflush()` or watch the
 file instead.
 
 ## The Nim core
+
+## FreeQ protocol and client reference
+
+[`freeq-irc/freeq`](https://github.com/freeq-irc/freeq) is the repository for
+the FreeQ server and its canonical React web client. Treat it as the reference
+material for wire-level behavior and client-facing semantics when implementing
+or changing this client — especially IRCv3 tags, typed actions such as
+handoffs, and their companion messages. Keep this app's own visual language;
+the reference defines the protocol and interaction contract, not a styling
+dependency.
 
 `nim/` is the program. It owns the state, the screens, the IRC connection and
 the signing; Flutter is a renderer over the widget tree it emits. Read
@@ -143,4 +153,3 @@ every script the origin runs.
 Two modules were never ported and are gone rather than moved: `frq.profile`
 (the Bluesky profile behind a nick) and `frq.replies` (asking freeq what a
 collapsed msgid was). Neither had a screen in the Nim app to appear on.
-

@@ -351,7 +351,7 @@ class _NimAppState extends State<NimApp> {
 
     // What this node's own children are being built into.
     final childAxis = switch (n.tag) {
-      'page' || 'vbox' || 'card' || 'scroll' || 'dialog' => _column,
+      'page' || 'vbox' || 'card' || 'task-card' || 'scroll' || 'dialog' => _column,
       // A stack's children are laid out by the stack, not by a flex: an
       // `Expanded` among them is illegal, so they must not think they are
       // in one.
@@ -507,23 +507,13 @@ class _NimAppState extends State<NimApp> {
 
       // Container::Card in the Clojure: padding 12, fills its width.
       case 'card':
-        // Task streams share the conversation layout, but a task should read
-        // as a work item rather than disappear into nearby chat. The tree
-        // marks only those message cards with `task`; previews and dialogs
-        // remain ordinary cards.
-        final task = n.prop('task', false);
         final card = Container(
           width: double.infinity,
           margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
           padding: const EdgeInsets.all(t.spaceXs),
           decoration: BoxDecoration(
-            color: task ? t.cardComponent : t.card,
+            color: t.card,
             borderRadius: BorderRadius.circular(t.radiusS),
-            border: task
-                ? const Border(
-                    left: BorderSide(color: t.accent, width: 3),
-                  )
-                : null,
           ),
           child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -544,6 +534,78 @@ class _NimAppState extends State<NimApp> {
             child: card,
           ),
         );
+
+      // A typed handoff event's visible companion.  This deliberately uses
+      // the app's own surfaces and typography rather than FreeQ web's purple
+      // and blue palette: the narrow coloured edge and quiet header make a
+      // lifecycle easy to scan without looking like an imported component.
+      case 'task-card':
+        {
+          final tone = n.prop('tone', 'neutral');
+          final edge = switch (tone) {
+            'new' => t.accent,
+            'active' => t.componentHover,
+            'success' => t.success,
+            'danger' => t.destructive,
+            _ => t.divider,
+          };
+          final headlineColor = switch (tone) {
+            'new' => t.accent,
+            'success' => t.success,
+            'danger' => t.destructive,
+            _ => t.onBg,
+          };
+          return Container(
+            width: double.infinity,
+            margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
+            decoration: BoxDecoration(
+              color: n.prop('highlight', false) ? t.cardComponent : t.card,
+              borderRadius: BorderRadius.circular(t.radiusS),
+              border: Border(
+                left: BorderSide(color: edge, width: 3),
+                top: BorderSide(color: edge.withValues(alpha: 0.55)),
+                right: BorderSide(color: edge.withValues(alpha: 0.55)),
+                bottom: BorderSide(color: edge.withValues(alpha: 0.55)),
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  color: t.component.withValues(alpha: 0.55),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: t.spaceXs, vertical: t.spaceXxs),
+                  child: Row(children: [
+                    Text(n.prop('glyph', ''), style: _emojiStyle(t.textCaption)),
+                    const SizedBox(width: t.spaceXxs),
+                    Text(n.prop('headline', '').toUpperCase(),
+                        style: _style(t.textCaption, headlineColor)
+                            .copyWith(fontWeight: FontWeight.w700)),
+                    if (n.prop('eventId', '').isNotEmpty) ...[
+                      const SizedBox(width: t.spaceXxs),
+                      Flexible(
+                        child: Text(n.prop('eventId', ''),
+                            overflow: TextOverflow.ellipsis,
+                            style: _style(10, t.dim)),
+                      ),
+                    ],
+                    const Spacer(),
+                    Text(n.prop('time', ''), style: _style(10, t.dim)),
+                  ]),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(t.spaceXs),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _spaced(kids, t.spaceXxs, vertical: true),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
 
       case 'title':
         final shrinks = n.prop('shrink', false);
