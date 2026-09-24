@@ -826,6 +826,37 @@ proc notePreviewTags(tags: string) =
   lk.remember(url, lk.Preview(status: lk.lsReady, title: title,
                               description: desc, image: image))
 
+proc taskEvent(tags: string): TaskEvent =
+  ## The structured half of a FreeQ action.  It travels as a TAGMSG and its
+  ## visible companion names this event through `+freeq.at/ref`.
+  ##
+  ## Only `handoff` is a task card for now. Other act kinds remain ordinary
+  ## messages until they have their own reader-facing treatment.
+  let (kind, hasKind) = tagValue(tags, "+freeq.at/act")
+  let (verb, hasVerb) = tagValue(tags, "+freeq.at/act-verb")
+  let (eventId, hasEventId) = tagValue(tags, "+freeq.at/eventid")
+  if not hasKind or kind != "handoff" or not hasVerb or not hasEventId: return
+  let (actId, hasActId) = tagValue(tags, "+freeq.at/act-id")
+  result.id = eventId
+  result.taskId = if hasActId: actId else: eventId
+  result.kind = kind
+  result.verb = verb
+  (result.title, _) = tagValue(tags, "+freeq.at/act-title")
+  (result.offeredTo, _) = tagValue(tags, "+freeq.at/act-to")
+  (result.caps, _) = tagValue(tags, "+freeq.at/act-caps")
+  (result.note, _) = tagValue(tags, "+freeq.at/act-note")
+  (result.context, _) = tagValue(tags, "+freeq.at/act-ctx")
+
+proc attachTask(tags: string, room: Room, m: var Message) =
+  ## Turn a companion line into a card only when this client has received the
+  ## matching typed action. Text that merely resembles a status stays chat.
+  let (eventRef, hasRef) = tagValue(tags, "+freeq.at/ref")
+  if not hasRef or not room.taskEvents.hasKey(eventRef): return
+  var task = room.taskEvents[eventRef]
+  if task.title.len == 0:
+    task.title = room.taskTitles.getOrDefault(task.taskId, "")
+  m.task = task
+
 proc wantPreview(m: Message) =
   ## Ask what is at the end of the link in this line, if it has one.
   ##
@@ -1002,6 +1033,8 @@ proc drain*() =
             m.imageUrl = firstImageUrl(m.text)
             let (rep, hasRep) = tagValue(p.tags, "+reply")
             if hasRep: m.replyTo = rep
+            app.rooms.ensureRoom(room)
+            attachTask(p.tags, app.rooms[room], m)
             notePreviewTags(p.tags)
             note(room, m)
           continue
@@ -1032,6 +1065,8 @@ proc drain*() =
         # only trace, so a message can arrive already edited.
         let (wasEdited, hasEdited) = tagValue(p.tags, "+freeq.at/edited")
         if hasEdited and wasEdited != "0": m.edited = true
+        app.rooms.ensureRoom(room)
+        attachTask(p.tags, app.rooms[room], m)
         notePreviewTags(p.tags)
         note(room, m)
 
@@ -1045,10 +1080,17 @@ proc drain*() =
       # their absence has gone unnoticed. A delete has no such second
       # chance, because the whole point is that the line stops being sent.
       if p.params.len >= 1:
+        let target = p.params[0]
+        let room = if target.startsWith("#"): target else: nickOf(p.prefix)
+        let task = taskEvent(p.tags)
+        if task.id.len > 0:
+          app.rooms.ensureRoom(room)
+          var r = app.rooms[room]
+          r.taskEvents[task.id] = task
+          if task.title.len > 0: r.taskTitles[task.taskId] = task.title
+          app.rooms[room] = r
         let (gone, isDelete) = tagValue(p.tags, "+draft/delete")
         if isDelete and gone.len > 0:
-          let target = p.params[0]
-          let room = if target.startsWith("#"): target else: nickOf(p.prefix)
           discard app.rooms.applyDelete(room, gone)
 
     of "JOIN":

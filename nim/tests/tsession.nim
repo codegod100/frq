@@ -395,3 +395,18 @@ suite "unsending a line":
   test "a delete for a line we never had is not an error":
     say("@+draft/delete=nope :bob!b@h TAGMSG #freeq")
     check not app.hasError
+
+  test "a handoff TAGMSG gives its companion a structured task":
+    # The body remains the server's ordinary readable fallback; only the
+    # signed tag event makes it a task card.  This keeps a bot saying
+    # "completed" from accidentally becoming a lifecycle event.
+    say("@+freeq.at/act=handoff;+freeq.at/act-verb=offer;" &
+        "+freeq.at/eventid=task-1;+freeq.at/act-title=ship\\sthe\\srelease;" &
+        "+freeq.at/act-to=did:plc:worker;+freeq.at/act-caps=web-search " &
+        ":bot!b@h TAGMSG #freeq",
+        "@+freeq.at/ref=task-1;msgid=line-1 :bot!b@h PRIVMSG #freeq :offered: ship the release")
+    let task = app.rooms["#freeq"].messageById("line-1").get.task
+    check task.id == "task-1"
+    check task.title == "ship the release"
+    check task.offeredTo == "did:plc:worker"
+    check task.caps == "web-search"
