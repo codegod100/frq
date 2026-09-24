@@ -26,6 +26,10 @@ const
   chipGap = 4
   overviewLines* = 40
 
+  taskRoom = "#tasks"
+    ## Task output is prose, but benefits from reading as a result rather than
+    ## blending into an ordinary conversation line.
+
   sidePanelWidth = 150
     ## What a strip beside the backlog takes. Wide enough for a room name or
     ## a nick, narrow enough that the conversation is still the pane.
@@ -95,6 +99,9 @@ func runNodes(m: Message): Node =
     case r.kind
     of rkText: result.children.add text(r.value)
     of rkLink: result.children.add link(r.value, r.value)
+    of rkStrong: result.children.add n("strong", %*{"text": r.value})
+    of rkEmphasis: result.children.add n("emphasis", %*{"text": r.value})
+    of rkCode: result.children.add n("code", %*{"text": r.value})
 
 proc previewCard(url: string): Node =
   ## What is at the end of a link, under the line that pasted it.
@@ -255,11 +262,13 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
   if m.id.len > 0 and not m.system and m.reactions.len > 0:
     pills.children.add reactionRow(m, s.formNick)
 
-  # A card when the jump landed here, a plain box otherwise — the highlight is
-  # how a reader finds the line they were sent to.
-  n(if highlit: "card" else: "vbox",
+  # Task output gets the same bounded surface a jumped-to line does, plus a
+  # renderer hint for its own accent edge. It keeps each result visually
+  # separate without changing the layout or storage of ordinary messages.
+  let task = room.name == taskRoom
+  n(if highlit or task: "card" else: "vbox",
     %*{"key": (if highlit: "body-card" else: "body-plain"),
-       "spacing": 2, "margin": 0},
+       "spacing": 2, "margin": 0, "task": task},
     @[who, body, picker, images, preview, pills])
 
 proc messageRow(s: State, room: Room, i: int, m: Message): Node =

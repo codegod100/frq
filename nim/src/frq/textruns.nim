@@ -14,7 +14,11 @@ import std/strutils
 from std/unicode import runeLen, runeSubStr
 
 type
-  RunKind* = enum rkText, rkLink
+  ## The small inline vocabulary a message needs. This is intentionally not a
+  ## document parser: chat messages need emphasis for task results and code for
+  ## commands, while headings, lists and other block syntax belong to a
+  ## document rather than a single chat line.
+  RunKind* = enum rkText, rkLink, rkStrong, rkEmphasis, rkCode
   Run* = object
     kind*: RunKind
     value*: string
@@ -64,16 +68,50 @@ func trimEnds(runs: seq[Run]): seq[Run] =
     if v.len > 0: result[^1].value = v
     else: result.setLen(result.len - 1)
 
+proc styledRuns(text: string): seq[Run] =
+  ## Split one non-link stretch into the inline Markdown forms task output
+  ## commonly uses. Unclosed markers are ordinary message text, not syntax.
+  var pos = 0
+  var plain = ""
+
+  while pos < text.len:
+    var marker = ""
+    var kind = rkText
+    if text.continuesWith("**", pos):
+      marker = "**"
+      kind = rkStrong
+    elif text[pos] == '*':
+      marker = "*"
+      kind = rkEmphasis
+    elif text[pos] == '`':
+      marker = "`"
+      kind = rkCode
+
+    if marker.len > 0:
+      let start = pos + marker.len
+      let stop = text.find(marker, start)
+      if stop >= start and stop > start:
+        if plain.len > 0:
+          result.add Run(kind: rkText, value: plain)
+          plain.setLen(0)
+        result.add Run(kind: kind, value: text[start ..< stop])
+        pos = stop + marker.len
+        continue
+    plain.add text[pos]
+    inc pos
+  if plain.len > 0:
+    result.add Run(kind: rkText, value: plain)
+
 func textRuns*(text: string): seq[Run] =
   var pos = 0
   while pos < text.len:
     let (at, stop) = urlAt(text, pos)
     if at < 0:
       if pos < text.len:
-        result.add Run(kind: rkText, value: text[pos .. ^1])
+        result.add styledRuns(text[pos .. ^1])
       break
     if at > pos:
-      result.add Run(kind: rkText, value: text[pos ..< at])
+      result.add styledRuns(text[pos ..< at])
     let url = trimTrailingPunctuation(text[at ..< stop])
     result.add Run(kind: rkLink, value: url)
     # Past the trimmed URL, not the raw one: the punctuation that was trimmed
