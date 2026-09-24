@@ -1,0 +1,33 @@
+name: Enable pull request auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+# This workflow does not check out or run pull-request code. Its only job is
+# to queue the PR for GitHub's native auto-merge, which waits for the branch's
+# required reviews and status checks before merging.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Queue auto-merge
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.graphql(
+              `mutation EnableAutoMerge($pullRequestId: ID!) {
+                enablePullRequestAutoMerge(input: {
+                  pullRequestId: $pullRequestId,
+                  mergeMethod: SQUASH
+                }) {
+                  pullRequest { number }
+                }
+              }`,
+              { pullRequestId: context.payload.pull_request.node_id },
+            );
