@@ -105,6 +105,21 @@ suite "the rest of the conversation":
     check app.rooms.hasKey("bob")
     check app.rooms["bob"].messages[^1].text == "a direct word"
 
+  test "an empty late notice does not create a phantom latest row":
+    joined("#freeq")
+    say("@time=2026-09-23T19:00:00Z :bob!b@h PRIVMSG #freeq :current")
+    say("@time=2026-09-17T19:00:00Z :server NOTICE #freeq :")
+    let messages = app.rooms["#freeq"].messages.filterIt(not it.system)
+    check messages.len == 1
+    check messages[0].text == "current"
+
+  test "a late history replay is placed by server time":
+    joined("#freeq")
+    say("@time=2026-09-23T19:00:00Z :bob!b@h PRIVMSG #freeq :current",
+        "@time=2026-09-17T19:00:00Z :carol!c@h PRIVMSG #freeq :older")
+    let messages = app.rooms["#freeq"].messages.filterIt(not it.system)
+    check messages.mapIt(it.text) == @["older", "current"]
+
 suite "who is who":
   setup: reset()
 
