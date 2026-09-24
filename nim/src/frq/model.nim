@@ -13,6 +13,20 @@
 import std/[options, strutils, tables]
 
 type
+  TaskEvent* = object
+    ## A signed `freeq.at/act` event carried in a TAGMSG.  Its companion
+    ## PRIVMSG is the visible line; this is the structured half that gives
+    ## that line a task-card treatment.
+    id*: string
+    taskId*: string
+    kind*: string
+    verb*: string
+    title*: string
+    offeredTo*: string
+    caps*: string
+    note*: string
+    context*: string
+
   Reaction* = object
     ## An emoji and who put it there. The nicks are a set in the Clojure; a
     ## seq here, kept ordered, because the order is what the pills are drawn
@@ -47,6 +61,8 @@ type
       ## Which room this was said in. Empty on a stored message — a room
       ## already knows its own name — and filled in by `recentEverywhere`,
       ## where a line taken out of its conversation no longer says for itself.
+    task*: TaskEvent
+      ## Empty unless this is the visible companion of a task action.
 
   Room* = object
     ## A buffer: a channel or a DM. Named Room rather than Channel because
@@ -71,12 +87,17 @@ type
     lastReadId*: string
     lastReadAt*: int64
     peerDid*: string      ## for a DM, who the other side is
+    taskEvents*: Table[string, TaskEvent]
+      ## event id → TAGMSG payload, held until its companion line arrives.
+    taskTitles*: Table[string, string]
+      ## opener id → title. Follow-up events name the opener, not its title.
 
 func initMessage*(frm, text: string): Message =
   Message(frm: frm, text: text)
 
 func initRoom*(name: string): Room =
-  Room(name: name)
+  Room(name: name, taskEvents: initTable[string, TaskEvent](),
+       taskTitles: initTable[string, string]())
 
 # ------------------------------------------------------------------- naming
 

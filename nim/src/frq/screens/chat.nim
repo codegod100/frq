@@ -172,6 +172,64 @@ proc emojiPicker(s: State): Node =
     grid.children.add dimLabel("…and " & $(shown.len - pickerLimit) & " more — keep typing.")
   result.children.add grid
 
+func taskHeadline(verb: string): (string, string, string) =
+  ## The lifecycle word, glyph and visual register for a handoff event.
+  ## These name states, not colours: Flutter maps them to this client's theme.
+  case verb
+  of "offer": ("📋", "offered", "new")
+  of "accept": ("👍", "accepted", "active")
+  of "decline": ("👎", "declined", "danger")
+  of "claim": ("✋", "claimed", "active")
+  of "progress": ("📌", "in progress", "active")
+  of "complete": ("🎉", "completed", "success")
+  of "fail": ("❌", "failed", "danger")
+  of "cancel": ("🚫", "cancelled", "danger")
+  else: ("📌", verb, "neutral")
+
+proc taskCard(room: Room, m: Message, highlit: bool): Node =
+  ## The visible companion of a typed FreeQ handoff event. The event itself is
+  ## a TAGMSG; keeping its title and facts in this compact card makes the
+  ## lifecycle scannable without pretending ordinary bot prose is structured.
+  let task = m.task
+  let (glyph, headline, tone) = taskHeadline(task.verb)
+  result = n("task-card", %*{"key": "task-" & rowId(m), "glyph": glyph,
+                             "headline": headline, "tone": tone,
+                             "eventId": task.id, "time": clockTime(m.at),
+                             "highlight": highlit}, @[])
+  if task.title.len > 0: result.children.add text(task.title)
+  var facts = vbox(%*{"key": "task-facts", "spacing": 2})
+  if task.verb == "offer":
+    facts.children.add hbox(%*{"spacing": 8}, dimLabel("offered to"),
+                             label(if task.offeredTo.len > 0: task.offeredTo else: "anyone"))
+  if task.caps.len > 0:
+    facts.children.add hbox(%*{"spacing": 8}, dimLabel("skills required"),
+                             label(task.caps))
+  if task.note.len > 0:
+    facts.children.add hbox(%*{"spacing": 8}, dimLabel("note"), text(task.note))
+  if task.context.len > 0:
+    facts.children.add hbox(%*{"spacing": 8}, dimLabel("context"),
+                             link(task.context, task.context))
+  if facts.children.len > 0: result.children.add facts
+
+  var cards: seq[Message]
+  for other in room.messages:
+    if other.task.taskId == task.taskId and other.task.id.len > 0:
+      cards.add other
+  var here = -1
+  for i, other in cards:
+    if other.task.id == task.id:
+      here = i
+      break
+  if here >= 0 and cards.len > 1:
+    var footer = hbox(%*{"spacing": 8, "wrap": false})
+    if here > 0: footer.children.add button("← prev", "goto:" & rowId(cards[here - 1]), "plain")
+    footer.children.add spacer(0)
+    if here < cards.high:
+      footer.children.add n("button", %*{"label": "next →", "kind": "plain",
+                                           "onClick": "goto:" & rowId(cards[here + 1]),
+                                           "expand": true})
+    result.children.add footer
+
 proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
   ## A message without its face: the sender's line, the words, and what hangs
   ## under them.
@@ -257,6 +315,8 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
 
   # A card when the jump landed here, a plain box otherwise — the highlight is
   # how a reader finds the line they were sent to.
+  if m.task.id.len > 0:
+    return taskCard(room, m, highlit)
   n(if highlit: "card" else: "vbox",
     %*{"key": (if highlit: "body-card" else: "body-plain"),
        "spacing": 2, "margin": 0},

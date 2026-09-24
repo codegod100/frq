@@ -72,6 +72,16 @@ file instead.
 
 ## The Nim core
 
+## FreeQ protocol and client reference
+
+[`freeq-irc/freeq`](https://github.com/freeq-irc/freeq) is the repository for
+the FreeQ server and its canonical React web client. Treat it as the reference
+material for wire-level behavior and client-facing semantics when implementing
+or changing this client — especially IRCv3 tags, typed actions such as
+handoffs, and their companion messages. Keep this app's own visual language;
+the reference defines the protocol and interaction contract, not a styling
+dependency.
+
 `nim/` is the program. It owns the state, the screens, the IRC connection and
 the signing; Flutter is a renderer over the widget tree it emits. Read
 `nim/README.md` before touching it.
