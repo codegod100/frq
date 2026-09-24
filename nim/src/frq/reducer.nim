@@ -837,10 +837,24 @@ proc wantPreview(m: Message) =
   if url.len > 0: lf.want(app.formHost, url)
 
 proc note(room: string, m: Message) =
+  # A wire record with no words is not a chat line.  In particular, some
+  # servers send empty NOTICEs around history batches; retaining them gives
+  # the screen a day divider and no corresponding message.
+  if m.text.strip.len == 0: return
   app.rooms.ensureRoom(room)
   var r = app.rooms[room]
   if seenMessage(r.messages, m.id, m.frm, m.text, app.formNick): return
-  r.messages.add m
+  # A history replay may arrive after live traffic.  Preserve the server's
+  # chronology instead of the socket's arrival order, so an old replay does
+  # not become the apparent newest line in the room.
+  var insertAt = r.messages.len
+  if m.at > 0:
+    for i in countdown(r.messages.high, 0):
+      if r.messages[i].at <= m.at:
+        insertAt = i + 1
+        break
+      insertAt = i
+  r.messages.insert(m, insertAt)
   r.lastActivity = nowMs()
   app.rooms[room] = r.recount(app.formNick)
   wantFace(m)

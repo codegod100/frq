@@ -7,7 +7,7 @@
 # on every cold start, is the small half.
 #
 # This is the one place in the tree where a build happens inside a Dockerfile
-# rather than in `just` or a Modal sandbox. It is deliberate: rickub is what
+# rather than in `just` or a Modal sandbox. It is deliberate: GitHub Actions is what
 # has a registry to push to -- and docker already authenticated to it -- while
 # an image is what Modal can deploy without rebuilding anything. The build itself is still `tools/toolchain.sh` -- the
 # same pinned Flutter and Nim as `just build web` -- so nothing about the
