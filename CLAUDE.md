@@ -32,12 +32,12 @@ Two containers, and they are not the same kind of thing — which is why they
 are not written the same way. `dev` is a build that ends, and is a
 `container.toml` read by `_loader.py`: a sandbox with a volume, a toolchain
 and a command that changes. `web` is a deploy, and is plain Modal in
-`.modal/web/app.py`, because four constants and a `Popen` did not need a spec
+`.modal/web/deploy.py`, because four constants and a `Popen` did not need a spec
 file to be read before the file itself made sense.
 
-`web` is a deploy: rickub builds `.modal/web/Dockerfile` into
-`registry.rickub.com` (`.rickub/workflows/web.yml`), and
-`modal deploy .modal/web/app.py` serves that exact tag at a URL,
+`web` is a deploy: GitHub Actions builds `.modal/web/Dockerfile` into GHCR
+(`.github/workflows/deploy.yml`), and
+`modal deploy .modal/web/deploy.py` serves that exact tag at a URL,
 building nothing. So `just build web` on a laptop and the thing
 on the internet come from the same two commands, run in different places —
 and a deploy is a pull rather than a compile.
@@ -143,4 +143,3 @@ every script the origin runs.
 Two modules were never ported and are gone rather than moved: `frq.profile`
 (the Bluesky profile behind a nick) and `frq.replies` (asking freeq what a
 collapsed msgid was). Neither had a screen in the Nim app to appear on.
-
