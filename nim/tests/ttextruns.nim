@@ -24,6 +24,19 @@ suite "textRuns":
     check kinds("a http://x.com b https://y.com") ==
       @[rkText, rkLink, rkText, rkLink]
 
+  test "task-result emphasis is split from its markers":
+    check kinds("**Result**: finished") == @[rkStrong, rkText]
+    check values("**Result**: finished") == @["Result", ": finished"]
+
+  test "task messages keep emphasis, italic text, and commands distinct":
+    check kinds("**Done**: run *carefully* with `just test`") ==
+      @[rkStrong, rkText, rkEmphasis, rkText, rkCode]
+    check values("**Done**: run *carefully* with `just test`") ==
+      @["Done", ": run ", "carefully", " with ", "just test"]
+
+  test "an unclosed marker remains literal text":
+    check values("**still typing") == @["**still typing"]
+
   test "http as well as https":
     check kinds("http://example.com") == @[rkLink]
 

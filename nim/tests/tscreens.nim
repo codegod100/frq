@@ -302,6 +302,15 @@ suite "the chat screen's panes":
                                it.children.len > 0)
     check "messages" in t.keys("vbox")
 
+  test "task output has its own card treatment":
+    var task = initRoom("#tasks")
+    task.messages = @[Message(id: "task-1", frm: "task-bot",
+                              text: "**Result**: complete")]
+    let rows = cht.messageRows(s, task, task.messages)
+    let cards = rows[0].find("card")
+    check cards.len == 1
+    check cards[0].props{"task"}.getBool() == true
+
   test "and the strip goes away when it is folded":
     s.hideChatList = true
     let t = cht.chatScreen(s, true)

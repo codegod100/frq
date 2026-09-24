@@ -507,13 +507,19 @@ class _NimAppState extends State<NimApp> {
 
       // Container::Card in the Clojure: padding 12, fills its width.
       case 'card':
+        final task = n.prop('task', false);
         final card = Container(
           width: double.infinity,
           margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
           padding: const EdgeInsets.all(t.spaceXs),
           decoration: BoxDecoration(
-            color: t.card,
+            color: task ? t.cardComponent : t.card,
             borderRadius: BorderRadius.circular(t.radiusS),
+            border: task
+                ? const Border(
+                    left: BorderSide(color: t.accent, width: 3),
+                  )
+                : null,
           ),
           child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1117,8 +1123,8 @@ class _NimAppState extends State<NimApp> {
 
   /// One node of an inline paragraph, as a span.
   ///
-  /// Only `text` and `link` appear here — they are the only things `runNodes`
-  /// emits — and anything else falls back to its plain text so an unexpected
+  /// The core splits task output into text, links and a small set of inline
+  /// Markdown styles. Anything else falls back to plain text so an unexpected
   /// tag degrades to something readable rather than vanishing.
   InlineSpan _span(core.UiNode n) {
     switch (n.tag) {
@@ -1148,6 +1154,23 @@ class _NimAppState extends State<NimApp> {
       case 'text':
         return TextSpan(
             text: n.prop('text', ''), style: _style(t.textBody, t.onBg));
+      case 'strong':
+        return TextSpan(
+            text: n.prop('text', ''),
+            style: _style(t.textBody, t.onBg)
+                .copyWith(fontWeight: FontWeight.w700));
+      case 'emphasis':
+        return TextSpan(
+            text: n.prop('text', ''),
+            style: _style(t.textBody, t.onBg)
+                .copyWith(fontStyle: FontStyle.italic));
+      case 'code':
+        return TextSpan(
+            text: n.prop('text', ''),
+            style: _style(t.textBody, t.onBg).copyWith(
+              fontFamily: 'monospace',
+              color: t.accent,
+            ));
       default:
         return TextSpan(
             text: n.prop('label', n.prop('text', '')),
