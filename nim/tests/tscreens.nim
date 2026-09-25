@@ -302,14 +302,17 @@ suite "the chat screen's panes":
                                it.children.len > 0)
     check "messages" in t.keys("vbox")
 
-  test "task output has its own card treatment":
+  test "ordinary messages in the tasks channel stay ordinary":
     var task = initRoom("#tasks")
     task.messages = @[Message(id: "task-1", frm: "task-bot",
                               text: "**Result**: complete")]
     let rows = cht.messageRows(s, task, task.messages)
-    let cards = rows[0].find("card")
-    check cards.len == 1
-    check cards[0].props{"task"}.getBool() == true
+    check rows[0].find("task-card").len == 0
+    check rows[0].find("card").len == 0
+    let bodies = rows[0].find("vbox").filterIt(
+      it.props{"key"}.getStr() == "body-plain")
+    check bodies.len == 1
+    check bodies[0].props{"task"}.getBool() == false
 
   test "and the strip goes away when it is folded":
     s.hideChatList = true
