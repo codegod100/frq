@@ -92,6 +92,16 @@ suite "the chat screen":
     # A row of the same shape rather than a row with a hole in it.
     check cs.chatScreen(s, true).find("spacer").len >= 1
 
+  test "a task card offers a reply to its companion message":
+    var r = s.rooms["#test"]
+    r.messages[0].task = TaskEvent(id: "task-1", taskId: "task-1",
+                                   kind: "handoff", verb: "offer",
+                                   title: "Ship the release")
+    s.rooms["#test"] = r
+    let card = cs.chatScreen(s, true).find("task-card")
+    check card.len == 1
+    check card[0].props{"replyOnClick"}.getStr() == "reply.to:1"
+
   test "reaction pills carry their count and whether they are mine":
     var r = s.rooms["#test"]
     r.messages[0].reactions = @[Reaction(emoji: "👍", nicks: @["frq-guest", "bob"])]

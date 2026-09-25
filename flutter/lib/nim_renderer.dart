@@ -598,6 +598,21 @@ class _NimAppState extends State<NimApp> {
                       ),
                     ],
                     const Spacer(),
+                    if (n.prop('replyOnClick', '').isNotEmpty)
+                      _wrapTap(
+                        n.prop('replyOnClick', ''),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: t.component,
+                            borderRadius: BorderRadius.circular(t.radiusS),
+                          ),
+                          child: Text('💬', style: _emojiStyle(14)),
+                        ),
+                      ),
+                    if (n.prop('replyOnClick', '').isNotEmpty)
+                      const SizedBox(width: t.spaceXxs),
                     Text(n.prop('time', ''), style: _style(10, t.dim)),
                   ]),
                 ),
