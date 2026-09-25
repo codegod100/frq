@@ -202,7 +202,11 @@ proc taskCard(room: Room, m: Message, highlit: bool): Node =
                              "highlight": highlit}, @[])
   if task.title.len > 0: result.children.add text(task.title)
   var facts = vbox(%*{"key": "task-facts", "spacing": 2})
-  if task.verb == "offer":
+  for (name, value) in [("task id", task.taskId), ("event id", task.id),
+                         ("kind", task.kind), ("verb", task.verb)]:
+    if value.len > 0:
+      facts.children.add hbox(%*{"spacing": 8}, dimLabel(name), text(value))
+  if task.verb == "offer" or task.offeredTo.len > 0:
     facts.children.add hbox(%*{"spacing": 8}, dimLabel("offered to"),
                              label(if task.offeredTo.len > 0: task.offeredTo else: "anyone"))
   if task.caps.len > 0:
