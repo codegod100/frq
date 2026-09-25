@@ -105,6 +105,21 @@ suite "the rest of the conversation":
     check app.rooms.hasKey("bob")
     check app.rooms["bob"].messages[^1].text == "a direct word"
 
+  test "an empty late notice does not create a phantom latest row":
+    joined("#freeq")
+    say("@time=2026-09-23T19:00:00Z :bob!b@h PRIVMSG #freeq :current")
+    say("@time=2026-09-17T19:00:00Z :server NOTICE #freeq :")
+    let messages = app.rooms["#freeq"].messages.filterIt(not it.system)
+    check messages.len == 1
+    check messages[0].text == "current"
+
+  test "a late history replay is placed by server time":
+    joined("#freeq")
+    say("@time=2026-09-23T19:00:00Z :bob!b@h PRIVMSG #freeq :current",
+        "@time=2026-09-17T19:00:00Z :carol!c@h PRIVMSG #freeq :older")
+    let messages = app.rooms["#freeq"].messages.filterIt(not it.system)
+    check messages.mapIt(it.text) == @["older", "current"]
+
 suite "who is who":
   setup: reset()
 
@@ -380,3 +395,18 @@ suite "unsending a line":
   test "a delete for a line we never had is not an error":
     say("@+draft/delete=nope :bob!b@h TAGMSG #freeq")
     check not app.hasError
+
+  test "a handoff TAGMSG gives its companion a structured task":
+    # The body remains the server's ordinary readable fallback; only the
+    # signed tag event makes it a task card.  This keeps a bot saying
+    # "completed" from accidentally becoming a lifecycle event.
+    say("@+freeq.at/act=handoff;+freeq.at/act-verb=offer;" &
+        "+freeq.at/eventid=task-1;+freeq.at/act-title=ship\\sthe\\srelease;" &
+        "+freeq.at/act-to=did:plc:worker;+freeq.at/act-caps=web-search " &
+        ":bot!b@h TAGMSG #freeq",
+        "@+freeq.at/ref=task-1;msgid=line-1 :bot!b@h PRIVMSG #freeq :offered: ship the release")
+    let task = app.rooms["#freeq"].messageById("line-1").get.task
+    check task.id == "task-1"
+    check task.title == "ship the release"
+    check task.offeredTo == "did:plc:worker"
+    check task.caps == "web-search"

@@ -49,7 +49,7 @@ RUN python3 tools/client-metadata.py "$FRQ_WEB_ORIGIN" \
 
 RUN tools/toolchain.sh exec -- bash -euo pipefail -c '\
       mkdir -p /src/build/web && cd /src/nim && \
-      nim js -d:release --hints:off --path:src --path:web \
+      nim js -d:release --hints:off --path:../src --path:. \
           --out:/src/build/web/frq_core.js web/frq_web.nim && \
       cp /src/build/web/frq_core.js /src/flutter/web/frq_core.js && \
       cd /src/flutter && flutter pub get && \

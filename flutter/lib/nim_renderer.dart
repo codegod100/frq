@@ -351,7 +351,7 @@ class _NimAppState extends State<NimApp> {
 
     // What this node's own children are being built into.
     final childAxis = switch (n.tag) {
-      'page' || 'vbox' || 'card' || 'scroll' || 'dialog' => _column,
+      'page' || 'vbox' || 'card' || 'task-card' || 'scroll' || 'dialog' => _column,
       // A stack's children are laid out by the stack, not by a flex: an
       // `Expanded` among them is illegal, so they must not think they are
       // in one.
@@ -507,13 +507,22 @@ class _NimAppState extends State<NimApp> {
 
       // Container::Card in the Clojure: padding 12, fills its width.
       case 'card':
+        final task = n.prop('task', false);
         final card = Container(
           width: double.infinity,
           margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
           padding: const EdgeInsets.all(t.spaceXs),
           decoration: BoxDecoration(
-            color: t.card,
+            color: task ? t.cardComponent : t.card,
             borderRadius: BorderRadius.circular(t.radiusS),
+            border: task
+                ? Border(
+                    left: const BorderSide(color: t.accent, width: 3),
+                    top: BorderSide(color: t.accent.withValues(alpha: 0.4)),
+                    right: BorderSide(color: t.accent.withValues(alpha: 0.4)),
+                    bottom: BorderSide(color: t.accent.withValues(alpha: 0.4)),
+                  )
+                : null,
           ),
           child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -534,6 +543,83 @@ class _NimAppState extends State<NimApp> {
             child: card,
           ),
         );
+
+      // A typed handoff event's visible companion. A tinted box and coloured
+      // edge distinguish the event, with a separate header for its status.
+      case 'task-card':
+        {
+          final tone = n.prop('tone', 'neutral');
+          final edge = switch (tone) {
+            'new' => t.accent,
+            'active' => t.onBg,
+            'success' => t.success,
+            'danger' => t.destructive,
+            _ => t.dim,
+          };
+          final headlineColor = switch (tone) {
+            'new' => t.accent,
+            'success' => t.success,
+            'danger' => t.destructive,
+            _ => t.onBg,
+          };
+          return Container(
+            width: double.infinity,
+            margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
+            decoration: BoxDecoration(
+              color: n.prop('highlight', false)
+                  ? t.cardComponent
+                  : Color.alphaBlend(edge.withValues(alpha: 0.06), t.card),
+              borderRadius: BorderRadius.circular(t.radiusS),
+              border: Border(
+                left: BorderSide(color: edge, width: 3),
+                top: BorderSide(color: edge.withValues(alpha: 0.55)),
+                right: BorderSide(color: edge.withValues(alpha: 0.55)),
+                bottom: BorderSide(color: edge.withValues(alpha: 0.55)),
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: edge.withValues(alpha: 0.08),
+                    border: Border(
+                      bottom: BorderSide(color: edge.withValues(alpha: 0.25)),
+                    ),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: t.spaceXs, vertical: t.spaceXxs),
+                  child: Row(children: [
+                    Text(n.prop('glyph', ''), style: _emojiStyle(t.textCaption)),
+                    const SizedBox(width: t.spaceXxs),
+                    Text(n.prop('headline', '').toUpperCase(),
+                        style: _style(t.textCaption, headlineColor)
+                            .copyWith(fontWeight: FontWeight.w700)),
+                    if (n.prop('eventId', '').isNotEmpty) ...[
+                      const SizedBox(width: t.spaceXxs),
+                      Flexible(
+                        child: Text(n.prop('eventId', ''),
+                            overflow: TextOverflow.ellipsis,
+                            style: _style(10, t.dim)),
+                      ),
+                    ],
+                    const Spacer(),
+                    Text(n.prop('time', ''), style: _style(10, t.dim)),
+                  ]),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(t.spaceXs),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _spaced(kids, t.spaceXxs, vertical: true),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
 
       case 'title':
         final shrinks = n.prop('shrink', false);
@@ -1045,8 +1131,8 @@ class _NimAppState extends State<NimApp> {
 
   /// One node of an inline paragraph, as a span.
   ///
-  /// Only `text` and `link` appear here — they are the only things `runNodes`
-  /// emits — and anything else falls back to its plain text so an unexpected
+  /// The core splits task output into text, links and a small set of inline
+  /// Markdown styles. Anything else falls back to plain text so an unexpected
   /// tag degrades to something readable rather than vanishing.
   InlineSpan _span(core.UiNode n) {
     switch (n.tag) {
@@ -1076,6 +1162,23 @@ class _NimAppState extends State<NimApp> {
       case 'text':
         return TextSpan(
             text: n.prop('text', ''), style: _style(t.textBody, t.onBg));
+      case 'strong':
+        return TextSpan(
+            text: n.prop('text', ''),
+            style: _style(t.textBody, t.onBg)
+                .copyWith(fontWeight: FontWeight.w700));
+      case 'emphasis':
+        return TextSpan(
+            text: n.prop('text', ''),
+            style: _style(t.textBody, t.onBg)
+                .copyWith(fontStyle: FontStyle.italic));
+      case 'code':
+        return TextSpan(
+            text: n.prop('text', ''),
+            style: _style(t.textBody, t.onBg).copyWith(
+              fontFamily: 'monospace',
+              color: t.accent,
+            ));
       default:
         return TextSpan(
             text: n.prop('label', n.prop('text', '')),
