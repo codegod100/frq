@@ -114,7 +114,8 @@ screen — to JavaScript that a page loads with a `<script>` tag.
 
 So there is a web target again, `just build web`. What differs from the
 desktop is only the host: `nim/web/frq/*.nim` shadows `nim/src/frq/*.nim` by
-search path (`--path:src --path:web`, later wins), so `frq/conn` is a queue a
+search path (`--path:../src --path:.`, resolved from `nim/web`; later wins),
+so `frq/conn` is a queue a
 WebSocket fills rather than two socket threads, `frq/store` is localStorage,
 and `frq/crypto` says plainly that it cannot sign. The shared code above them
 imports the same names either way and never learns which host it is on. Dart

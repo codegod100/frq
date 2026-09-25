@@ -168,8 +168,10 @@ deploy container="web":
 
 # The same core, compiled to JavaScript.
 #
-# `--path:src --path:web`, in that order, because the later path wins: every
-# module under `nim/web/frq` shadows the one beside it in `nim/src/frq`, so
+# The main module lives under `nim/web`, and Nim resolves command-line search
+# paths from that directory. `../src` is the shared tree and `.` is the web
+# tree; the later path wins, so every module under `nim/web/frq` shadows the
+# one beside it in `nim/src/frq`. Thus
 # `frq/conn` is a queue the host fills rather than two socket threads, and the
 # shared code above them never learns which host it is on.
 # The web bundle: the core as JavaScript, and Flutter around it.
@@ -226,7 +228,7 @@ _nim-js:
     exec "{{tc}}" exec -- bash -euo pipefail -c '
         cd nim
         nim js -d:release --hints:off \
-            --path:src --path:web --out:"'"$out"'/frq_core.js" web/frq_web.nim
+            --path:../src --path:. --out:"'"$out"'/frq_core.js" web/frq_web.nim
         printf "built %s (%s)\n" "'"$out"'/frq_core.js" \
             "$(gzip -9c "'"$out"'/frq_core.js" | wc -c | awk "{printf \"%d KB gzipped\", \$1/1024}")"'
 

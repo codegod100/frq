@@ -20,14 +20,25 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            await github.graphql(
-              `mutation EnableAutoMerge($pullRequestId: ID!) {
-                enablePullRequestAutoMerge(input: {
-                  pullRequestId: $pullRequestId,
-                  mergeMethod: SQUASH
-                }) {
-                  pullRequest { number }
-                }
-              }`,
-              { pullRequestId: context.payload.pull_request.node_id },
-            );
+            try {
+              await github.graphql(
+                `mutation EnableAutoMerge($pullRequestId: ID!) {
+                  enablePullRequestAutoMerge(input: {
+                    pullRequestId: $pullRequestId,
+                    mergeMethod: SQUASH
+                  }) {
+                    pullRequest { number }
+                  }
+                }`,
+                { pullRequestId: context.payload.pull_request.node_id },
+              );
+            } catch (error) {
+              const messages = (error.errors || []).map(({ message }) => message);
+              if (messages.some((message) => message.includes('unstable status'))) {
+                core.notice(
+                  'Auto-merge was not queued because this pull request has failing checks.',
+                );
+                return;
+              }
+              throw error;
+            }
