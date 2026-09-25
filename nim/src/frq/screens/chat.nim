@@ -27,10 +27,6 @@ const
   overviewLines* = 40
 
 
-  taskRoom = "#tasks"
-    ## Task output is prose, but benefits from reading as a result rather than
-    ## blending into an ordinary conversation line.
-
   sidePanelWidth = 150
     ## What a strip beside the backlog takes. Wide enough for a room name or
     ## a nick, narrow enough that the conversation is still the pane.
@@ -206,7 +202,11 @@ proc taskCard(room: Room, m: Message, highlit: bool): Node =
                              "highlight": highlit}, @[])
   if task.title.len > 0: result.children.add text(task.title)
   var facts = vbox(%*{"key": "task-facts", "spacing": 2})
-  if task.verb == "offer":
+  for (name, value) in [("task id", task.taskId), ("event id", task.id),
+                         ("kind", task.kind), ("verb", task.verb)]:
+    if value.len > 0:
+      facts.children.add hbox(%*{"spacing": 8}, dimLabel(name), text(value))
+  if task.verb == "offer" or task.offeredTo.len > 0:
     facts.children.add hbox(%*{"spacing": 8}, dimLabel("offered to"),
                              label(if task.offeredTo.len > 0: task.offeredTo else: "anyone"))
   if task.caps.len > 0:
@@ -325,13 +325,11 @@ proc messageBody(s: State, room: Room, m: Message, highlit: bool): Node =
   # how a reader finds the line they were sent to.
   if m.task.id.len > 0:
     return taskCard(room, m, highlit)
-  # Task output gets the same bounded surface a jumped-to line does, plus a
-  # renderer hint for its own accent edge. It keeps each result visually
-  # separate without changing the layout or storage of ordinary messages.
-  let task = room.name == taskRoom
-  n(if highlit or task: "card" else: "vbox",
+  # Only a typed handoff companion above is a task. The channel it was said in
+  # is not a type: #tasks still contains ordinary conversation and bot prose.
+  n(if highlit: "card" else: "vbox",
     %*{"key": (if highlit: "body-card" else: "body-plain"),
-       "spacing": 2, "margin": 0, "task": task},
+       "spacing": 2, "margin": 0, "task": false},
     @[who, body, picker, images, preview, pills])
 
 proc messageRow(s: State, room: Room, i: int, m: Message): Node =
