@@ -516,8 +516,11 @@ class _NimAppState extends State<NimApp> {
             color: task ? t.cardComponent : t.card,
             borderRadius: BorderRadius.circular(t.radiusS),
             border: task
-                ? const Border(
-                    left: BorderSide(color: t.accent, width: 3),
+                ? Border(
+                    left: const BorderSide(color: t.accent, width: 3),
+                    top: BorderSide(color: t.accent.withValues(alpha: 0.4)),
+                    right: BorderSide(color: t.accent.withValues(alpha: 0.4)),
+                    bottom: BorderSide(color: t.accent.withValues(alpha: 0.4)),
                   )
                 : null,
           ),
@@ -541,19 +544,17 @@ class _NimAppState extends State<NimApp> {
           ),
         );
 
-      // A typed handoff event's visible companion.  This deliberately uses
-      // the app's own surfaces and typography rather than FreeQ web's purple
-      // and blue palette: the narrow coloured edge and quiet header make a
-      // lifecycle easy to scan without looking like an imported component.
+      // A typed handoff event's visible companion. A tinted box and coloured
+      // edge distinguish the event, with a separate header for its status.
       case 'task-card':
         {
           final tone = n.prop('tone', 'neutral');
           final edge = switch (tone) {
             'new' => t.accent,
-            'active' => t.componentHover,
+            'active' => t.onBg,
             'success' => t.success,
             'danger' => t.destructive,
-            _ => t.divider,
+            _ => t.dim,
           };
           final headlineColor = switch (tone) {
             'new' => t.accent,
@@ -565,7 +566,9 @@ class _NimAppState extends State<NimApp> {
             width: double.infinity,
             margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
             decoration: BoxDecoration(
-              color: n.prop('highlight', false) ? t.cardComponent : t.card,
+              color: n.prop('highlight', false)
+                  ? t.cardComponent
+                  : Color.alphaBlend(edge.withValues(alpha: 0.06), t.card),
               borderRadius: BorderRadius.circular(t.radiusS),
               border: Border(
                 left: BorderSide(color: edge, width: 3),
@@ -580,7 +583,12 @@ class _NimAppState extends State<NimApp> {
               children: [
                 Container(
                   width: double.infinity,
-                  color: t.component.withValues(alpha: 0.55),
+                  decoration: BoxDecoration(
+                    color: edge.withValues(alpha: 0.08),
+                    border: Border(
+                      bottom: BorderSide(color: edge.withValues(alpha: 0.25)),
+                    ),
+                  ),
                   padding: const EdgeInsets.symmetric(
                       horizontal: t.spaceXs, vertical: t.spaceXxs),
                   child: Row(children: [
