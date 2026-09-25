@@ -196,10 +196,15 @@ proc taskCard(room: Room, m: Message, highlit: bool): Node =
   ## lifecycle scannable without pretending ordinary bot prose is structured.
   let task = m.task
   let (glyph, headline, tone) = taskHeadline(task.verb)
-  result = n("task-card", %*{"key": "task-" & rowId(m), "glyph": glyph,
-                             "headline": headline, "tone": tone,
-                             "eventId": task.id, "time": clockTime(m.at),
-                             "highlight": highlit}, @[])
+  var props = %*{"key": "task-" & rowId(m), "glyph": glyph,
+                 "headline": headline, "tone": tone,
+                 "eventId": task.id, "time": clockTime(m.at),
+                 "highlight": highlit}
+  # Task cards replace the ordinary message body, so they carry their own
+  # reply control.  The companion PRIVMSG's msgid is still the target.
+  if m.id.len > 0:
+    props["replyOnClick"] = %("reply.to:" & rowId(m))
+  result = n("task-card", props, @[])
   if task.title.len > 0: result.children.add text(task.title)
   var facts = vbox(%*{"key": "task-facts", "spacing": 2})
   for (name, value) in [("task id", task.taskId), ("event id", task.id),
