@@ -103,6 +103,15 @@
   const form = (pairs) =>
     pairs.map(([k, v]) => k + '=' + encodeURIComponent(String(v))).join('&');
 
+  // OAuth errors are JSON objects. Inspect the error field rather than
+  // searching the serialized response: an error description can contain the
+  // same words without asking the client to replay the request.
+  function isDpopNonceChallenge(response) {
+    if (response.status < 400 || !response.nonce) return false;
+    try { return JSON.parse(response.body).error === 'use_dpop_nonce'; }
+    catch (e) { return false; }
+  }
+
   // Which server authorizes for this PDS.
   //
   // Two shapes, and the difference is what a real account runs into. A PDS
@@ -150,7 +159,7 @@
         { 'Content-Type': 'application/x-www-form-urlencoded', 'DPoP': p }, body);
     };
     const first = await send(nonce || '');
-    if (first.status >= 400 && first.body.includes('use_dpop_nonce') && first.nonce) {
+    if (isDpopNonceChallenge(first)) {
       const retry = await send(first.nonce);
       // A server need not repeat the nonce on the successful response. Keep
       // the challenge value so the next POST to this authorization server
@@ -173,7 +182,7 @@
         { 'Authorization': 'DPoP ' + token, 'DPoP': p }, null);
     };
     const first = await send(nonce || '');
-    if (first.status >= 400 && first.body.includes('use_dpop_nonce') && first.nonce) {
+    if (isDpopNonceChallenge(first)) {
       const retry = await send(first.nonce);
       if (!retry.nonce) retry.nonce = first.nonce;
       return retry;
