@@ -64,6 +64,15 @@ frq.feed(":alice!a@h PRIVMSG #test :hello from the web");
 const tree = frq.render();
 check("a fed line reaches the screen", tree.includes("hello from the web"));
 
+// A PING is answered by `pump` alone -- no render. The host calls it from
+// the socket's `onmessage`, because the timer that renders is throttled in a
+// hidden tab and a late PONG is a dropped connection.
+frq.takeOutbound();
+frq.feed("PING :irc.freeq.at");
+frq.pump();
+check("a PING is answered without a render",
+      frq.takeOutbound() === "PONG :irc.freeq.at");
+
 // What is saved is saved.
 check("the store writes through localStorage",
       Object.keys(window.localStorage._v).some(k => k.startsWith("frq.")));
