@@ -22,17 +22,20 @@ include = ["."]
 # it was for. The toolchain script now plays that part, and it lives on the
 # volume rather than in a layer.
 #
-# The first half is what the toolchain itself needs: git, because Flutter
+# The first half is what the repository environment needs: git, because Flutter
 # shells out to it against its own SDK checkout and refuses to run without
 # one; unzip and xz-utils for the tarballs; ca-certificates so curl can verify
-# what it fetches; rsync for the sync below.
+# what it fetches; rsync for the sync below. `just` is the repository's task
+# runner, while Python and Node drive the web relay and OAuth tests. Keeping
+# those three here means an attached development shell can run the same
+# commands documented at the root instead of having to reconstruct CI's host.
 #
 # The second half is Flutter's Linux target: CMake, Ninja and pkg-config drive
 # the build, GTK 3 is what the runner links, and a C toolchain compiles both
 # that and whatever `nim c` is asked for. libssl is Nim's: nim.cfg is
 # `-d:ssl`, and std/net resolves -lssl and -lcrypto through dynlib at run time.
 setup = [
-  "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git rsync tar unzip xz-utils && rm -rf /var/lib/apt/lists/*",
+  "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git just nodejs python3 rsync tar unzip xz-utils && rm -rf /var/lib/apt/lists/*",
   "apt-get update && apt-get install -y --no-install-recommends build-essential clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libssl-dev && rm -rf /var/lib/apt/lists/*",
 ]
 # The build state a local checkout carries: 395MB of a 441MB repo, uploaded on
@@ -118,17 +121,12 @@ for d in "$FRQ_TOOLCHAIN" build/nim flutter/build; do
     [ -d "$d" ] && echo "  carried over: $d"
 done
 
-# Run from the volume, where the state it reuses lives. `just` is not in this
-# image and is not worth an apt line for one call: the recipe is a wrapper
-# around the toolchain, and this is that wrapper.
+# Run from the volume, where the state it reuses lives. Use the public recipe
+# rather than carrying a second inlined copy here; an attached shell has the
+# same `just` and can reproduce this exact build command.
 # The Nim core first: the app dlopens it at startup, and a missing .so is a
 # blank window with a StateError behind it.
-tools/toolchain.sh exec -- bash -euo pipefail -c '
-    cd nim && nim c --app:lib --mm:orc -d:release --hints:off --path:src \
-        --out:../build/nim/libfrqcore.so src/frq_core.nim
-    cd ../flutter
-    flutter pub get
-    flutter build linux --debug'
+just build desktop
 
 echo "built:"
 du -sh flutter/build

@@ -23,6 +23,24 @@ seen = {}
 
 
 class Upstream(BaseHTTPRequestHandler):
+    def do_GET(self):
+        seen["get_path"] = self.path
+        if self.path.startswith("/api/v1/og?"):
+            self.send_response(502 if "broken" in self.path else 200)
+            out = (b'{"title":"A page"}' if "broken" not in self.path
+                   else b'{"error":"fetch failed"}')
+        elif self.path.startswith("/xrpc/app.bsky.actor.getProfile?"):
+            self.send_response(400 if "missing" in self.path else 200)
+            out = (b'{"did":"did:plc:ok","displayName":"A reader"}'
+                   if "missing" not in self.path else b'{"error":"not found"}')
+        else:
+            self.send_response(404)
+            out = b""
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
         seen["path"] = self.path
@@ -60,7 +78,7 @@ def main():
     origin = "http://127.0.0.1:%d" % up.server_address[1]
 
     www = os.path.join(ROOT, "nim", "web", "test")
-    env = dict(os.environ, FRQ_API_ORIGIN=origin)
+    env = dict(os.environ, FRQ_API_ORIGIN=origin, FRQ_PROFILE_ORIGIN=origin)
     proc = subprocess.Popen(
         [sys.executable, os.path.join(ROOT, "tools", "webserve.py"),
          "8732", www],
@@ -126,6 +144,29 @@ def main():
              {"Content-Type": "text/plain", "Cookie": "session=secret"})
         assert seen["cookie"] is None, seen["cookie"]
         ok("a cookie of ours is not forwarded")
+
+        # Link and profile failures are ordinary optional-content misses.
+        # They remain visible in the relay log, but a successful empty
+        # response keeps browsers from reporting handled failures as broken
+        # page resources in their console.
+        with urllib.request.urlopen(
+                base + "/api/v1/og?url=https%3A%2F%2Fbroken.example",
+                timeout=5) as r:
+            assert r.status == 204, r.status
+            assert r.read() == b""
+        with urllib.request.urlopen(
+                base + "/api/v1/profile?actor=missing.example",
+                timeout=5) as r:
+            assert r.status == 204, r.status
+            assert r.read() == b""
+        ok("optional preview and profile misses are quiet empty responses")
+
+        with urllib.request.urlopen(
+                base + "/api/v1/profile?actor=did%3Aplc%3Aok", timeout=5) as r:
+            assert r.status == 200, r.status
+            assert json.loads(r.read())["did"] == "did:plc:ok"
+        assert seen["get_path"].endswith("actor=did%3Aplc%3Aok")
+        ok("a profile is relayed through the fixed public endpoint")
 
         # One path. Not a proxy.
         status, _ = post(base + "/api/v1/search", b"x")

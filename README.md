@@ -43,8 +43,10 @@ just test live       # the whole stack against a real freeq
 ```
 
 `tools/toolchain.sh` fetches Flutter and Nim by sha256; there is no nix and no
-JVM. The host brings a C compiler, OpenSSL, GTK and the usual
-CMake/Ninja/pkg-config.
+JVM. The host brings `just`, Python 3 and Node.js, plus a C compiler, OpenSSL,
+GTK and the usual CMake/Ninja/pkg-config. The Modal development environment
+installs that complete host-side set, so an attached shell can run every
+command above without additional setup.
 
 Two switches, because a Wayland window cannot be clicked from a script:
 

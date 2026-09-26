@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve the web bundle, and relay the two requests a browser may not make.
+"""Serve the web bundle, and relay the requests a browser should not make.
 
 `python3 -m http.server` did this until the upload needed to work. freeq's
 media endpoint answers `access-control-allow-origin` for exactly one origin
@@ -23,11 +23,15 @@ allowlist, and on the screen that read as a feature that simply did nothing.
 The difference from the upload is only which way the bytes go -- a GET with
 the page's `?url=` passed through, and the OpenGraph JSON handed back.
 
-Two things this is deliberately not. It is not a general proxy: two paths,
-one method each, one upstream, fixed here rather than taken from the
-request, so it cannot be pointed at anything. The `url` a caller passes is
-freeq's business, not this server's -- it is the one that fetches it, and it
-resolves the host and refuses the private ranges before it does.
+`/api/v1/profile` keeps the public Bluesky lookup on that same quiet path.
+A missing or deleted identity is normal in an old chat, but a direct failed
+`fetch` is still painted red by DevTools even when the app handles it.
+
+Two things this is deliberately not. It is not a general proxy: three paths,
+fixed upstreams rather than one taken from the request, so it cannot be
+pointed at anything. The `url` a caller passes is freeq's business, not this
+server's -- it is the one that fetches it, and it resolves the host and
+refuses the private ranges before it does.
 
 And it is not a permanent answer -- one `Access-Control-Allow-Origin: *` on
 a public, unauthenticated endpoint would retire both, and that ask is now
@@ -36,6 +40,7 @@ the small one because the page sends no credentials.
     python3 tools/webserve.py [PORT] [DIRECTORY]
 
 `FRQ_API_ORIGIN` names the freeq to relay to, for anyone running their own.
+`FRQ_PROFILE_ORIGIN` exists only so the offline test can substitute a stub.
 """
 
 import os
@@ -43,6 +48,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -50,6 +56,10 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 UPSTREAM = os.environ.get("FRQ_API_ORIGIN", "https://irc.freeq.at").rstrip("/")
 UPLOAD = "/api/v1/upload"
 OG = "/api/v1/og"
+PROFILE = "/api/v1/profile"
+PROFILE_UPSTREAM = os.environ.get(
+    "FRQ_PROFILE_ORIGIN", "https://public.api.bsky.app"
+).rstrip("/") + "/xrpc/app.bsky.actor.getProfile"
 
 # The endpoint's own cap. Refused here rather than after twelve megabytes
 # have crossed this machine on their way to being turned down.
@@ -163,12 +173,15 @@ class Handler(SimpleHTTPRequestHandler):
         SimpleHTTPRequestHandler.end_headers(self)
 
     def do_GET(self):
-        """The bundle, or the preview relay.
+        """The bundle, or one of the two read relays.
 
-        Everything but one path is a file, so the base class answers first
-        and this only steps in front of it.
+        Everything but those paths is a file, so the base class answers it.
         """
-        if self.path.split("?")[0] != OG:
+        path = self.path.split("?")[0]
+        if path == PROFILE:
+            self.profile()
+            return
+        if path != OG:
             SimpleHTTPRequestHandler.do_GET(self)
             return
 
@@ -204,20 +217,53 @@ class Handler(SimpleHTTPRequestHandler):
             with urllib.request.urlopen(req, timeout=30) as r:
                 status, body, kind = r.status, r.read(), r.headers.get_content_type()
         except urllib.error.HTTPError as e:
-            # freeq's own refusal, passed through with its reason -- "Body
-            # too large" for a page over its cap, "Blocked" for a host it
-            # will not resolve. A 502 in place of those would lose the only
-            # sentence saying what happened.
+            # Keep the actual status long enough to log it below. The body
+            # is not shown in the UI; a preview failure means no card.
             status, body, kind = e.code, e.read(), "application/json"
         except OSError as e:
             status, body, kind = 502, str(e).encode(), "text/plain"
 
-        # A 429 is never stored. It is not what this link is, it is what
-        # freeq thought of us a moment ago -- and keeping it would turn one
-        # exhausted budget into a day of blank cards for a link that was
-        # fine.
-        if status != 429:
-            og_remember(query, status, body, kind)
+        # A failed preview is optional UI, not a failed browser resource.
+        # Returning the upstream 4xx/5xx made DevTools report a page full of
+        # red errors even though the client deliberately turns every one of
+        # them into an absent card.  Keep the useful status in this server's
+        # access log, then give the browser the same empty successful answer
+        # the client already understands.
+        if status != 200:
+            self.log_message("preview upstream answered %s for %s", status, query)
+            status, body, kind = 204, b"", "application/json"
+
+        og_remember(query, status, body, kind)
+
+        self.send_response(status)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def profile(self):
+        """Relay a public Bluesky profile without noisy expected failures."""
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        values = urllib.parse.parse_qs(query, keep_blank_values=True)
+        if (set(values) != {"actor"} or len(values["actor"]) != 1
+                or not values["actor"][0]):
+            self.send_error(400, "actor is required")
+            return
+
+        actor = urllib.parse.urlencode({"actor": values["actor"][0]})
+        req = urllib.request.Request(PROFILE_UPSTREAM + "?" + actor, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                status, body, kind = r.status, r.read(), r.headers.get_content_type()
+        except urllib.error.HTTPError as e:
+            status, body, kind = e.code, b"", "application/json"
+        except OSError:
+            status, body, kind = 502, b"", "application/json"
+
+        if status != 200:
+            self.log_message("profile upstream answered %s for %s", status,
+                             values["actor"][0])
+            status = 204
 
         self.send_response(status)
         self.send_header("Content-Type", kind)

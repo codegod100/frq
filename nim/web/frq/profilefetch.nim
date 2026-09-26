@@ -16,8 +16,7 @@ var answers: Deque[(string, string)]   ## actor, body — the body empty on fail
 
 {.emit: """
 function frqFetchProfile(actor, done) {
-  fetch("https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor="
-        + encodeURIComponent(actor))
+  fetch("/api/v1/profile?actor=" + encodeURIComponent(actor))
     .then(function (r) { return r.ok ? r.text() : ""; })
     .then(function (t) { done(actor, t); })
     .catch(function () { done(actor, ""); });

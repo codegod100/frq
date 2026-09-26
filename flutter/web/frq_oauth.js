@@ -141,17 +141,22 @@
 
   // POST a form with a freshly minted proof, retrying once when the server
   // asks for a nonce. The retry is the protocol and not a fallback: a client
-  // has no way to know the first nonce, so the first request of every flow is
-  // answered with 400 `use_dpop_nonce` and the nonce to use.
-  async function postForm(url, body, token) {
+  // has no way to know the first nonce. Once learned, it is passed back into
+  // later calls so an expected challenge does not become console noise.
+  async function postForm(url, body, token, nonce) {
     const send = async (nonce) => {
       const p = await dpop().proof('POST', url, nonce, token || '');
       return http('POST', url,
         { 'Content-Type': 'application/x-www-form-urlencoded', 'DPoP': p }, body);
     };
-    const first = await send('');
+    const first = await send(nonce || '');
     if (first.status >= 400 && first.body.includes('use_dpop_nonce') && first.nonce) {
-      return send(first.nonce);
+      const retry = await send(first.nonce);
+      // A server need not repeat the nonce on the successful response. Keep
+      // the challenge value so the next POST to this authorization server
+      // does not deliberately incur the same failed first request.
+      if (!retry.nonce) retry.nonce = first.nonce;
+      return retry;
     }
     return first;
   }
@@ -209,8 +214,8 @@
   // on the server with no word about why -- and, from the outside, an
   // unexplained 401 in the console. Whoever the PDS will not vouch for is
   // not signed in.
-  async function whoami(pds, token) {
-    const r = await getWithDpop(sessionUrl(pds), token, '');
+  async function whoami(pds, token, nonce) {
+    const r = await getWithDpop(sessionUrl(pds), token, nonce || '');
     if (r.status !== 200) {
       // Said twice on purpose. The throw reaches the reader as the app's own
       // warning; this puts the same words in the console, which is where a
@@ -278,7 +283,8 @@
     if (r.status !== 201) throw new Error('Authorization request refused: ' + r.body);
 
     const requestUri = JSON.parse(r.body).request_uri;
-    save(PENDING, { verifier, state, did, handle, pds, token: ends.token });
+    save(PENDING, { verifier, state, did, handle, pds, token: ends.token,
+                    tokenNonce: r.nonce || '' });
     window.location.assign(
       ends.authorize + '?client_id=' + encodeURIComponent(clientId()) +
       '&request_uri=' + encodeURIComponent(requestUri));
@@ -307,7 +313,7 @@
       ['redirect_uri', origin()],
       ['client_id', clientId()],
       ['code_verifier', pending.verifier],
-    ]), null);
+    ]), null, pending.tokenNonce || '');
     if (r.status !== 200) throw new Error('Sign-in failed: ' + r.body);
 
     const t = JSON.parse(r.body);
@@ -324,7 +330,7 @@
         (t.scope || 'none granted'));
     }
 
-    const who = await whoami(pending.pds, t.access_token);
+    const who = await whoami(pending.pds, t.access_token, '');
     const session = {
       did: who.did || t.sub || pending.did,
       handle: who.handle || pending.handle || '',
@@ -335,6 +341,9 @@
       // round trips to learn something already known, on the path taken
       // every time the app opens.
       token: pending.token,
+      // DPoP nonces belong to a server. This one is for the authorization
+      // server's token endpoint; `dpopNonce` below is separately for the PDS.
+      tokenNonce: r.nonce || pending.tokenNonce || '',
       dpopNonce: who.nonce || '',
     };
     drop(PENDING);
@@ -371,7 +380,7 @@
       ['grant_type', 'refresh_token'],
       ['refresh_token', s.refresh],
       ['client_id', clientId()],
-    ]), null);
+    ]), null, s.tokenNonce || '');
     if (r.status !== 200) {
       // The refresh token is gone or was revoked, and no retry will bring it
       // back. Clearing the session is what turns "signed in, and nothing
@@ -385,6 +394,7 @@
     s.accessJwt = t.access_token;
     if (t.refresh_token) s.refresh = t.refresh_token;
     s.token = where;
+    if (r.nonce) s.tokenNonce = r.nonce;
     save(SESSION, s);
     return s;
   }
@@ -407,16 +417,16 @@
       // `exp` is definitive, so do not ask the PDS to reject this token
       // merely to learn what the browser already knows.
       s = await refresh();
-      who = await whoami(s.pds, s.accessJwt);
+      who = await whoami(s.pds, s.accessJwt, s.dpopNonce);
     } else try {
-      who = await whoami(s.pds, s.accessJwt);
+      who = await whoami(s.pds, s.accessJwt, s.dpopNonce);
     } catch (e) {
       // Asking who the token belongs to is also how its age is discovered.
       // A refusal here is nearly always an expired access token, so spend
       // the refresh token and ask once more; if that fails it throws, and
       // saying so beats connecting as somebody else.
       s = await refresh();
-      who = await whoami(s.pds, s.accessJwt);
+      who = await whoami(s.pds, s.accessJwt, s.dpopNonce);
     }
     if (who.handle) s.handle = who.handle;
     if (who.did) s.did = who.did;
