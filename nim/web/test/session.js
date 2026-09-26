@@ -32,6 +32,8 @@ let live = 'fresh-token';
 let refreshes = 0;
 let refreshValid = true;
 let sessionCalls = 0;
+let tokenProofNonce = '';
+let sessionProofNonce = '';
 const calls = [];
 global.fetch = async (url, opts) => {
   const body = String((opts && opts.body) || '');
@@ -43,12 +45,16 @@ global.fetch = async (url, opts) => {
   });
   if (String(url).endsWith('/xrpc/com.atproto.server.getSession')) {
     sessionCalls += 1;
+    const proof = opts.headers.DPoP.split('.')[1];
+    sessionProofNonce = JSON.parse(Buffer.from(proof, 'base64url')).nonce || '';
     const bearer = (opts.headers.Authorization || '').replace('DPoP ', '');
     if (bearer !== live) return reply(401, { error: 'InvalidToken' });
     return reply(200, { did: 'did:plc:abc', handle: 'someone.example' },
                  { 'dpop-nonce': 'n1' });
   }
   if (String(url).endsWith('/token')) {
+    const proof = opts.headers.DPoP.split('.')[1];
+    tokenProofNonce = JSON.parse(Buffer.from(proof, 'base64url')).nonce || '';
     assert.ok(body.includes('grant_type=refresh_token'), 'a refresh grant');
     assert.ok(body.includes('refresh_token=r1'), 'spends the stored token');
     if (!refreshValid) return reply(400, { error: 'invalid_grant' });
@@ -76,11 +82,15 @@ const jwt = (claims) => 'header.' +
 (async () => {
   // A token the PDS still accepts is used as it is.
   store = {}; live = 'fresh-token'; refreshes = 0;
-  localStorage.setItem('frq:oauth:session', JSON.stringify(session()));
+  localStorage.setItem('frq:oauth:session',
+    JSON.stringify(session({ dpopNonce: 'saved-pds-nonce' })));
   let s = await window.frqOauth.prepare();
   assert.equal(refreshes, 0);
   assert.ok(s.dpopProof, 'a proof for freeq to present');
   ok('a live token is not refreshed');
+
+  assert.equal(sessionProofNonce, 'saved-pds-nonce');
+  ok('and a known PDS nonce avoids another challenge');
 
   // The nonce the PDS asked for is kept, so the proof minted at connect
   // carries one already.
@@ -89,13 +99,17 @@ const jwt = (claims) => 'header.' +
 
   // The case that was silently broken.
   store = {}; live = 'fresh-token'; refreshes = 0; refreshValid = true;
+  tokenProofNonce = '';
   localStorage.setItem('frq:oauth:session',
-    JSON.stringify(session({ accessJwt: 'stale' })));
+    JSON.stringify(session({ accessJwt: 'stale', tokenNonce: 'as-nonce' })));
   s = await window.frqOauth.prepare();
   assert.equal(refreshes, 1, 'the refresh token was spent');
   assert.equal(s.accessJwt, 'second-token');
   assert.equal(s.handle, 'someone.example', 'still knows who it is');
   ok('a token the PDS refuses is refreshed, once');
+
+  assert.equal(tokenProofNonce, 'as-nonce');
+  ok('and refresh reuses the authorization server nonce');
 
   // Single-use: the replacement is stored, or the next refresh spends a
   // token that is already gone.
