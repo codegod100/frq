@@ -13,7 +13,7 @@
 ## reducer's answer to a line could be tested without a socket, and a browser
 ## is the same problem — something else owns the I/O.
 
-import std/deques
+import std/[deques, strutils]
 
 type ConnConfig* = object
   host*: string
@@ -46,10 +46,20 @@ proc tryOutbound*(): (bool, string) =
   if outbound.len == 0: (false, "") else: (true, outbound.popFirst())
 
 proc feed*(line: string) = inbound.addLast(line)
-proc event*(e: string) = events.addLast(e)
+proc event*(e: string) =
+  ## A socket that ended is no longer wanted. Left set, the host would read
+  ## the same `wanted` after its `onclose` and dial it straight back — with
+  ## the session the last connection signed in with, whose proof is spent.
+  ## Whether to connect again is the reducer's to decide, and it does so by
+  ## calling `open`.
+  if e.startsWith("close:") or e.startsWith("error:"):
+    want = ConnConfig()
+    running = false
+  events.addLast(e)
 
 proc close*() =
   running = false
+  want = ConnConfig()
   events.addLast("close: ")
 
 proc tryLine*(): (bool, string) =

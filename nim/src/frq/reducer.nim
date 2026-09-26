@@ -44,6 +44,11 @@ var
     ## who had deliberately gone out to the overview should not be thrown
     ## back into a room by a network blip. The restore is a thing this run
     ## does once, on the first connection it makes.
+  registered: bool
+    ## Whether the connection now open got as far as 001, and so whether its
+    ## ending is a drop worth answering with a reconnect rather than a dial
+    ## that failed. Cleared by Disconnect, so a reader who asked to leave is
+    ## not dialled back in.
 
 proc setError(msg: string) =
   app.error = msg
@@ -390,6 +395,19 @@ proc connectNow() =
   if not signIn(): return
   openSocket()
 
+proc reconnects(): bool =
+  ## Whether a dropped connection is dialled again by itself.
+  ##
+  ## Only where the host signs in, which is the browser: there the socket is
+  ## a WebSocket a proxy closes after a quiet spell, and a tab left open is
+  ## expected to still be in its rooms. Only with something to sign in *as*,
+  ## too — a Bluesky tab with no session would answer a network blip by
+  ## leaving the page for the authorization server.
+  when oa.hostSignsIn:
+    app.authMode != amBluesky or app.hasSession
+  else:
+    false
+
 proc sendDraft() =
   let text = app.draft.strip()
   # A picture with no words is a message; words with no picture are too.
@@ -493,6 +511,7 @@ proc dispatch*(event: JsonNode) =
     # The key goes with the connection, so a reconnect signs with one the
     # server has actually been told about.
     msgsig.forget()
+    registered = false
     tr.close()
     app.connecting = false
     app.screen = scConnect
@@ -1004,11 +1023,23 @@ proc drain*() =
       send("NICK " & app.formNick)
       send("USER " & app.formNick & " 0 * :frq")
       app.status = "Registering…"
+    elif (e.startsWith("error:") or e.startsWith("close:")) and
+         registered and reconnects():
+      # A connection that was up and went away — an idle one a proxy timed
+      # out, more often than not. Answered with the whole sign-in, not with
+      # the socket alone: the proof in `session` was single-use and is spent,
+      # and after an idle hour the access token behind it has expired too.
+      # Redialling with those is SASL refused and a guest where a reader was.
+      registered = false
+      trace("conn", "dropped; reconnecting: " & e)
+      connectNow()
     elif e.startsWith("error:"):
+      registered = false
       app.connecting = false
       setError(e[6 .. ^1].strip())
       app.status = "Not connected"
     elif e.startsWith("close:"):
+      registered = false
       app.connecting = false
       app.status = "Disconnected"
 
@@ -1061,6 +1092,7 @@ proc drain*() =
     case p.command
     of "001":
       app.connecting = false
+      registered = true
       app.status = "Connected as " & app.formNick
       app.screen = scChats
       # What the file says we were in, we ask to be in again. The server
