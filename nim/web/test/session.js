@@ -34,6 +34,8 @@ let refreshValid = true;
 let sessionCalls = 0;
 let tokenProofNonce = '';
 let sessionProofNonce = '';
+let challengeToken = false;
+let challengeSession = false;
 const calls = [];
 global.fetch = async (url, opts) => {
   const body = String((opts && opts.body) || '');
@@ -49,6 +51,11 @@ global.fetch = async (url, opts) => {
     sessionProofNonce = JSON.parse(Buffer.from(proof, 'base64url')).nonce || '';
     const bearer = (opts.headers.Authorization || '').replace('DPoP ', '');
     if (bearer !== live) return reply(401, { error: 'InvalidToken' });
+    if (challengeSession) {
+      challengeSession = false;
+      return reply(401, { error: 'use_dpop_nonce' },
+                   { 'dpop-nonce': 'rotated-pds-nonce' });
+    }
     return reply(200, { did: 'did:plc:abc', handle: 'someone.example' },
                  { 'dpop-nonce': 'n1' });
   }
@@ -57,6 +64,11 @@ global.fetch = async (url, opts) => {
     tokenProofNonce = JSON.parse(Buffer.from(proof, 'base64url')).nonce || '';
     assert.ok(body.includes('grant_type=refresh_token'), 'a refresh grant');
     assert.ok(body.includes('refresh_token=r1'), 'spends the stored token');
+    if (challengeToken) {
+      challengeToken = false;
+      return reply(400, { error: 'use_dpop_nonce' },
+                   { 'dpop-nonce': 'new-as-nonce' });
+    }
     if (!refreshValid) return reply(400, { error: 'invalid_grant' });
     refreshes += 1;
     live = 'second-token';
@@ -115,6 +127,29 @@ const jwt = (claims) => 'header.' +
   // token that is already gone.
   assert.equal(window.frqOauth.saved().refresh, 'r2');
   ok('and the new refresh token replaces the spent one');
+
+  // The token endpoint's nonce challenge is not an authentication failure:
+  // mint a new proof with its nonce and immediately retry the same grant.
+  store = {}; live = 'fresh-token'; refreshes = 0; refreshValid = true;
+  challengeToken = true; tokenProofNonce = '';
+  localStorage.setItem('frq:oauth:session',
+    JSON.stringify(session({ accessJwt: 'stale', tokenNonce: '' })));
+  s = await window.frqOauth.prepare();
+  assert.equal(refreshes, 1, 'refresh succeeds after the nonce challenge');
+  assert.equal(tokenProofNonce, 'new-as-nonce');
+  assert.equal(window.frqOauth.saved().tokenNonce, 'new-as-nonce');
+  ok('a token nonce challenge regenerates the proof and retries once');
+
+  // A stored nonce may be rotated by the PDS. Its 401 challenge replaces the
+  // stale nonce rather than turning a valid session into a refresh attempt.
+  store = {}; live = 'fresh-token'; refreshes = 0; challengeSession = true;
+  localStorage.setItem('frq:oauth:session',
+    JSON.stringify(session({ dpopNonce: 'stale-pds-nonce' })));
+  s = await window.frqOauth.prepare();
+  assert.equal(refreshes, 0);
+  assert.equal(sessionProofNonce, 'rotated-pds-nonce');
+  assert.equal(window.frqOauth.saved().dpopNonce, 'n1');
+  ok('a rotated PDS nonce regenerates the proof and retries once');
 
   // Expired JWTs are refreshed without the otherwise inevitable failed PDS
   // request.  The PDS remains the authority for a token that is unexpired
