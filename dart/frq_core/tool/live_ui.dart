@@ -12,6 +12,10 @@
 /// like a success from the chats screen. `tools/set-test-account-github-secrets`
 /// puts the pair where `.github/workflows/live.yml` reads it.
 ///
+/// With FRQ_TEST_ROOM set it joins that room rather than opening whichever
+/// comes first, and fails unless the room shows messages — the backlog a
+/// signed-in reader is meant to see on arrival.
+///
 ///   just test live
 import 'dart:io';
 import 'package:frq_core/frq_core.dart' as core;
@@ -31,6 +35,7 @@ Future<void> main(List<String> args) async {
   final handle = Platform.environment['FRQ_TEST_HANDLE'] ?? '';
   final password = Platform.environment['FRQ_TEST_APP_PASSWORD'] ?? '';
   final signedIn = handle.isNotEmpty && password.isNotEmpty;
+  final room = Platform.environment['FRQ_TEST_ROOM'] ?? '';
 
   core.resetUi();
   print(signedIn ? '→ $host as $handle, by app password' : '→ $host as $nick');
@@ -88,10 +93,26 @@ Future<void> main(List<String> args) async {
     exit(1);
   }
 
-  // Open one and look at the conversation.
-  tree = core.dispatch('room.open:${rooms.first}');
-  await Future<void>.delayed(const Duration(seconds: 2));
-  tree = core.poll();
+  // Open one and look at the conversation: the room asked for, joined if
+  // need be, or else whichever the list has first.
+  if (room.isEmpty) {
+    tree = core.dispatch('room.open:${rooms.first}');
+    await Future<void>.delayed(const Duration(seconds: 2));
+    tree = core.poll();
+  } else {
+    tree = core
+        .dispatch(rooms.contains(room) ? 'room.open:$room' : 'room.join:$room');
+    // The backlog comes after the JOIN, by CHATHISTORY; wait for it.
+    final backlogBy = DateTime.now().add(const Duration(seconds: 15));
+    while (DateTime.now().isBefore(backlogBy)) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      tree = core.poll();
+      if (find(tree, 'text').isNotEmpty) break;
+    }
+    // A moment more, so a backlog arriving in batches is read whole.
+    await Future<void>.delayed(const Duration(seconds: 2));
+    tree = core.poll();
+  }
 
   print('✓ chat screen: ${labels(tree, "title").first}');
   final said = find(tree, 'text').map((e) => e.prop('text', '')).toList();
@@ -99,8 +120,22 @@ Future<void> main(List<String> args) async {
       '${find(tree, "avatar").length} avatars, '
       '${find(tree, "reaction").length} reaction chips, '
       '${find(tree, "separator").length} separators');
-  for (final line in said.take(6)) {
+  final shown =
+      room.isEmpty ? said.take(6) : said.reversed.take(12).toList().reversed;
+  for (final line in shown) {
     print('   | $line');
+  }
+  if (room.isNotEmpty) {
+    final title = labels(tree, 'title').first;
+    if (!title.contains(room)) {
+      print('✗ asked for $room, landed on $title');
+      exit(1);
+    }
+    if (said.isEmpty) {
+      print('✗ no messages visible in $room');
+      exit(1);
+    }
+    print('✓ ${said.length} text runs visible in $room');
   }
 
   // Every tag the tree contains, so an unrendered one shows up here rather

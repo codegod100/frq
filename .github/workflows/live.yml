@@ -17,6 +17,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      room:
+        description: "Room to join and read, e.g. #freeq-dev (empty: the first in the list)"
+        required: false
+        default: ""
 
 # One sign-in at a time: two runs as one account are two clients with one
 # nick, and the second is the one that gets renamed.
@@ -68,6 +73,7 @@ jobs:
         env:
           FRQ_TEST_HANDLE: ${{ secrets.FRQ_TEST_HANDLE }}
           FRQ_TEST_APP_PASSWORD: ${{ secrets.FRQ_TEST_APP_PASSWORD }}
+          FRQ_TEST_ROOM: ${{ inputs.room }}
         run: |
           set -euo pipefail
           # Without both the harness connects as a guest and passes, which is
