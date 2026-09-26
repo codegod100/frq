@@ -33,6 +33,8 @@ var
     ## What this connection is signing in as, settled before the socket opens.
   caps: HashSet[string]
     ## What the server has ACKed so far, threaded through `handshake.step`.
+  offeredCaps: HashSet[string]
+    ## CAP LS fragments accumulated until the server sends the final one.
   landed: bool
     ## Whether this run has already been put back where it left off.
     ##
@@ -282,6 +284,7 @@ proc signIn(): bool =
   ## that was asked for.
   session = Session()
   caps = initHashSet[string]()
+  offeredCaps = initHashSet[string]()
   case app.authMode
   of amGuest:
     true
@@ -931,6 +934,8 @@ proc drain*() =
     if e == "open":
       # The client speaks first in IRC. CAP before registration, the order the
       # server expects. What comes back is answered by `handshake.step`.
+      caps = initHashSet[string]()
+      offeredCaps = initHashSet[string]()
       send("CAP LS 302")
       send("NICK " & app.formNick)
       send("USER " & app.formNick & " 0 * :frq")
@@ -963,8 +968,9 @@ proc drain*() =
     # the per-command handling below, because these are the transport's own
     # conversation rather than anything a screen reads.
     if p.command in ["CAP", "AUTHENTICATE", "903", "904", "905", "906"]:
-      let st = step(session, caps, p)
+      let st = step(session, caps, offeredCaps, p)
       caps = st.caps
+      offeredCaps = st.offered
       for line in st.send: send(line)
       if p.command == "903":
         app.status = "Signed in as " & app.formNick
@@ -1036,7 +1042,9 @@ proc drain*() =
                             edited: true)
             if p.hasAccount: m.account = p.account
             m.imageUrl = firstImageUrl(m.text)
-            let (rep, hasRep) = tagValue(p.tags, "+reply")
+            let (rep, hasRep) = block:
+              let (v, ok2) = tagValue(p.tags, "+reply")
+              if ok2: (v, true) else: tagValue(p.tags, "+draft/reply")
             if hasRep: m.replyTo = rep
             app.rooms.ensureRoom(room)
             attachTask(p.tags, app.rooms[room], m)
@@ -1061,7 +1069,9 @@ proc drain*() =
         # default — so `firstImageUrl` was ported, tested and never called,
         # and no received message ever showed a preview.
         m.imageUrl = firstImageUrl(m.text)
-        let (rep, hasRep) = tagValue(p.tags, "+reply")
+        let (rep, hasRep) = block:
+          let (v, ok2) = tagValue(p.tags, "+reply")
+          if ok2: (v, true) else: tagValue(p.tags, "+draft/reply")
         if hasRep: m.replyTo = rep
         let (tally, hasTally) = tagValue(p.tags, "+freeq.at/reacts")
         if hasTally: m.reactions = parseTally(tally)

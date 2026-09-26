@@ -371,6 +371,21 @@ suite "sending a picture":
     check app.hasError
     check app.error == "Upload failed (413)"
 
+suite "receiving replies":
+  setup:
+    reset()
+    joined("#freeq")
+
+  test "the standardized draft reply tag names its target":
+    say("@msgid=m1 :alice!a@h PRIVMSG #freeq :first",
+        "@+draft/reply=m1;msgid=m2 :bob!b@h PRIVMSG #freeq :answer")
+    check app.rooms["#freeq"].messageById("m2").get.replyTo == "m1"
+
+  test "the freeq reply tag remains accepted":
+    say("@msgid=m1 :alice!a@h PRIVMSG #freeq :first",
+        "@+reply=m1;msgid=m2 :bob!b@h PRIVMSG #freeq :answer")
+    check app.rooms["#freeq"].messageById("m2").get.replyTo == "m1"
+
 suite "unsending a line":
   setup:
     reset()
