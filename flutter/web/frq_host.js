@@ -16,8 +16,8 @@
 //     because the authorization leg leaves the page.
 //   * the profiles, which the core asks for through `fetch` (in the Nim, not
 //     here), so there is nothing to do for them.
-//   * a picture: the file dialog and the upload, because both are the
-//     platform's rather than the core's.
+//   * a picture: the file dialog, a paste and the upload, because all three
+//     are the platform's rather than the core's.
 //
 // Flutter draws. It reaches the core through `dart:js_interop`, and never
 // touches any of this.
@@ -146,6 +146,14 @@
   // Straight to freeq when the page is already on it, where the relay would
   // be a detour through nothing.
   function pickAndUpload(want) {
+    // A paste: the picture was taken off the event when it happened, since
+    // a clipboard can only be read inside the event that pasted it.
+    if (want.source === "clipboard") {
+      var pasted = pastedPicture;
+      pastedPicture = null;
+      if (pasted) upload(want, pasted);
+      return;
+    }
     var input = document.createElement("input");
     input.type = "file";
     input.accept = "image/*";
@@ -153,40 +161,72 @@
       var file = input.files && input.files[0];
       if (!file) { frq.dispatch(JSON.stringify({id: "attachment.failed",
                                                 value: ""})); return; }
-      // The endpoint's own cap, refused here rather than after several
-      // megabytes have crossed the wire to be turned down.
-      if (file.size > 10 * 1024 * 1024) {
-        frq.dispatch(JSON.stringify(
-          {id: "attachment.failed:That picture is over the 10MB the server takes."}));
-        return;
-      }
-      var form = new FormData();
-      form.append("did", want.did);
-      if (want.channel) form.append("channel", want.channel);
-      form.append("file", file, file.name || "picture.png");
-      var where = window.location.host === want.host
-        ? "https://" + want.host + "/api/v1/upload"
-        : "/api/v1/upload";
-      fetch(where, {method: "POST", body: form})
-        .then(function (r) { return r.text().then(function (t) {
-          return {ok: r.ok, status: r.status, body: t}; }); })
-        .then(function (r) {
-          var url = "";
-          try { url = JSON.parse(r.body).url || ""; } catch (e) { url = ""; }
-          if (r.ok && url) {
-            frq.dispatch(JSON.stringify({id: "attachment.ready:" + url}));
-          } else {
-            frq.dispatch(JSON.stringify({id: "attachment.failed:Upload failed ("
-                                             + r.status + ")"}));
-          }
-        })
-        .catch(function (e) {
-          frq.dispatch(JSON.stringify({id: "attachment.failed:" +
-            String(e && e.message ? e.message : e)}));
-        });
+      upload(want, file);
     };
     input.click();
   }
+
+  function upload(want, file) {
+    // The endpoint's own cap, refused here rather than after several
+    // megabytes have crossed the wire to be turned down.
+    if (file.size > 10 * 1024 * 1024) {
+      frq.dispatch(JSON.stringify(
+        {id: "attachment.failed:That picture is over the 10MB the server takes."}));
+      return;
+    }
+    var form = new FormData();
+    form.append("did", want.did);
+    if (want.channel) form.append("channel", want.channel);
+    form.append("file", file, file.name || "picture.png");
+    var where = window.location.host === want.host
+      ? "https://" + want.host + "/api/v1/upload"
+      : "/api/v1/upload";
+    fetch(where, {method: "POST", body: form})
+      .then(function (r) { return r.text().then(function (t) {
+        return {ok: r.ok, status: r.status, body: t}; }); })
+      .then(function (r) {
+        var url = "";
+        try { url = JSON.parse(r.body).url || ""; } catch (e) { url = ""; }
+        if (r.ok && url) {
+          frq.dispatch(JSON.stringify({id: "attachment.ready:" + url}));
+        } else {
+          frq.dispatch(JSON.stringify({id: "attachment.failed:Upload failed ("
+                                           + r.status + ")"}));
+        }
+      })
+      .catch(function (e) {
+        frq.dispatch(JSON.stringify({id: "attachment.failed:" +
+          String(e && e.message ? e.message : e)}));
+      });
+  }
+
+  // A picture pasted into the page — a screenshot, an image copied from
+  // another tab. The browser hands it to this event and to nothing else:
+  // Flutter's text field sees a paste with no text in it and does nothing.
+  //
+  // Kept here until the core says it may go: it is the core that knows
+  // whether the reader is signed in and has a conversation open, and it
+  // answers through `wantedPicture` with `source: "clipboard"`, as the
+  // button answers with a dialog. Capture phase, so it is seen before
+  // anything on the page can stop it.
+  //
+  // Only a picture is taken. A paste of text goes on to the field untouched,
+  // and so does a paste offering both — copying a picture from a page also
+  // offers its HTML, and a reader pasting that means the picture.
+  var pastedPicture = null;
+  window.addEventListener("paste", function (e) {
+    var items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind !== "file" || !/^image\//.test(items[i].type)) continue;
+      var file = items[i].getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      pastedPicture = file;
+      frq.dispatch(JSON.stringify({id: "image.paste"}));
+      return;
+    }
+  }, true);
 
   // The sign-in, which this page does itself — see `frq_oauth.js` for why
   // the broker cannot finish one here.
