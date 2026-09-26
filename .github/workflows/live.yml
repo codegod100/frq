@@ -5,8 +5,8 @@
 # there — and rickub cannot read one. The other suites stay on rickub.
 #
 # It talks to production: an app-password sign-in at the account's PDS, SASL
-# at irc.freeq.at, and one line sent to whichever room comes first, which is
-# how the harness checks that freeq saw the account. That line is why this
+# at irc.freeq.at, and one line sent to #test, which is how the harness
+# checks that freeq saw the account. That line is why this
 # runs when asked for and on main rather than on every push to every branch.
 #
 # Toolchains by sha256, as build.yml does it; the same versions and hashes.

@@ -16,6 +16,9 @@
 /// comes first, and fails unless the room shows messages — the backlog a
 /// signed-in reader is meant to see on arrival.
 ///
+/// The one line it sends always goes to #test, whichever room it read: the
+/// others are real conversations, and a line from CI does not belong in them.
+///
 ///   just test live
 import 'dart:io';
 import 'package:frq_core/frq_core.dart' as core;
@@ -36,6 +39,7 @@ Future<void> main(List<String> args) async {
   final password = Platform.environment['FRQ_TEST_APP_PASSWORD'] ?? '';
   final signedIn = handle.isNotEmpty && password.isNotEmpty;
   final room = Platform.environment['FRQ_TEST_ROOM'] ?? '';
+  const sendRoom = '#test';
 
   core.resetUi();
   print(signedIn ? '→ $host as $handle, by app password' : '→ $host as $nick');
@@ -156,6 +160,18 @@ Future<void> main(List<String> args) async {
   // echo-message is negotiated, so the server returns every line this client
   // sends — and showing both that and the local copy is what put every sent
   // message on screen twice.
+  //
+  // Sent in the test room and nowhere else, joined if need be.
+  tree = core.dispatch(rooms.contains(sendRoom)
+      ? 'room.open:$sendRoom'
+      : 'room.join:$sendRoom');
+  await Future<void>.delayed(const Duration(seconds: 2));
+  tree = core.poll();
+  final sendTitle = labels(tree, 'title').first;
+  if (!sendTitle.contains(sendRoom)) {
+    print('✗ meant to send in $sendRoom, but on $sendTitle — not sending');
+    exit(1);
+  }
   final marker = 'frq echo check ${DateTime.now().millisecondsSinceEpoch}';
   core.dispatch('draft.change', marker);
   core.dispatch('send');
