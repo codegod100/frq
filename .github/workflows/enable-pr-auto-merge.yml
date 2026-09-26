@@ -20,25 +20,45 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            try {
-              await github.graphql(
-                `mutation EnableAutoMerge($pullRequestId: ID!) {
-                  enablePullRequestAutoMerge(input: {
-                    pullRequestId: $pullRequestId,
-                    mergeMethod: SQUASH
-                  }) {
-                    pullRequest { number }
-                  }
-                }`,
-                { pullRequestId: context.payload.pull_request.node_id },
-              );
-            } catch (error) {
-              const messages = (error.errors || []).map(({ message }) => message);
-              if (messages.some((message) => message.includes('unstable status'))) {
-                core.notice(
-                  'Auto-merge was not queued because this pull request has failing checks.',
-                );
-                return;
+            const mutation = `mutation EnableAutoMerge($pullRequestId: ID!) {
+              enablePullRequestAutoMerge(input: {
+                pullRequestId: $pullRequestId,
+                mergeMethod: SQUASH
+              }) {
+                pullRequest { number }
               }
-              throw error;
+            }`;
+            const variables = {
+              pullRequestId: context.payload.pull_request.node_id,
+            };
+
+            // A synchronize event can reach this workflow before the checks
+            // for the new head SHA are registered. During that window GitHub
+            // reports the previous head's failure as "unstable" and refuses
+            // to enable auto-merge. Give the new check suite time to replace
+            // that stale state rather than silently abandoning this attempt.
+            const attempts = 20;
+            for (let attempt = 1; attempt <= attempts; attempt += 1) {
+              try {
+                await github.graphql(mutation, variables);
+                return;
+              } catch (error) {
+                const messages = (error.errors || [error])
+                  .map(({ message }) => message || '');
+                const unstable = messages.some((message) =>
+                  message.toLowerCase().includes('unstable status')
+                );
+                if (!unstable) throw error;
+
+                if (attempt === attempts) {
+                  core.notice(
+                    'Auto-merge was not queued because this pull request still has failing checks.',
+                  );
+                  return;
+                }
+                core.info(
+                  `Checks are temporarily unstable; retrying auto-merge (${attempt}/${attempts}).`,
+                );
+                await new Promise((resolve) => setTimeout(resolve, 15000));
+              }
             }
