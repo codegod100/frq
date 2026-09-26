@@ -31,6 +31,7 @@ global.URLSearchParams = URLSearchParams;
 let live = 'fresh-token';
 let refreshes = 0;
 let refreshValid = true;
+let sessionCalls = 0;
 const calls = [];
 global.fetch = async (url, opts) => {
   const body = String((opts && opts.body) || '');
@@ -41,6 +42,7 @@ global.fetch = async (url, opts) => {
     headers: { get: (h) => (headers || {})[h.toLowerCase()] || null },
   });
   if (String(url).endsWith('/xrpc/com.atproto.server.getSession')) {
+    sessionCalls += 1;
     const bearer = (opts.headers.Authorization || '').replace('DPoP ', '');
     if (bearer !== live) return reply(401, { error: 'InvalidToken' });
     return reply(200, { did: 'did:plc:abc', handle: 'someone.example' },
@@ -67,6 +69,9 @@ const session = (over) => Object.assign({
   refresh: 'r1', pds: 'https://pds.example',
   token: 'https://pds.example/token', dpopNonce: '',
 }, over || {});
+
+const jwt = (claims) => 'header.' +
+  Buffer.from(JSON.stringify(claims)).toString('base64url') + '.signature';
 
 (async () => {
   // A token the PDS still accepts is used as it is.
@@ -96,6 +101,17 @@ const session = (over) => Object.assign({
   // token that is already gone.
   assert.equal(window.frqOauth.saved().refresh, 'r2');
   ok('and the new refresh token replaces the spent one');
+
+  // Expired JWTs are refreshed without the otherwise inevitable failed PDS
+  // request.  The PDS remains the authority for a token that is unexpired
+  // but revoked, so only a locally definitive expiry takes this path.
+  store = {}; live = 'fresh-token'; refreshes = 0; sessionCalls = 0;
+  localStorage.setItem('frq:oauth:session',
+    JSON.stringify(session({ accessJwt: jwt({ exp: 1 }) })));
+  s = await window.frqOauth.prepare();
+  assert.equal(refreshes, 1, 'an expired JWT refreshes immediately');
+  assert.equal(sessionCalls, 1, 'only the fresh token reaches the PDS');
+  ok('an expired JWT does not create a predictable PDS 401');
 
   // No refresh left. Connecting as a guest here is the bug this is named
   // after; the session goes and the reader is asked to sign in.

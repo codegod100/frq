@@ -171,6 +171,26 @@
 
   const sessionUrl = (pds) => trimSlash(pds) + '/xrpc/com.atproto.server.getSession';
 
+  // OAuth access tokens are JWTs.  Looking at `exp` locally does not prove a
+  // token is valid (only the PDS can do that), but it does prove that one is
+  // not: sending a token that is already past its expiry only creates a
+  // predictable 401 before the refresh flow starts.  Leave opaque or
+  // malformed tokens to the PDS so this remains an optimisation, not a
+  // second validator.
+  function expiredJwt(token) {
+    try {
+      const part = String(token).split('.')[1];
+      if (!part) return false;
+      const padded = part.replace(/-/g, '+').replace(/_/g, '/') +
+        '==='.slice((part.length + 3) % 4);
+      const claims = JSON.parse(atob(padded));
+      // A small margin avoids racing the PDS at the expiry boundary.
+      return typeof claims.exp === 'number' && claims.exp * 1000 <= Date.now() + 30000;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // Who the token belongs to, asked of the PDS. Three things at once, which
   // is why it is worth a round trip.
   //
@@ -383,7 +403,12 @@
     let s = saved();
     if (!s) throw new Error('not signed in');
     let who;
-    try {
+    if (expiredJwt(s.accessJwt)) {
+      // `exp` is definitive, so do not ask the PDS to reject this token
+      // merely to learn what the browser already knows.
+      s = await refresh();
+      who = await whoami(s.pds, s.accessJwt);
+    } else try {
       who = await whoami(s.pds, s.accessJwt);
     } catch (e) {
       // Asking who the token belongs to is also how its age is discovered.
