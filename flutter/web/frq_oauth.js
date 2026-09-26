@@ -388,9 +388,39 @@
   //
   // The new refresh token replaces the old one and the old one is spent:
   // they are single-use, so it is saved before anything else can fail.
-  async function refresh() {
+  //
+  // And because they are single-use, only one refresh may be in flight. Two
+  // connects asking for a proof at once -- a dropped socket redialling while
+  // the first is still preparing, or a second tab -- used to both find the
+  // token stale and both spend the same refresh token. One won; the other
+  // got `400 invalid_grant`, took that for a revoked session and forgot
+  // everything, the DPoP key included, so the winner's fresh token was then
+  // presented with a proof from a brand-new key and the PDS answered 401.
+  // So a refresh in this page is shared by whoever asks while it runs, one
+  // across tabs waits on a Web Lock, and a refresh that finds the stored
+  // session already renewed by somebody else takes that instead.
+  let refreshing = null;
+
+  function refresh(stale) {
+    if (!refreshing) {
+      refreshing = exclusive(() => refreshOnce(stale))
+        .finally(() => { refreshing = null; });
+    }
+    return refreshing;
+  }
+
+  function exclusive(fn) {
+    const locks = typeof navigator !== 'undefined' && navigator.locks;
+    return locks ? locks.request('frq:oauth:refresh', fn) : fn();
+  }
+
+  // `stale` is the access token the caller found wanting, when it knows one.
+  async function refreshOnce(stale) {
     const s = saved();
     if (!s || !s.refresh) throw new Error('not signed in');
+    // Renewed while this waited for the lock: another tab, or a refresh
+    // that finished between the caller reading the session and asking.
+    if (stale && s.accessJwt !== stale && !expiredJwt(s.accessJwt)) return s;
     const where = s.token || (await discover(s.pds)).token;
     const r = await postForm(where, form([
       ['grant_type', 'refresh_token'],
@@ -398,6 +428,11 @@
       ['client_id', clientId()],
     ]), null, s.tokenNonce || '');
     if (r.status !== 200) {
+      // The refresh token we spent may have been rotated under us by a tab
+      // without Web Locks. If the store holds a different one now, that is
+      // somebody else's successful refresh, not a revoked session.
+      const now = saved();
+      if (now && now.refresh && now.refresh !== s.refresh) return now;
       // The refresh token is gone or was revoked, and no retry will bring it
       // back. Clearing the session is what turns "signed in, and nothing
       // works" into a sign-in button.
@@ -432,7 +467,7 @@
     if (expiredJwt(s.accessJwt)) {
       // `exp` is definitive, so do not ask the PDS to reject this token
       // merely to learn what the browser already knows.
-      s = await refresh();
+      s = await refresh(s.accessJwt);
       who = await whoami(s.pds, s.accessJwt, s.dpopNonce);
     } else try {
       who = await whoami(s.pds, s.accessJwt, s.dpopNonce);
@@ -441,7 +476,7 @@
       // A refusal here is nearly always an expired access token, so spend
       // the refresh token and ask once more; if that fails it throws, and
       // saying so beats connecting as somebody else.
-      s = await refresh();
+      s = await refresh(s.accessJwt);
       who = await whoami(s.pds, s.accessJwt, s.dpopNonce);
     }
     if (who.handle) s.handle = who.handle;

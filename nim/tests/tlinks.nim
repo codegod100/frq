@@ -18,6 +18,16 @@ suite "previewable":
     check previewable("https://example.com/page?img=a.png")
   test "freeq's own API is not a page":
     check not previewable("https://irc.freeq.at/api/v1/media/abc")
+  test "nor is a link to somebody's own machine, which freeq will not fetch":
+    check not previewable("http://127.0.0.1:11434")
+    check not previewable("http://localhost:8080/x")
+    check not previewable("http://192.168.1.10/")
+    check not previewable("http://10.0.0.1/")
+    check not previewable("http://172.20.0.1/")
+    check not previewable("http://[::1]:3000/")
+    check not previewable("http://printer.local/")
+    check previewable("http://172.32.0.1/")
+    check previewable("https://127.example.com/")
   test "nor is something that is not a URL at all":
     check not previewable("example.com")
     check not previewable("")
