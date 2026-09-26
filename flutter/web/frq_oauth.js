@@ -164,14 +164,21 @@
   // An authenticated GET carrying a proof, retrying once for a nonce — the
   // same handshake one method over. A PDS answers the first
   // DPoP-authenticated request of a session with 401 and the nonce it wants.
+  // Retry even when a nonce was supplied: nonces can expire or be rotated,
+  // and in that case the challenge is the PDS replacing our stale value.
   async function getWithDpop(url, token, nonce) {
-    const p = await dpop().proof('GET', url, nonce || '', token);
-    const r = await http('GET', url,
-      { 'Authorization': 'DPoP ' + token, 'DPoP': p }, null);
-    if (r.status >= 400 && r.body.includes('use_dpop_nonce') && r.nonce && !nonce) {
-      return getWithDpop(url, token, r.nonce);
+    const send = async (nonce) => {
+      const p = await dpop().proof('GET', url, nonce || '', token);
+      return http('GET', url,
+        { 'Authorization': 'DPoP ' + token, 'DPoP': p }, null);
+    };
+    const first = await send(nonce || '');
+    if (first.status >= 400 && first.body.includes('use_dpop_nonce') && first.nonce) {
+      const retry = await send(first.nonce);
+      if (!retry.nonce) retry.nonce = first.nonce;
+      return retry;
     }
-    return r;
+    return first;
   }
 
   const sessionUrl = (pds) => trimSlash(pds) + '/xrpc/com.atproto.server.getSession';
