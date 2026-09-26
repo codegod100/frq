@@ -7,8 +7,7 @@
 /// The functions that are not here in spirit are the ones a browser has no
 /// business calling: the socket is JavaScript's on this target, opened by the
 /// page rather than by Dart, so `connOpenAt` and its neighbours throw rather
-/// than pretend. They are reached only by the native tests and by
-/// `tool/live_ui.dart`.
+/// than pretend. They are reached only by the native tests.
 library;
 
 import 'dart:js_interop';

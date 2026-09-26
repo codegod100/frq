@@ -39,7 +39,6 @@ wasm rather than ClojureDart restored.
 ```bash
 just run desktop     # build and open the window
 just test            # nim, dart and the layout suite
-just test live       # the whole stack against a real freeq
 ```
 
 `tools/toolchain.sh` fetches Flutter and Nim by sha256; there is no nix and no
