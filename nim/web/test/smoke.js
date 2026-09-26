@@ -133,5 +133,48 @@ check("the proof freeq will present to the PDS",
 check("and the nonce it was challenged with",
       payload && payload.challenge_nonce === "N1");
 
+// The connection drops after a quiet spell. Redialling it as it was is what
+// signed a reader in as a guest: the proof above is single-use and spent,
+// and the access token behind it may have expired while nobody was looking.
+frq.feed(":irc.freeq.at 001 alice.bsky.social :Welcome");
+frq.render();
+frq.takeOutbound();
+frq.socketEvent("close: idle");
+frq.render();
+check("a dropped socket is not redialled as it was", frq.wanted() === "");
+check("it asks for a fresh proof instead", frq.needProof() === true);
+frq.restoreSession(JSON.stringify({
+  did: "did:plc:abc", handle: "alice.bsky.social",
+  accessJwt: "tok2", pds: "https://pds.example", dpopNonce: "n2",
+}));
+frq.proofReady("eyJhbGciOiJFUzI1NiJ9.proof2");
+check("and the fresh proof opens the socket again",
+      JSON.parse(frq.wanted() || "{}").host === "irc.freeq.at");
+frq.socketEvent("open");
+frq.render();
+frq.takeOutbound();
+frq.feed("CAP * LS :sasl");
+frq.render();
+frq.takeOutbound();
+frq.feed("CAP * ACK :sasl");
+frq.render();
+frq.takeOutbound();
+frq.feed("AUTHENTICATE " + challenge);
+frq.render();
+let again = null;
+try {
+  again = JSON.parse(Buffer.from(
+    frq.takeOutbound().trim().replace("AUTHENTICATE ", ""), "base64url").toString());
+} catch (e) { /* left null */ }
+check("the reconnect signs in with the renewed token and proof",
+      again && again.signature === "tok2" &&
+      again.dpop_proof === "eyJhbGciOiJFUzI1NiJ9.proof2");
+
+// Disconnect is the reader leaving, and nothing dials them back in.
+frq.dispatch(JSON.stringify({ id: "disconnect" }));
+frq.render();
+check("a disconnect is not answered with a reconnect",
+      frq.wanted() === "" && frq.needProof() === false);
+
 console.log(failures === 0 ? "all ok" : failures + " failed");
 process.exit(failures === 0 ? 0 : 1);

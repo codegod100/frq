@@ -37,31 +37,51 @@
 
   function connect(cfg) {
     var url = urlFor(cfg);
+    var sock;
     try {
-      ws = new WebSocket(url);
+      sock = new WebSocket(url);
     } catch (e) {
       frq.socketEvent("error: " + e);
       return;
     }
-    ws.onopen = function () { frq.socketEvent("open"); };
-    ws.onmessage = function (ev) {
+    ws = sock;
+    var opened = false;
+    sock.onopen = function () {
+      if (ws !== sock) return;
+      opened = true;
+      frq.socketEvent("open");
+    };
+    sock.onmessage = function (ev) {
+      if (ws !== sock) return;
       // A frame can carry more than one line, and carries the CRLF the wire
       // format puts between them. The core wants lines.
       String(ev.data).split(/\r?\n/).forEach(function (line) {
         if (line.length > 0) frq.feed(line);
       });
     };
-    ws.onclose = function (ev) {
+    // One event per socket, from `onclose`. `onerror` carries nothing worth
+    // reporting — the browser withholds the reason on purpose — and `onclose`
+    // always follows it; saying both told the core the connection ended
+    // twice, and the second arrived after the core had already dialled again.
+    //
+    // And only for the socket that is current: one closed because the core
+    // asked for another still fires `onclose`, late, and was taken for the
+    // new one ending.
+    sock.onclose = function (ev) {
+      if (ws !== sock) return;
       ws = null;
       wantedNow = "";
-      frq.socketEvent("close: " + (ev.reason || "the connection ended"));
+      frq.socketEvent(opened
+        ? "close: " + (ev.reason || "the connection ended")
+        : "error: the connection failed");
     };
-    ws.onerror = function () {
-      // `onerror` carries nothing worth reporting — the browser withholds the
-      // reason on purpose — and `onclose` always follows, so the message the
-      // reader sees comes from there.
-      frq.socketEvent("error: the connection failed");
-    };
+  }
+
+  function hangUp() {
+    if (!ws) return;
+    var old = ws;
+    ws = null;
+    try { old.close(); } catch (e) {}
   }
 
   // The pump. Both directions, on a timer, because nothing here is allowed to
@@ -70,10 +90,16 @@
   // Twenty times a second: fast enough that a keystroke's PRIVMSG does not
   // sit in a queue where a reader would notice, and slow enough to be free.
   setInterval(function () {
+    // `wanted` is cleared when a connection ends, so the core decides whether
+    // to dial again — through a fresh sign-in — rather than this redialling
+    // the last one with a proof that has been spent.
     var want = frq.wanted();
-    if (want && want !== wantedNow) {
+    if (!want && wantedNow) {
+      wantedNow = "";
+      hangUp();
+    } else if (want && want !== wantedNow) {
       wantedNow = want;
-      if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+      hangUp();
       connect(JSON.parse(want));
     }
     if (ws && ws.readyState === 1) {
