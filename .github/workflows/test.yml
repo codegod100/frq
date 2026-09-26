@@ -2,11 +2,14 @@ name: Test
 
 on:
   pull_request:
+    # ready_for_review as well: a draft is never merged, so marking one ready
+    # needs a run of its own for `merge.yml` to act on.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
-# `test` is the check the ruleset on main requires, and so the thing
-# auto-merge waits for. It runs the two suites that need no Flutter build:
+# `test` is the check the ruleset on main requires, and the run `merge.yml`
+# waits for before it merges a pull request and deploys. It runs the two suites that need no Flutter build:
 # the Nim core, and the Dart binding against a freshly built libfrqcore.so.
 permissions:
   contents: read

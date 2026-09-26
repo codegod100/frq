@@ -3,7 +3,14 @@ name: Deploy web
 on:
   push:
     branches: [main]
+  # How a merge made by `merge.yml` arrives: that merge is GITHUB_TOKEN's, and
+  # its push to main starts nothing on its own.
   workflow_dispatch:
+
+# One deploy at a time, so an older image can never land after a newer one.
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
 
 jobs:
   image:
