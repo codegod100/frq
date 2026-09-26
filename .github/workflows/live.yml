@@ -5,8 +5,8 @@
 # there — and rickub cannot read one. The other suites stay on rickub.
 #
 # It talks to production: an app-password sign-in at the account's PDS, SASL
-# at irc.freeq.at, and one line sent to whichever room comes first, which is
-# how the harness checks that freeq saw the account. That line is why this
+# at irc.freeq.at, and one line sent to #test, which is how the harness
+# checks that freeq saw the account. That line is why this
 # runs when asked for and on main rather than on every push to every branch.
 #
 # Toolchains by sha256, as build.yml does it; the same versions and hashes.
@@ -22,6 +22,11 @@ on:
         description: "Room to join and read, e.g. #freeq-dev (empty: the first in the list)"
         required: false
         default: ""
+      trace:
+        description: "Print the IRC lines about that room (never AUTHENTICATE)"
+        type: boolean
+        required: false
+        default: false
 
 # One sign-in at a time: two runs as one account are two clients with one
 # nick, and the second is the one that gets renamed.
@@ -74,6 +79,7 @@ jobs:
           FRQ_TEST_HANDLE: ${{ secrets.FRQ_TEST_HANDLE }}
           FRQ_TEST_APP_PASSWORD: ${{ secrets.FRQ_TEST_APP_PASSWORD }}
           FRQ_TEST_ROOM: ${{ inputs.room }}
+          TRACE: ${{ inputs.trace }}
         run: |
           set -euo pipefail
           # Without both the harness connects as a guest and passes, which is
@@ -83,4 +89,18 @@ jobs:
                  "run tools/set-test-account-github-secrets"
             exit 1
           fi
-          cd dart/frq_core && dart pub get >/dev/null && dart run tool/live_ui.dart
+          cd dart/frq_core && dart pub get >/dev/null
+          if [ "$TRACE" != "true" ] || [ -z "$FRQ_TEST_ROOM" ]; then
+            dart run tool/live_ui.dart
+            exit 0
+          fi
+          # The whole trace carries the SASL payload, which a public log must
+          # not; only the lines about the room (and the batches they come
+          # in) are printed, and never an AUTHENTICATE.
+          status=0
+          FRQ_TRACE=1 dart run tool/live_ui.dart 2>/tmp/trace.log || status=$?
+          echo "--- IRC lines for $FRQ_TEST_ROOM ---"
+          grep -v AUTHENTICATE /tmp/trace.log \
+            | grep -iF -e "$FRQ_TEST_ROOM" -e ' BATCH ' -e 'batch=' \
+            | cut -c1-400 || true
+          exit $status
