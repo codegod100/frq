@@ -12,7 +12,7 @@
 #
 #   just build TARGET      apk desktop web lib ui app
 #   just run TARGET        apk desktop web ui app
-#   just test SUITE        all nim dart common live
+#   just test SUITE        all nim dart layout web
 #   just modal CONTAINER   dev
 #   just deploy web        the CI-built image, to a Modal URL
 #   just serve [PORT]      the Modal-built web bundle, on localhost
@@ -90,12 +90,9 @@ run target="desktop":
 #            two are separate suites.
 #   web      the JavaScript build of the same core, driven as a browser
 #            drives it. Needs node and nothing else.
-#   live     the whole stack against a real freeq. Not in `all`: it wants a
-#            network and a running server.
-#
 #   just test              all of them
 #   just test nim tircparse    one Nim file
-[doc('run a suite: all nim dart layout web live')]
+[doc('run a suite: all nim dart layout web')]
 test suite="all" *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -114,10 +111,7 @@ test suite="all" *args:
         dart)   just _nim-lib
                 exec "{{tc}}" exec -- bash -c \
                     'cd dart/frq_core && dart pub get && dart test -r expanded' ;;
-        live)   just _nim-lib
-                exec "{{tc}}" exec -- bash -c \
-                    'cd dart/frq_core && dart pub get >/dev/null && dart run tool/live_ui.dart "$@"' _ "$@" ;;
-        *)      echo "usage: just test [all|nim|dart|layout|web|live]" >&2; exit 1 ;;
+        *)      echo "usage: just test [all|nim|dart|layout|web]" >&2; exit 1 ;;
     esac
 
 # The containers in `.modal/`, run on Modal rather than here: this machine
