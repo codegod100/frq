@@ -28,15 +28,60 @@ type
 
 var cache: Table[string, Preview]
 
+func hostOf(url: string): string =
+  ## The host of a URL, lowercased, port and userinfo gone; an IPv6 literal
+  ## keeps its brackets, since its colons are not a port.
+  var rest = url
+  let scheme = rest.find("://")
+  if scheme >= 0: rest = rest[scheme + 3 .. ^1]
+  for i, c in rest:
+    if c in {'/', '?', '#'}:
+      rest = rest[0 ..< i]
+      break
+  let at = rest.rfind('@')          # userinfo, which is not the host
+  if at >= 0: rest = rest[at + 1 .. ^1]
+  rest = rest.toLowerAscii
+  if rest.startsWith("["):
+    let close = rest.find(']')
+    return if close >= 0: rest[0 .. close] else: rest
+  let colon = rest.find(':')        # a port
+  if colon >= 0: rest = rest[0 ..< colon]
+  rest
+
+func privateHost(host: string): bool =
+  ## A host only the sender's own machine or network can reach.
+  ##
+  ## freeq fetches a preview from the internet, and refuses these outright —
+  ## a server that fetched whatever address it was handed would be a way into
+  ## its own network — so asking is a 400 every time, and a line mentioning
+  ## `http://127.0.0.1:11434` put one in the console on every render.
+  if host in ["localhost", "0.0.0.0", "[::1]", "[::]"]: return true
+  if host.endsWith(".localhost") or host.endsWith(".local"): return true
+  if host.startsWith("[fc") or host.startsWith("[fd") or
+     host.startsWith("[fe80"): return true
+  let parts = host.split('.')
+  if parts.len != 4: return false
+  var o: array[4, int]
+  for i, p in parts:
+    try: o[i] = parseInt(p)
+    except ValueError: return false
+  o[0] in [0, 10, 127] or
+    (o[0] == 169 and o[1] == 254) or
+    (o[0] == 172 and o[1] in 16 .. 31) or
+    (o[0] == 192 and o[1] == 168) or
+    (o[0] == 100 and o[1] in 64 .. 127)
+
 func previewable*(url: string): bool =
   ## Whether this link is a web page worth a card.
   ##
   ## A picture already draws itself inline, a media file has nothing to say
   ## about itself in HTML, and freeq's own API URLs are not pages at all —
   ## asking about any of them is a round trip that can only come back empty.
+  ## Neither can a link to somebody's own machine, which freeq will not fetch.
   if not (url.startsWith("http://") or url.startsWith("https://")): return false
   let low = url.toLowerAscii
   if low.contains("/api/v1/"): return false
+  if privateHost(hostOf(low)): return false
   for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
               ".mp3", ".m4a", ".mp4", ".mov", ".webm", ".ogg", ".wav", ".aac",
               ".pdf", ".zip"]:
@@ -63,19 +108,8 @@ func firstPreviewUrl*(text: string): string =
 func domainOf*(url: string): string =
   ## `news.example.com` out of a URL, without the `www.` — what the card says
   ## it is showing you, and the one part of a link a reader reads.
-  var rest = url
-  let scheme = rest.find("://")
-  if scheme >= 0: rest = rest[scheme + 3 .. ^1]
-  for i, c in rest:
-    if c in {'/', '?', '#'}:
-      rest = rest[0 ..< i]
-      break
-  let at = rest.rfind('@')          # userinfo, which is not the host
-  if at >= 0: rest = rest[at + 1 .. ^1]
-  let colon = rest.find(':')        # a port
-  if colon >= 0: rest = rest[0 ..< colon]
-  rest = rest.toLowerAscii
-  if rest.startsWith("www."): rest[4 .. ^1] else: rest
+  let host = hostOf(url)
+  if host.startsWith("www."): host[4 .. ^1] else: host
 
 func ogPath*(url: string): string =
   ## freeq's preview proxy as a path, without a host on the front.

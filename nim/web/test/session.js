@@ -197,6 +197,42 @@ const jwt = (claims) => 'header.' +
   assert.equal(sessionCalls, 1, 'only the fresh token reaches the PDS');
   ok('an expired JWT does not create a predictable PDS 401');
 
+  // Two connects asking at once, with a token past its expiry. The refresh
+  // token is single-use: both spending it got the second a 400, which
+  // forgot the session -- and the DPoP key the first one's new token was
+  // bound to -- from under the first.
+  store = {}; live = 'fresh-token'; refreshes = 0; refreshValid = true;
+  tokenCalls = 0;
+  localStorage.setItem('frq:oauth:session',
+    JSON.stringify(session({ accessJwt: jwt({ exp: 1 }) })));
+  const both = await Promise.all([window.frqOauth.prepare(),
+                                  window.frqOauth.prepare()]);
+  assert.equal(tokenCalls, 1, 'the refresh token is spent once');
+  assert.equal(both[0].accessJwt, 'second-token');
+  assert.equal(both[1].accessJwt, 'second-token');
+  assert.equal(window.frqOauth.saved().refresh, 'r2', 'and the session stays');
+  ok('two prepares at once share one refresh');
+
+  // Another tab refreshed first, so the stored refresh token is newer than
+  // the one this refresh spent, and the server refuses the old one. That is
+  // not a revoked session.
+  store = {}; live = 'fresh-token'; refreshValid = false;
+  localStorage.setItem('frq:oauth:session',
+    JSON.stringify(session({ accessJwt: 'stale' })));
+  const realFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    if (String(url).endsWith('/token')) {
+      localStorage.setItem('frq:oauth:session', JSON.stringify(
+        session({ accessJwt: 'fresh-token', refresh: 'r9' })));
+    }
+    return realFetch(url, opts);
+  };
+  s = await window.frqOauth.prepare();
+  global.fetch = realFetch;
+  assert.equal(s.accessJwt, 'fresh-token');
+  assert.equal(window.frqOauth.saved().refresh, 'r9');
+  ok('a refresh another tab won does not end the session');
+
   // No refresh left. Connecting as a guest here is the bug this is named
   // after; the session goes and the reader is asked to sign in.
   store = {}; live = 'fresh-token'; refreshValid = false;
