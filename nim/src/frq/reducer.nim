@@ -1047,7 +1047,14 @@ proc drain*() =
         # Refused. Registration carries on as a guest, which is freeq's own
         # behaviour — but it is said, because a silent downgrade is the thing
         # that makes a client look like it signed in when it did not.
-        setError("Sign-in refused — connected as a guest.")
+        #
+        # freeq's reason goes with it. It says which of several different
+        # things went wrong — a web-token spent or expired, a DPoP proof the
+        # PDS kept refusing, an instance whose allowlist does not name us —
+        # and without it every one of them reads the same on screen.
+        let why = if p.params.len >= 2: p.params[^1].strip() else: ""
+        setError("Sign-in refused — connected as a guest." &
+                 (if why.len > 0: " (" & why & ")" else: ""))
         trace("auth", "SASL refused: " & $p.params)
       continue
 
