@@ -65,7 +65,9 @@ void openUrl(String url) {
 /// Choose a picture and send it to freeq, answering with the URL it is served
 /// back at — or an empty string when the reader chose nothing.
 ///
-/// Two platform jobs the core cannot do: a file dialog, and a multipart POST.
+/// Two platform jobs the core cannot do: finding the picture, and a multipart
+/// POST. `source` is where to find it: `file` opens a dialog, `clipboard`
+/// takes the picture the reader just pasted.
 ///
 /// The dialog is a shell-out, like `openUrl` above, and for the same reason —
 /// the alternative is a plugin and the dozen packages behind it, for one
@@ -74,12 +76,107 @@ void openUrl(String url) {
 Future<String> pickAndUpload(
     {required String host,
     required String did,
-    required String channel}) async {
-  final path = await _chooseFile();
-  if (path.isEmpty) return '';
+    required String channel,
+    String source = 'file'}) async {
+  final List<int> bytes;
+  final String name;
+  final String mime;
+  if (source == 'clipboard') {
+    final pasted = await _clipboardPicture();
+    // Gone between the keypress and now: somebody copied something else.
+    if (pasted == null) return '';
+    bytes = pasted.bytes;
+    mime = pasted.mime;
+    name = 'pasted.${_extensionFor(mime)}';
+  } else {
+    final path = await _chooseFile();
+    if (path.isEmpty) return '';
+    bytes = await File(path).readAsBytes();
+    name = path.split(Platform.pathSeparator).last;
+    mime = _mimeFor(name);
+  }
+  return _upload(host: host, did: did, channel: channel,
+      bytes: bytes, name: name, mime: mime);
+}
 
-  final file = File(path);
-  final bytes = await file.readAsBytes();
+/// Whether the clipboard is holding a picture, rather than text.
+///
+/// Asked when the reader presses paste in the message box. Flutter's own
+/// clipboard is text and nothing else, so this is a shell-out too: `wl-paste`
+/// on Wayland and `xclip` on X, whichever answers. A desktop with neither has
+/// no picture to find, and the paste goes on being the text paste it was —
+/// no error, since most pastes are text and none of them should warn.
+Future<bool> clipboardHasPicture() async =>
+    (await _findClipboardPicture()).$1.isNotEmpty;
+
+/// The clipboard tools, as (list the types, read one type) — in the order
+/// they are tried.
+final _clipboards = <(List<String>, List<String> Function(String))>[
+  (['wl-paste', '--list-types'], (t) => ['wl-paste', '--no-newline', '--type', t]),
+  (['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'],
+      (t) => ['xclip', '-selection', 'clipboard', '-t', t, '-o']),
+];
+
+/// The picture types freeq takes, most wanted first.
+const _pictureTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+/// The picture type on the clipboard and the command that reads it, or an
+/// empty type where there is none.
+Future<(String, List<String>)> _findClipboardPicture() async {
+  for (final (list, read) in _clipboards) {
+    try {
+      final r = await Process.run(list.first, list.sublist(1));
+      // No display for this tool — Wayland's on X, or the other way round.
+      if (r.exitCode != 0) continue;
+      final offered = (r.stdout as String)
+          .split('\n')
+          .map((l) => l.trim())
+          .toSet();
+      for (final t in _pictureTypes) {
+        if (offered.contains(t)) return (t, read(t));
+      }
+      // This tool answered, and what it holds is not a picture.
+      return ('', const <String>[]);
+    } on ProcessException {
+      continue; // not installed; try the next
+    }
+  }
+  return ('', const <String>[]);
+}
+
+/// The picture on the clipboard, as bytes and a type, or null for none.
+Future<({List<int> bytes, String mime})?> _clipboardPicture() async {
+  final (mime, read) = await _findClipboardPicture();
+  if (mime.isEmpty) return null;
+  final r = await Process.run(read.first, read.sublist(1), stdoutEncoding: null);
+  final bytes = r.stdout as List<int>;
+  if (r.exitCode != 0 || bytes.isEmpty) return null;
+  return (bytes: bytes, mime: mime);
+}
+
+String _extensionFor(String mime) => switch (mime) {
+      'image/jpeg' => 'jpg',
+      'image/gif' => 'gif',
+      'image/webp' => 'webp',
+      _ => 'png',
+    };
+
+String _mimeFor(String name) {
+  final lower = name.toLowerCase();
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return 'image/png';
+}
+
+/// Send a picture to freeq's media endpoint, and answer with its URL.
+Future<String> _upload(
+    {required String host,
+    required String did,
+    required String channel,
+    required List<int> bytes,
+    required String name,
+    required String mime}) async {
   // The endpoint's own cap, refused here rather than after several megabytes
   // have crossed the wire to be turned down.
   if (bytes.length > 10 * 1024 * 1024) {
@@ -89,7 +186,6 @@ Future<String> pickAndUpload(
   // Multipart by hand: it is a boundary, three headers and the bytes, against
   // a package and its dependencies for one request.
   final boundary = '----frq${bytes.length}x${DateTime.now().microsecondsSinceEpoch}';
-  final name = path.split(Platform.pathSeparator).last;
   final head = StringBuffer()
     ..write('--$boundary\r\n')
     ..write('Content-Disposition: form-data; name="did"\r\n\r\n$did\r\n');
@@ -102,7 +198,7 @@ Future<String> pickAndUpload(
   head
     ..write('--$boundary\r\n')
     ..write('Content-Disposition: form-data; name="file"; filename="$name"\r\n')
-    ..write('Content-Type: image/png\r\n\r\n');
+    ..write('Content-Type: $mime\r\n\r\n');
 
   final body = <int>[
     ...utf8.encode(head.toString()),

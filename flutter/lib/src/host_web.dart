@@ -74,5 +74,10 @@ void openUrl(String url) {
 Future<String> pickAndUpload(
         {required String host,
         required String did,
-        required String channel}) async =>
+        required String channel,
+        String source = 'file'}) async =>
     '';
+
+/// Not here either: a browser hands a pasted picture to the page's own
+/// `paste` event, and `frq_host.js` listens for it there.
+Future<bool> clipboardHasPicture() async => false;

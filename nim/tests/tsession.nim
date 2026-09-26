@@ -348,6 +348,20 @@ suite "sending a picture":
     check wantedPicture().len > 0
     check wantedPicture() == ""
 
+  test "a pasted picture asks the host for its clipboard":
+    # The same question as the button, with the answer in a different place:
+    # the host saw the paste, and has the picture already.
+    setSessionForTest("did:plc:abc", "https://pds.example")
+    dispatch(%*{"id": "image.paste"})
+    let want = parseJson(wantedPicture())
+    check want["source"].getStr() == "clipboard"
+    check want["channel"].getStr() == "#freeq"
+    check wantedPicture() == ""
+
+    # And the button still asks for a dialog after a paste has been.
+    dispatch(%*{"id": "image.pick"})
+    check parseJson(wantedPicture())["source"].getStr() == "file"
+
   test "the URL that comes back goes out in the line":
     # This is how a picture travels on IRC: the wire carries text, and every
     # client finds the picture by looking for a link in it. It used to be put

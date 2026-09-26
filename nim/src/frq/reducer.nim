@@ -237,11 +237,13 @@ proc wantedPicture*(): string =
   ## Taken as it is read: a file dialog opened twice is a file dialog the
   ## reader has to dismiss twice. The DID is who the upload is filed under —
   ## freeq takes one with a live session, which is why a guest cannot — and
-  ## the channel is where it is going.
+  ## the channel is where it is going. The source is where the picture is:
+  ## a dialog to open, or the clipboard the reader just pasted from.
   if not app.picking: return ""
   app.picking = false
   $(%*{"host": app.formHost.strip(), "did": session.did,
-       "channel": app.current})
+       "channel": app.current,
+       "source": if app.pickFrom.len > 0: app.pickFrom else: "file"})
 
 proc restore*() =
   ## What a previous run left on disk, back in the state.
@@ -407,6 +409,22 @@ proc reconnects(): bool =
     app.authMode != amBluesky or app.hasSession
   else:
     false
+
+proc askForPicture(source, status: string) =
+  ## Ask the host for a picture from `source`, or say why it cannot be sent.
+  ##
+  ## A guest cannot upload — freeq files one under an account — and a picture
+  ## with no conversation has nowhere to go. Both are said rather than
+  ## swallowed, whichever way the picture was offered.
+  if session.did.len == 0:
+    setError("Sign in to send a picture — an upload is filed under your " &
+             "account.")
+  elif app.current.len == 0:
+    setError("Open a conversation to send a picture to.")
+  else:
+    app.picking = true
+    app.pickFrom = source
+    app.status = status
 
 proc sendDraft() =
   let text = app.draft.strip()
@@ -679,14 +697,13 @@ proc dispatch*(event: JsonNode) =
     #
     # This had no handler at all, so the button traced "no handler" and did
     # nothing — which is what "the image upload icon is not working" was.
-    if session.did.len == 0:
-      setError("Sign in to send a picture — an upload is filed under your " &
-               "account.")
-    elif app.current.len == 0:
-      setError("Open a conversation to send a picture to.")
-    else:
-      app.picking = true
-      app.status = "Choosing a picture…"
+    askForPicture("file", "Choosing a picture…")
+
+  of "image.paste":
+    # The reader pasted a picture into the message box. The same question
+    # as the button, asked of the clipboard instead of a dialog: the host
+    # saw the paste, so the host has the bytes, and it answers the same way.
+    askForPicture("clipboard", "Sending the pasted picture…")
 
   of "attachment.ready":
     # The URL freeq serves it back at. Held apart from the draft rather than

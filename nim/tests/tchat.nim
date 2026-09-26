@@ -242,6 +242,13 @@ suite "the chat screen":
     check face[0].props{"fallback"}.getStr() == "frq-guest"
     check face[0].props{"url"}.getStr() == ""
 
+  test "the message box, and only it, takes a pasted picture":
+    let t = cs.chatScreen(s, true)
+    for e in t.find("entry"):
+      let wants = e.props{"onPastePicture"}.getStr()
+      if e.props{"key"}.getStr() == "draft": check wants == "image.paste"
+      else: check wants == ""
+
 import frq/[reducer, glyphs, emoji]
 
 suite "the emoji picker":
