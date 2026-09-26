@@ -43,6 +43,7 @@ the small one because the page sends no credentials.
 `FRQ_PROFILE_ORIGIN` exists only so the offline test can substitute a stub.
 """
 
+import ipaddress
 import os
 import sys
 import threading
@@ -94,6 +95,46 @@ OG_MAX = 2048
 
 _og_cache: dict[str, tuple[float, int, bytes, str]] = {}
 _og_lock = threading.Lock()
+
+
+def preview_query(query):
+    """Return the public HTTP(S) URL in an OG query, or ``None``.
+
+    freeq performs its own DNS-based SSRF check because it is the process
+    that ultimately fetches the page.  Rejecting the unambiguous cases here
+    still matters: they should not consume an upstream request (or its rate
+    limit) merely for that service to reject them a moment later.
+
+    Host names are deliberately not resolved here.  A check made by this
+    process would be racy with the upstream's resolution and therefore could
+    not replace its check; it would only add another DNS request.
+    """
+    values = urllib.parse.parse_qs(query, keep_blank_values=True)
+    if set(values) != {"url"} or len(values["url"]) != 1:
+        return None
+
+    target = values["url"][0]
+    try:
+        parsed = urllib.parse.urlsplit(target)
+        # Accessing these properties also rejects malformed bracketed IPv6
+        # addresses and non-numeric/out-of-range ports.
+        host = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        return None
+    if (parsed.scheme not in ("http", "https") or not host
+            or parsed.username is not None or parsed.password is not None):
+        return None
+
+    low_host = host.rstrip(".").lower()
+    if low_host == "localhost" or low_host.endswith(".localhost"):
+        return None
+    try:
+        if not ipaddress.ip_address(low_host).is_global:
+            return None
+    except ValueError:
+        pass  # A DNS name; the fetching service validates what it resolves to.
+    return target
 
 
 def og_cached(query):
@@ -186,8 +227,8 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
-        if not query.startswith("url="):
-            self.send_error(400, "url is required")
+        if preview_query(query) is None:
+            self.send_error(400, "a public HTTP(S) url is required")
             return
 
         # Answered from the table where it is there, which is most of the
@@ -211,7 +252,15 @@ class Handler(SimpleHTTPRequestHandler):
         # came, since re-encoding it here would be a second opinion about
         # what the URL was.
         req = urllib.request.Request(
-            UPSTREAM + OG + "?" + query, method="GET",
+            UPSTREAM + OG + "?" + query,
+            method="GET",
+            headers={
+                "Accept": "application/json",
+                # Identify this relay instead of urllib's generic default.
+                # This is the request to freeq, not an attempt to impersonate
+                # a browser to the site whose metadata freeq retrieves.
+                "User-Agent": "frq-web-preview/1",
+            },
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as r:

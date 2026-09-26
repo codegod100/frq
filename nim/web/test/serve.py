@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -25,6 +26,8 @@ seen = {}
 class Upstream(BaseHTTPRequestHandler):
     def do_GET(self):
         seen["get_path"] = self.path
+        seen["get_accept"] = self.headers.get("Accept")
+        seen["get_agent"] = self.headers.get("User-Agent")
         if self.path.startswith("/api/v1/og?"):
             self.send_response(502 if "broken" in self.path else 200)
             out = (b'{"title":"A page"}' if "broken" not in self.path
@@ -160,6 +163,33 @@ def main():
             assert r.status == 204, r.status
             assert r.read() == b""
         ok("optional preview and profile misses are quiet empty responses")
+
+        # Obvious SSRF and malformed-input cases stop at this process rather
+        # than spending a request and a rate-limit slot at freeq.  DNS names
+        # remain freeq's check because that is where they are resolved for
+        # the actual page fetch.
+        for target in (
+                "http://127.0.0.1/private",
+                "http://[::1]/private",
+                "http://localhost/private",
+                "file:///etc/passwd",
+                "not a URL"):
+            try:
+                urllib.request.urlopen(
+                    base + "/api/v1/og?" + urllib.parse.urlencode({"url": target}),
+                    timeout=5)
+                raise AssertionError("invalid preview URL was accepted: " + target)
+            except urllib.error.HTTPError as e:
+                assert e.code == 400, (target, e.code)
+        ok("invalid and local preview URLs are refused before the upstream")
+
+        with urllib.request.urlopen(
+                base + "/api/v1/og?url=https%3A%2F%2Fheaders.example",
+                timeout=5) as r:
+            assert r.status == 200, r.status
+        assert seen["get_accept"] == "application/json", seen["get_accept"]
+        assert seen["get_agent"] == "frq-web-preview/1", seen["get_agent"]
+        ok("preview requests identify the relay and ask for JSON")
 
         with urllib.request.urlopen(
                 base + "/api/v1/profile?actor=did%3Aplc%3Aok", timeout=5) as r:
