@@ -748,8 +748,19 @@ proc chatScreen*(s: State, connected: bool): Node =
   # button and Send leave. It was a Wrap with the box pinned to 260 points,
   # which is a message box the width of a phone's on a window four times
   # that — and the rest of the line empty beside it.
+  #
+  # The face at its head is whoever is about to speak: which account this
+  # line goes out as is a question worth answering before Send rather than
+  # after. A guest has no picture, and gets the letter of the nick the
+  # server settled on, which is still the answer. In a wrapper so that a
+  # search for the rows a face heads finds the sender rows and not this.
+  let myActor = actorFor(s.dids.getOrDefault(s.formNick, ""), s.formNick)
+  let me = vbox(%*{"key": "me"},
+    avatar(avatarFor(myActor, s.formNick), s.formNick, size = faceSize,
+           onClick = "profile.open:" & s.formNick & ":" & myActor))
   var compose = hbox(%*{"spacing": 8, "align": "center", "marginBottom": 12,
                         "wrap": false},
+    me,
     image("asset:assets/insert-image.png", maxWidth = 36, maxHeight = 36,
           onClick = "image.pick"),
     entry("draft", s.draft, "Message " & name, "draft.change",

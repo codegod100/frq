@@ -837,6 +837,11 @@ proc wantFace(m: Message) =
   let actor = actorFor(did, m.frm)
   if actor.len > 0: want(actor)
 
+proc wantSelf() =
+  ## Ask for the face the compose bar shows, under the name it looks it up by.
+  let actor = actorFor(app.dids.getOrDefault(app.formNick, ""), app.formNick)
+  if actor.len > 0 and not isAgent(actor): want(actor)
+
 proc notePreviewTags(tags: string) =
   ## A preview the sender sent with their line, into the cache.
   ##
@@ -1095,6 +1100,9 @@ proc drain*() =
       registered = true
       app.status = "Connected as " & app.formNick
       app.screen = scChats
+      # Our own face, for the compose bar. WHO brings it too, but only once a
+      # room has been joined and answered for.
+      wantSelf()
       # What the file says we were in, we ask to be in again. The server
       # forgets: it has told this client it is in rooms it is not and left out
       # ones it is, so the saved list is the authority and a room is gone when
@@ -1267,6 +1275,7 @@ proc drain*() =
              app.status.startsWith("Signed in"):
             app.status = "Connected as " & fresh
           trace("auth", "the server calls us " & fresh)
+          wantSelf()
 
     of "353":
       # NAMES, into the PENDING list. It arrives over as many lines as it

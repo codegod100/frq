@@ -233,6 +233,15 @@ suite "the chat screen":
     check "draft" in t.find("entry").mapIt(it.props{"key"}.getStr())
     check "Send" in t.labels("button")
 
+  test "the compose bar shows whose account the line goes out as":
+    let t = cs.chatScreen(s, true)
+    let me = t.find("vbox").filterIt(it.props{"key"}.getStr() == "me")
+    check me.len == 1
+    let face = me[0].find("avatar")
+    check face.len == 1
+    check face[0].props{"fallback"}.getStr() == "frq-guest"
+    check face[0].props{"url"}.getStr() == ""
+
 import frq/[reducer, glyphs, emoji]
 
 suite "the emoji picker":
