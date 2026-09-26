@@ -36,6 +36,8 @@ let tokenProofNonce = '';
 let sessionProofNonce = '';
 let challengeToken = false;
 let challengeSession = false;
+let authorizationCodeExchange = false;
+let tokenCalls = 0;
 const calls = [];
 global.fetch = async (url, opts) => {
   const body = String((opts && opts.body) || '');
@@ -60,8 +62,21 @@ global.fetch = async (url, opts) => {
                  { 'dpop-nonce': 'n1' });
   }
   if (String(url).endsWith('/token')) {
+    tokenCalls += 1;
     const proof = opts.headers.DPoP.split('.')[1];
     tokenProofNonce = JSON.parse(Buffer.from(proof, 'base64url')).nonce || '';
+    if (authorizationCodeExchange) {
+      assert.ok(body.includes('grant_type=authorization_code'), 'an authorization code grant');
+      assert.ok(body.includes('code=returned-code'), 'redeems the returned code');
+      if (challengeToken) {
+        challengeToken = false;
+        return reply(400, { error: 'use_dpop_nonce' },
+                     { 'dpop-nonce': 'token-endpoint-nonce' });
+      }
+      live = 'code-access-token';
+      return reply(200, { access_token: live, refresh_token: 'code-refresh-token',
+                          scope: 'atproto transition:generic', sub: 'did:plc:abc' });
+    }
     assert.ok(body.includes('grant_type=refresh_token'), 'a refresh grant');
     assert.ok(body.includes('refresh_token=r1'), 'spends the stored token');
     if (challengeToken) {
@@ -92,11 +107,31 @@ const jwt = (claims) => 'header.' +
   Buffer.from(JSON.stringify(claims)).toString('base64url') + '.signature';
 
 (async () => {
+  // The first authorization-code exchange has no nonce to send. bsky.social
+  // challenges it, so the client must mint another proof and retry the code
+  // exactly once instead of refusing the sign-in.
+  store = {}; tokenCalls = 0; tokenProofNonce = ''; challengeToken = true;
+  authorizationCodeExchange = true;
+  window.location.search = '?code=returned-code&state=expected-state';
+  localStorage.setItem('frq:oauth:pending', JSON.stringify({
+    verifier: 'verifier', state: 'expected-state', did: 'did:plc:abc',
+    handle: 'someone.example', pds: 'https://pds.example',
+    token: 'https://pds.example/token', tokenNonce: '',
+  }));
+  let s = await window.frqOauth.resume();
+  assert.equal(tokenCalls, 2, 'the challenged exchange is retried once');
+  assert.equal(tokenProofNonce, 'token-endpoint-nonce');
+  assert.equal(s.tokenNonce, 'token-endpoint-nonce');
+  assert.equal(s.accessJwt, 'code-access-token');
+  ok('an authorization-code nonce challenge regenerates the proof and retries once');
+  authorizationCodeExchange = false;
+  window.location.search = '';
+
   // A token the PDS still accepts is used as it is.
   store = {}; live = 'fresh-token'; refreshes = 0;
   localStorage.setItem('frq:oauth:session',
     JSON.stringify(session({ dpopNonce: 'saved-pds-nonce' })));
-  let s = await window.frqOauth.prepare();
+  s = await window.frqOauth.prepare();
   assert.equal(refreshes, 0);
   assert.ok(s.dpopProof, 'a proof for freeq to present');
   ok('a live token is not refreshed');
