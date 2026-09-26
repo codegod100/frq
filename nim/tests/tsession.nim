@@ -448,3 +448,12 @@ suite "unsending a line":
     check task.title == "ship the release"
     check task.offeredTo == "did:plc:worker"
     check task.caps == "web-search"
+
+  test "a handoff reference is consumed by its one companion":
+    say("@+freeq.at/act=handoff;+freeq.at/act-verb=offer;" &
+        "+freeq.at/eventid=task-1;+freeq.at/act-title=ship\\sthe\\srelease " &
+        ":bot!b@h TAGMSG #freeq",
+        "@+freeq.at/ref=task-1;msgid=line-1 :bot!b@h PRIVMSG #freeq :offered: ship the release",
+        "@+freeq.at/ref=task-1;msgid=line-2 :bot!b@h PRIVMSG #freeq :ordinary follow-up")
+    check app.rooms["#freeq"].messageById("line-1").get.task.id == "task-1"
+    check app.rooms["#freeq"].messageById("line-2").get.task.id == ""
