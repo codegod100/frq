@@ -58,6 +58,12 @@
       String(ev.data).split(/\r?\n/).forEach(function (line) {
         if (line.length > 0) frq.feed(line);
       });
+      // And answered now, rather than on the next tick of a timer. A hidden
+      // tab's timers are throttled to once a minute, so a PING left for the
+      // pump below was PONGed minutes late and freeq hung up; a message
+      // event is delivered on time whether or not the tab is showing.
+      frq.pump();
+      flush();
     };
     // One event per socket, from `onclose`. `onerror` carries nothing worth
     // reporting — the browser withholds the reason on purpose — and `onclose`
@@ -84,6 +90,17 @@
     try { old.close(); } catch (e) {}
   }
 
+  // Everything the core has queued, onto the socket if there is one.
+  function flush() {
+    if (!ws || ws.readyState !== 1) return;
+    var out = frq.takeOutbound();
+    if (out) {
+      out.split("\n").forEach(function (line) {
+        if (line.length > 0) ws.send(line);
+      });
+    }
+  }
+
   // The pump. Both directions, on a timer, because nothing here is allowed to
   // call into Dart and Dart is not going to ask on the core's behalf.
   //
@@ -102,14 +119,7 @@
       hangUp();
       connect(JSON.parse(want));
     }
-    if (ws && ws.readyState === 1) {
-      var out = frq.takeOutbound();
-      if (out) {
-        out.split("\n").forEach(function (line) {
-          if (line.length > 0) ws.send(line);
-        });
-      }
-    }
+    flush();
   }, 50);
 
   // A picture: chosen with the browser's own file input, and posted to

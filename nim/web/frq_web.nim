@@ -81,6 +81,15 @@ proc frqWanted(): cstring {.exportc.} =
 proc frqFeed(line: cstring) {.exportc.} = tr.feed($line)
   ## A line the server sent.
 
+proc frqPump() {.exportc.} = drain()
+  ## Answer what has arrived, without building a screen nobody is looking at.
+  ##
+  ## `render` drains too, but it is reached from a Dart timer, and a browser
+  ## throttles timers in a tab that is not showing -- to once a minute, after
+  ## a few minutes hidden. A PING that waited for one was answered late or not
+  ## at all, and freeq closed the connection for it. The host calls this from
+  ## the socket's `onmessage`, which a hidden tab still runs on time.
+
 proc frqSocketEvent(e: cstring) {.exportc.} = tr.event($e)
   ## "open", or "close: why", or "error: why".
 
@@ -176,6 +185,7 @@ globalThis.frq = {
   dispatch: frqDispatch,
   wanted: frqWanted,
   feed: frqFeed,
+  pump: frqPump,
   socketEvent: frqSocketEvent,
   takeOutbound: frqTakeOutbound,
   brokerToken: frqBrokerToken,
