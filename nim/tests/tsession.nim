@@ -525,3 +525,16 @@ suite "unsending a line":
         ";msgid=line-1 :bot!b@h PRIVMSG #freeq :offered: it")
     check app.rooms["#freeq"].messageById("late").get.task.id == ""
     check app.rooms["#freeq"].messageById("line-1").get.task.id == ev
+
+suite "a refused sign-in":
+  setup: reset()
+
+  test "says what the server gave as the reason":
+    say(":server 904 alice :Not authorized to connect to this server")
+    check app.hasError
+    check "connected as a guest" in app.error
+    check "Not authorized to connect to this server" in app.error
+
+  test "and still says it was refused when no reason came":
+    say(":server 904 alice")
+    check app.error == "Sign-in refused — connected as a guest."
