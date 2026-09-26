@@ -457,3 +457,46 @@ suite "unsending a line":
         "@+freeq.at/ref=task-1;msgid=line-2 :bot!b@h PRIVMSG #freeq :ordinary follow-up")
     check app.rooms["#freeq"].messageById("line-1").get.task.id == "task-1"
     check app.rooms["#freeq"].messageById("line-2").get.task.id == ""
+
+  test "a later move on a task is a card, named by the task and not the event":
+    # freeq's companion carries the task id in `+freeq.at/ref`, and every
+    # event after the opener has an id of its own. Looking the reference up
+    # as an event id matched only the opener, so a progress line was plain.
+    say("@+freeq.at/act=handoff;+freeq.at/act-verb=offer;" &
+        "+freeq.at/eventid=task-1;+freeq.at/act-title=ship\\sthe\\srelease " &
+        ":bot!b@h TAGMSG #freeq",
+        "@+freeq.at/ref=task-1;msgid=line-1 :bot!b@h PRIVMSG #freeq :offered: ship the release",
+        "@+freeq.at/act=handoff;+freeq.at/act-verb=progress;+freeq.at/act-id=task-1;" &
+        "+freeq.at/eventid=ev-2;+freeq.at/act-note=halfway " &
+        ":bot!b@h TAGMSG #freeq",
+        "@+freeq.at/ref=task-1;msgid=line-2 :bot!b@h PRIVMSG #freeq :progress: halfway")
+    let task = app.rooms["#freeq"].messageById("line-2").get.task
+    check task.id == "ev-2"
+    check task.verb == "progress"
+    check task.title == "ship the release"
+
+  test "somebody else's line naming a task is chat, and leaves the event waiting":
+    say("@+freeq.at/act=handoff;+freeq.at/act-verb=offer;" &
+        "+freeq.at/eventid=task-1 :bot!b@h TAGMSG #freeq",
+        "@+freeq.at/ref=task-1;msgid=line-1 :carol!c@h PRIVMSG #freeq :about that task",
+        "@+freeq.at/ref=task-1;msgid=line-2 :bot!b@h PRIVMSG #freeq :offered: it")
+    check app.rooms["#freeq"].messageById("line-1").get.task.id == ""
+    check app.rooms["#freeq"].messageById("line-2").get.task.id == "task-1"
+
+  test "a companion that arrives before its event still becomes the card":
+    say("@+freeq.at/ref=task-1;msgid=line-1 :bot!b@h PRIVMSG #freeq :offered: it",
+        "@+freeq.at/act=handoff;+freeq.at/act-verb=offer;" &
+        "+freeq.at/eventid=task-1 :bot!b@h TAGMSG #freeq")
+    check app.rooms["#freeq"].messageById("line-1").get.task.id == "task-1"
+
+  test "a line from the task's own sender, long after the event, is chat":
+    # 01M3CEJ5RK is 2026-09-25T14:12:29.587Z.
+    const ev = "01M3CEJ5RK0000000000000000"
+    say("@+freeq.at/act=handoff;+freeq.at/act-verb=offer;+freeq.at/eventid=" & ev &
+        " :bot!b@h TAGMSG #freeq",
+        "@time=2026-09-25T14:20:00.000Z;+freeq.at/ref=" & ev &
+        ";msgid=late :bot!b@h PRIVMSG #freeq :still thinking about it",
+        "@time=2026-09-25T14:12:30.100Z;+freeq.at/ref=" & ev &
+        ";msgid=line-1 :bot!b@h PRIVMSG #freeq :offered: it")
+    check app.rooms["#freeq"].messageById("late").get.task.id == ""
+    check app.rooms["#freeq"].messageById("line-1").get.task.id == ev

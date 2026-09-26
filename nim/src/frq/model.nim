@@ -26,6 +26,11 @@ type
     caps*: string
     note*: string
     context*: string
+    frm*: string
+      ## Who sent the TAGMSG, and their DID where the line carried one. A
+      ## companion is its sender's own prose, so this is half of how one is
+      ## told from anybody else's line that happens to name the same task.
+    did*: string
 
   Reaction* = object
     ## An emoji and who put it there. The nicks are a set in the Clojure; a
@@ -63,6 +68,9 @@ type
       ## where a line taken out of its conversation no longer says for itself.
     task*: TaskEvent
       ## Empty unless this is the visible companion of a task action.
+    taskRef*: string
+      ## The task this line names (`+freeq.at/ref`), kept so an event that
+      ## arrives after its companion can still find it.
 
   Room* = object
     ## A buffer: a channel or a DM. Named Room rather than Channel because
@@ -93,8 +101,8 @@ type
     lastReadId*: string
     lastReadAt*: int64
     peerDid*: string      ## for a DM, who the other side is
-    taskEvents*: Table[string, TaskEvent]
-      ## event id → TAGMSG payload, held until its companion line arrives.
+    taskEvents*: Table[string, seq[TaskEvent]]
+      ## task id → the events on it whose companion line has not arrived.
     taskTitles*: Table[string, string]
       ## opener id → title. Follow-up events name the opener, not its title.
 
@@ -102,7 +110,7 @@ func initMessage*(frm, text: string): Message =
   Message(frm: frm, text: text)
 
 func initRoom*(name: string): Room =
-  Room(name: name, taskEvents: initTable[string, TaskEvent](),
+  Room(name: name, taskEvents: initTable[string, seq[TaskEvent]](),
        taskTitles: initTable[string, string]())
 
 # ------------------------------------------------------------------- naming

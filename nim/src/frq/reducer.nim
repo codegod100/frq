@@ -850,21 +850,72 @@ proc taskEvent(tags: string): TaskEvent =
   (result.note, _) = tagValue(tags, "+freeq.at/act-note")
   (result.context, _) = tagValue(tags, "+freeq.at/act-ctx")
 
+func ulidMs(id: string): int64 =
+  ## The millisecond a ULID was minted in, or -1 for an id that is not one.
+  const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+  if id.len != 26: return -1
+  for c in id[0 ..< 10]:
+    let digit = crockford.find(c)
+    if digit < 0: return -1
+    result = result * 32 + digit
+
+func companionFits(task: TaskEvent, m: Message): bool =
+  ## Whether `m` could be the line its sender posted beside `task`.
+  ##
+  ## freeq's companion names the task (`+freeq.at/ref`), never the event, so
+  ## every later move on a task — and any other line that mentions it — names
+  ## the same thing. The reference client tells them apart the way this does:
+  ## the same sender (by DID where both sides carry one), and written in the
+  ## event's own second or the one after. An event id that is not a ULID
+  ## carries no time and is judged on the sender alone.
+  let sameSender =
+    if task.did.len > 0 and m.account.len > 0: task.did == m.account
+    else: cmpIgnoreCase(task.frm, m.frm) == 0
+  if not sameSender: return false
+  let minted = ulidMs(task.id)
+  if minted < 0 or m.at <= 0: return true
+  let gap = m.at div 1000 - minted div 1000
+  gap >= 0 and gap <= 1
+
+proc pairTask(room: Room, task: TaskEvent, m: var Message) =
+  var task = task
+  if task.title.len == 0:
+    task.title = room.taskTitles.getOrDefault(task.taskId, "")
+  m.task = task
+
 proc attachTask(tags: string, room: var Room, m: var Message) =
   ## Turn a companion line into a card only when this client has received the
   ## matching typed action. Text that merely resembles a status stays chat.
   ##
-  ## A TAGMSG has exactly one visible companion. Forget it once matched: the
-  ## reference is also useful as ordinary relationship metadata, and leaving
-  ## the event cached made every later PRIVMSG carrying the same reference
-  ## look like another copy of the task.
-  let (eventRef, hasRef) = tagValue(tags, "+freeq.at/ref")
-  if not hasRef or not room.taskEvents.hasKey(eventRef): return
-  var task = room.taskEvents[eventRef]
-  room.taskEvents.del(eventRef)
-  if task.title.len == 0:
-    task.title = room.taskTitles.getOrDefault(task.taskId, "")
-  m.task = task
+  ## An event has at most one companion and is forgotten once it has it.
+  ## Keyed by task rather than event, because that is all the line names:
+  ## this used to look the reference up as an event id, which is only true
+  ## of a task's opener — so any line carrying the reference became another
+  ## copy of the offer, and no later move on the task was ever a card.
+  let (taskRef, hasRef) = tagValue(tags, "+freeq.at/ref")
+  if not hasRef or taskRef.len == 0: return
+  m.taskRef = taskRef
+  if not room.taskEvents.hasKey(taskRef): return
+  var waiting = room.taskEvents[taskRef]
+  for i, task in waiting:
+    if companionFits(task, m):
+      room.pairTask(task, m)
+      waiting.delete(i)
+      if waiting.len == 0: room.taskEvents.del(taskRef)
+      else: room.taskEvents[taskRef] = waiting
+      return
+
+proc holdTask(room: var Room, task: TaskEvent) =
+  ## An event just arrived. Its companion may already be here — a replay
+  ## orders by the second, and the line and its event share one — so give it
+  ## to the first unpaired line that fits, and otherwise wait for one.
+  if task.title.len > 0: room.taskTitles[task.taskId] = task.title
+  for m in room.messages.mitems:
+    if m.taskRef == task.taskId and m.task.id.len == 0 and
+       companionFits(task, m):
+      room.pairTask(task, m)
+      return
+  room.taskEvents.mgetOrPut(task.taskId, @[]).add task
 
 proc wantPreview(m: Message) =
   ## Ask what is at the end of the link in this line, if it has one.
@@ -1106,9 +1157,11 @@ proc drain*() =
         let task = taskEvent(p.tags)
         if task.id.len > 0:
           app.rooms.ensureRoom(room)
+          var task = task
+          task.frm = nickOf(p.prefix)
+          if p.hasAccount: task.did = p.account
           var r = app.rooms[room]
-          r.taskEvents[task.id] = task
-          if task.title.len > 0: r.taskTitles[task.taskId] = task.title
+          r.holdTask(task)
           app.rooms[room] = r
         let (gone, isDelete) = tagValue(p.tags, "+draft/delete")
         if isDelete and gone.len > 0:
