@@ -850,12 +850,18 @@ proc taskEvent(tags: string): TaskEvent =
   (result.note, _) = tagValue(tags, "+freeq.at/act-note")
   (result.context, _) = tagValue(tags, "+freeq.at/act-ctx")
 
-proc attachTask(tags: string, room: Room, m: var Message) =
+proc attachTask(tags: string, room: var Room, m: var Message) =
   ## Turn a companion line into a card only when this client has received the
   ## matching typed action. Text that merely resembles a status stays chat.
+  ##
+  ## A TAGMSG has exactly one visible companion. Forget it once matched: the
+  ## reference is also useful as ordinary relationship metadata, and leaving
+  ## the event cached made every later PRIVMSG carrying the same reference
+  ## look like another copy of the task.
   let (eventRef, hasRef) = tagValue(tags, "+freeq.at/ref")
   if not hasRef or not room.taskEvents.hasKey(eventRef): return
   var task = room.taskEvents[eventRef]
+  room.taskEvents.del(eventRef)
   if task.title.len == 0:
     task.title = room.taskTitles.getOrDefault(task.taskId, "")
   m.task = task
