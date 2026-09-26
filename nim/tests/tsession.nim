@@ -64,6 +64,29 @@ suite "asking for the backlog":
     say(":server 366 alice #freeq :End of /NAMES list")
     check not sent().anyIt(it.startsWith("CHATHISTORY"))
 
+  test "a reconnect that brings no backlog asks, though the buffer is full":
+    # freeq answers a reconnect by reclaiming the ghost session: JOIN and
+    # NAMES, and no replay between them. The buffer still holds the lines
+    # from before the drop, and testing it for emptiness is what left every
+    # line said while we were away missing.
+    joined("#freeq")
+    say("@msgid=a1 :bob!b@h PRIVMSG #freeq :before the drop",
+        ":server 366 alice #freeq :End of /NAMES list")
+    discard sent()
+    joined("#freeq")
+    say(":server 366 alice #freeq :End of /NAMES list")
+    check "CHATHISTORY LATEST #freeq * 100" in sent()
+
+  test "a rejoin that replays lines we already hold does not ask again":
+    joined("#freeq")
+    say("@msgid=a1 :bob!b@h PRIVMSG #freeq :before the drop",
+        ":server 366 alice #freeq :End of /NAMES list")
+    discard sent()
+    joined("#freeq")
+    say("@msgid=a1 :bob!b@h PRIVMSG #freeq :before the drop",
+        ":server 366 alice #freeq :End of /NAMES list")
+    check not sent().anyIt(it.startsWith("CHATHISTORY"))
+
   test "a room this client was never put in is not asked about":
     # Not a room of ours: 366 for it arrives before any JOIN, and answering
     # it would ask a server for the history of somewhere we are not.

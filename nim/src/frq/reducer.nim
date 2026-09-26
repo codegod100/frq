@@ -874,7 +874,12 @@ proc note(room: string, m: Message) =
   if m.text.strip.len == 0: return
   app.rooms.ensureRoom(room)
   var r = app.rooms[room]
-  if seenMessage(r.messages, m.id, m.frm, m.text, app.formNick): return
+  # Before the duplicate check: a replay of lines we already hold is still a
+  # replay, and still means the server has sent this room's backlog.
+  if not m.system: r.heard = true
+  if seenMessage(r.messages, m.id, m.frm, m.text, app.formNick):
+    app.rooms[room] = r
+    return
   # A history replay may arrive after live traffic.  Preserve the server's
   # chronology instead of the socket's arrival order, so an old replay does
   # not become the apparent newest line in the room.
@@ -1102,6 +1107,8 @@ proc drain*() =
         if who == app.formNick:
           r.joined = true
           r.joining = false
+          # Whatever follows before 366 is this join's backlog, if any.
+          r.heard = false
         elif not r.users.hasKey(who):
           r.users[who] = ""
         app.rooms[room] = r
@@ -1172,16 +1179,23 @@ proc drain*() =
           # up worst on a signed-in connection, which is the one that gets
           # re-joined into rooms it never sent a JOIN for.
           #
-          # Only where there is no conversation yet: the replayed lines come
-          # back as ordinary PRIVMSGs, and asking again for a room that
-          # already has its history is a second copy of it crossing the wire
-          # to be discarded by the marker.
+          # Only where this join brought no conversation with it: a real
+          # JOIN replays the backlog as ordinary PRIVMSGs before NAMES, and
+          # asking again is a second copy of it crossing the wire to be
+          # discarded by the marker.
+          #
+          # Not "where the buffer is empty", which is what this was, and
+          # which is why a room stopped showing recent messages. A socket
+          # that drops and comes back keeps this run's buffer, and freeq
+          # answers the reconnect by reclaiming the ghost session — JOIN and
+          # NAMES, no backlog, and our own JOIN then ignored as a double. The
+          # buffer held the lines from before the drop, so nothing was asked
+          # for and everything said while we were away never arrived.
           #
           # System lines do not count, and getting that wrong is what made
           # the first version of this do nothing at all: joining a room puts
-          # "alice joined #freeq" in the buffer before 366 arrives, so a test
-          # for an empty one is a test that never passes.
-          if not r.messages.anyIt(not it.system):
+          # "alice joined #freeq" in the buffer before 366 arrives.
+          if not r.heard:
             send("CHATHISTORY LATEST " & room & " * " & $historyLimit)
           # And who these people actually are. One WHO answers for the whole
           # room; the alternative is a WHOIS per nick, which is a round trip

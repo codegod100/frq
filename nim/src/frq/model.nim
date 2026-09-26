@@ -74,6 +74,12 @@ type
     mention*: bool
     joined*: bool
     joining*: bool
+    heard*: bool
+      ## Whether any conversation has arrived since our own last JOIN here —
+      ## which is how this client tells a JOIN that replayed the backlog from
+      ## one that did not. freeq replays on a real join, but a reconnect that
+      ## reclaims a ghost session, or attaches beside another device on the
+      ## same account, sends JOIN and NAMES with no backlog between them.
     users*: Table[string, string]
       ## nick → mode prefix ("" for none). A table and not a list because the
       ## people panel sorts ops first and a MODE has to find one person.
