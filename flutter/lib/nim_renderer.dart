@@ -16,6 +16,7 @@ import 'dart:convert';
 import 'package:flutter/gestures.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:frq_core/frq_core.dart' as core;
 import 'src/host.dart' as host;
 
@@ -129,6 +130,7 @@ class _NimAppState extends State<NimApp> {
         host: j['host'] as String? ?? '',
         did: j['did'] as String? ?? '',
         channel: j['channel'] as String? ?? '',
+        source: j['source'] as String? ?? 'file',
       );
       if (!mounted) return;
       // An empty URL is the reader closing the dialog, which is not a
@@ -137,6 +139,39 @@ class _NimAppState extends State<NimApp> {
     } catch (e) {
       if (mounted) _send('attachment.failed:$e');
     }
+  }
+
+  /// An entry that also takes a pasted picture, sending [event] when one is.
+  ///
+  /// The paste is watched, not taken over: the key goes on to the field and
+  /// pastes whatever text there is, and the clipboard is asked beside it
+  /// whether it holds a picture. A clipboard holding a picture holds no text
+  /// to paste, so the two never both happen — and a paste of text never waits
+  /// on a question about pictures.
+  ///
+  /// A browser never asks here: a picture pasted into a page arrives as the
+  /// page's `paste` event, which `frq_host.js` listens for.
+  Widget _pastingPictures(String event, Widget field) {
+    if (event.isEmpty) return field;
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: (_, e) {
+        final keys = HardwareKeyboard.instance;
+        final paste = e is KeyDownEvent &&
+            ((e.logicalKey == LogicalKeyboardKey.keyV &&
+                    (keys.isControlPressed || keys.isMetaPressed)) ||
+                (e.logicalKey == LogicalKeyboardKey.insert &&
+                    keys.isShiftPressed));
+        if (paste) {
+          unawaited(host.clipboardHasPicture().then((has) {
+            if (has && mounted) _send(event);
+          }));
+        }
+        return KeyEventResult.ignored;
+      },
+      child: field,
+    );
   }
 
   void _send(String id, [String value = '']) {
@@ -1026,15 +1061,16 @@ class _NimAppState extends State<NimApp> {
             onSubmitted: (_) => _send(n.prop('onSubmit', '')),
           );
           final w = _d(n.props['widthRequest'], 0);
-          if (w > 0) return SizedBox(width: w, child: field);
+          final pasted = _pastingPictures(n.prop('onPastePicture', ''), field);
+          if (w > 0) return SizedBox(width: w, child: pasted);
           // No width asked for: take the rest of the row where there is a row
           // to take it from, and otherwise a definite width. NOT Expanded
           // unconditionally — a TextField has no intrinsic width, so in a Wrap
           // it is both illegal and unmeasurable, and that combination is what
           // took the whole screen down rather than one field.
           return axis == _row
-              ? Expanded(child: field)
-              : SizedBox(width: _unsizedEntry, child: field);
+              ? Expanded(child: pasted)
+              : SizedBox(width: _unsizedEntry, child: pasted);
         }
 
       case 'scroll':

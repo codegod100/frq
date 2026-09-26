@@ -80,7 +80,7 @@ func button*(text: string, onClick: string, kind = "default"): Node =
   n("button", %*{"label": text, "kind": kind, "onClick": onClick})
 
 func entry*(key, text, placeholder, onChange: string, width = 0,
-            onSubmit = "", verbatim = false): Node =
+            onSubmit = "", verbatim = false, onPastePicture = ""): Node =
   ## Every entry carries a key, and for the reason the Clojure's comment
   ## gives: a renderer that keeps a text controller per field needs a stable
   ## name for it, and without one the host and the port shared a controller
@@ -97,6 +97,10 @@ func entry*(key, text, placeholder, onChange: string, width = 0,
   # Enter, where the field has something to do with it. A compose box that
   # only sends on a button click is one nobody can type into at speed.
   if onSubmit.len > 0: p["onSubmit"] = %onSubmit
+  # A picture pasted into the field, where the field has somewhere to send
+  # one. Only the host can see a clipboard, so it says when a paste was a
+  # picture rather than text, and the core decides what that means.
+  if onPastePicture.len > 0: p["onPastePicture"] = %onPastePicture
   n("entry", p)
 
 func checkbutton*(text: string, active: bool, onToggled: string): Node =

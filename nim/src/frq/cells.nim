@@ -117,6 +117,9 @@ type
     picking*: bool
       ## Whether the host has been asked for a picture. Taken as it is read,
       ## so a dialog is opened once rather than on every frame.
+    pickFrom*: string
+      ## Where the host is to find it: "file" for a dialog, "clipboard" for
+      ## the picture the reader just pasted.
 
     # The compose bar and its three companions.
     draft*: string

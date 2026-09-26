@@ -233,6 +233,13 @@ suite "the chat screen":
     check "draft" in t.find("entry").mapIt(it.props{"key"}.getStr())
     check "Send" in t.labels("button")
 
+  test "the message box, and only it, takes a pasted picture":
+    let t = cs.chatScreen(s, true)
+    for e in t.find("entry"):
+      let wants = e.props{"onPastePicture"}.getStr()
+      if e.props{"key"}.getStr() == "draft": check wants == "image.paste"
+      else: check wants == ""
+
 import frq/[reducer, glyphs, emoji]
 
 suite "the emoji picker":

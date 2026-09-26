@@ -753,7 +753,7 @@ proc chatScreen*(s: State, connected: bool): Node =
     image("asset:assets/insert-image.png", maxWidth = 36, maxHeight = 36,
           onClick = "image.pick"),
     entry("draft", s.draft, "Message " & name, "draft.change",
-          onSubmit = "send"),
+          onSubmit = "send", onPastePicture = "image.paste"),
     button("Send", "send", "primary"))
 
   vbox(%*{"spacing": 8, "margin": 12, "expand": true},
