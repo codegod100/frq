@@ -84,16 +84,30 @@ suite "saslLines":
 
 suite "step: CAP":
   test "LS asks for what it can use":
-    let m = parseLine(":s CAP * LS :message-tags server-time account-tag echo-message")
+    let m = parseLine(
+      ":s CAP * LS :message-tags server-time account-tag echo-message " &
+      "draft/message-ids")
     let got = step(guest(), caps0(), m)
     check got.send.len == 1
     check got.send[0].startsWith("CAP REQ :")
-    for c in ["message-tags", "server-time", "account-tag", "echo-message"]:
+    for c in ["message-tags", "server-time", "account-tag", "echo-message",
+              "draft/message-ids"]:
       check c in got.send[0]
 
   test "it asks only for what was offered":
     let m = parseLine(":s CAP * LS :server-time")
     check step(guest(), caps0(), m).send[0] == "CAP REQ :server-time"
+
+  test "it waits for every multiline LS fragment":
+    let first = step(guest(), caps0(), caps0(),
+      parseLine(":s CAP * LS * :message-tags account-tag"))
+    check first.send.len == 0
+    let last = step(guest(), first.caps, first.offered,
+      parseLine(":s CAP * LS :server-time echo-message draft/message-ids"))
+    check last.send.len == 1
+    for c in ["message-tags", "account-tag", "server-time", "echo-message",
+              "draft/message-ids"]:
+      check c in last.send[0]
 
   test "nothing on offer ends CAP rather than requesting nothing":
     check step(guest(), caps0(), parseLine(":s CAP * LS :")).send == @["CAP END"]
@@ -104,7 +118,7 @@ suite "step: CAP":
     check "sasl" notin step(guest(), caps0(), m).send[0]
 
   test "a signed-in session does":
-    let m = parseLine(":s CAP * LS :sasl server-time")
+    let m = parseLine(":s CAP * LS :sasl=ATPROTO-CHALLENGE server-time")
     check "sasl" in step(signedIn(), caps0(), m).send[0]
 
   test "ACK with sasl starts the exchange":
