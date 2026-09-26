@@ -5,6 +5,7 @@
                                             check them, put them in the keystore
     freeq_keystore.py around '#room' MSGID  print the raw IRC lines around one
                                             message, tags and all
+    freeq_keystore.py around '#room'        the same for the room's latest lines
 
 `store` is the only thing that writes, and it is for a person at a terminal:
 the password is read with echo off and handed to `secret-tool` on stdin, so it
@@ -45,7 +46,8 @@ DIRECTORY = "https://public.api.bsky.app"
 PLC = "https://plc.directory"
 TIMEOUT = 15
 CAPS = ["message-tags", "server-time", "batch", "draft/chathistory",
-        "account-tag", "echo-message", "freeq.at/act", "sasl"]
+        "account-tag", "echo-message", "freeq.at/act", "draft/multiline",
+        "sasl"]
 
 
 # ------------------------------------------------------------------ keystore
@@ -163,6 +165,7 @@ def around(room: str, msgid: str, limit: int, host: str, port: int,
     irc.send(f"USER {nick.split('.')[0]} 0 * :frq read-only probe")
 
     registered = False
+    in_room = False
     asked = False
     done_at: float | None = None
     irc.sock.settimeout(1.0)
@@ -210,14 +213,14 @@ def around(room: str, msgid: str, limit: int, host: str, port: int,
                 sys.exit("-- freeq refused the sign-in; stopping rather than "
                          "reading as a guest")
             irc.send("CAP END")
-        elif cmd in ("001",) and not registered:
+        elif cmd == "366" and len(params) > 1 and params[1].lower() == room.lower():
+            # freeq joins an account to its rooms before 001, so the room may
+            # be ours before we ask; a JOIN then gets no answer at all.
+            in_room = True
+        elif cmd == "001" and not registered:
             registered = True
-            irc.send(f"JOIN {room}")
-        elif (cmd == "366" and not asked and len(params) > 1
-              and params[1].lower() == room.lower()):
-            asked = True
-            irc.send(f"CHATHISTORY AROUND {room} msgid={msgid} {limit}")
-            done_at = time.time() + settle
+            if not in_room:
+                irc.send(f"JOIN {room}")
         elif (cmd in ("473", "474", "475", "403", "405") and len(params) > 1
               and params[1].lower() == room.lower()):
             # Only for this room: freeq joins an account to its own rooms at
@@ -225,6 +228,12 @@ def around(room: str, msgid: str, limit: int, host: str, port: int,
             sys.exit(f"-- could not join {room}")
         elif cmd == "FAIL" and asked:
             done_at = time.time()
+
+        if registered and in_room and not asked:
+            asked = True
+            irc.send(f"CHATHISTORY AROUND {room} msgid={msgid} {limit}" if msgid
+                     else f"CHATHISTORY LATEST {room} * {limit}")
+            done_at = time.time() + settle
 
     irc.send("QUIT :read-only probe done")
 
@@ -273,7 +282,8 @@ def main() -> None:
     st.add_argument("--handle", help="the account's handle (asked for when omitted)")
     a = sub.add_parser("around", help="print the raw lines around one msgid")
     a.add_argument("room")
-    a.add_argument("msgid")
+    a.add_argument("msgid", nargs="?", default="",
+                   help="omit for the room's latest lines")
     a.add_argument("--limit", type=int, default=10)
     a.add_argument("--host", default="irc.freeq.at")
     a.add_argument("--port", type=int, default=6697)
