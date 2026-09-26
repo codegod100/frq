@@ -1,0 +1,34 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# `test` is the check the ruleset on main requires, and so the thing
+# auto-merge waits for. It runs the two suites that need no Flutter build:
+# the Nim core, and the Dart binding against a freshly built libfrqcore.so.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # tools/toolchain.sh holds the pins, so its hash is the cache key: a
+      # moved pin is a new toolchain, and anything else is the same bytes.
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: .toolchain
+          key: toolchain-${{ runner.os }}-${{ hashFiles('tools/toolchain.sh') }}
+
+      - uses: extractions/setup-just@v2
+
+      - name: Nim core
+        run: just test nim
+
+      - name: Dart binding
+        run: just test dart
