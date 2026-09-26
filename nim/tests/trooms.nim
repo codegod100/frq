@@ -18,14 +18,19 @@ suite "channelList":
     for (n, acc) in [("#alpha", 0'i64), ("#beta", 5'i64), ("#gamma", 9'i64)]:
       var c = initRoom(n); c.accessed = acc; chans[n] = c
 
-  test "most recently opened first":
-    check channelList(chans, "").mapIt(it.name) == @["#gamma", "#beta", "#alpha"]
+  test "alphabetical regardless of when rooms were opened":
+    check channelList(chans, "").mapIt(it.name) == @["#alpha", "#beta", "#gamma"]
 
-  test "never-opened buffers sort under those, by name":
+  test "never-opened and opened buffers share one stable order":
     chans["#aaa"] = initRoom("#aaa")
     chans["#zzz"] = initRoom("#zzz")
     let names = channelList(chans, "").mapIt(it.name)
-    check names == @["#gamma", "#beta", "#aaa", "#alpha", "#zzz"]
+    check names == @["#aaa", "#alpha", "#beta", "#gamma", "#zzz"]
+
+  test "opening a room does not reorder the list":
+    let before = channelList(chans, "").mapIt(it.name)
+    chans["#alpha"].accessed = 20
+    check channelList(chans, "").mapIt(it.name) == before
 
   test "the search box filters, case-insensitively":
     check channelList(chans, "BET").mapIt(it.name) == @["#beta"]

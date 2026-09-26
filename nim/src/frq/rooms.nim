@@ -41,30 +41,25 @@ func lastPreview*(ch: Room): string =
     m.frm & ": " & m.text
 
 func channelList*(channels: OrderedTable[string, Room], search: string): seq[Room] =
-  ## Buffers most recently opened first, filtered by the search box.
+  ## Buffers alphabetically, filtered by the search box.
   ##
-  ## A conversation list is read from the top, and the one you were just in is
-  ## the one you are most likely to want again. Buffers never opened — a DM
-  ## that arrived, a channel someone mentioned — sort under those by name
-  ## rather than jumping the queue.
+  ## Opening a conversation stamps `accessed`, but must not move the button the
+  ## reader just clicked. A stable alphabetical order keeps every target in
+  ## place while moving between rooms; `accessed` remains the independent
+  ## answer to which room should be restored on startup.
   let q = search.strip().toLowerAscii
   for _, ch in channels:
     if q.len == 0 or ch.name.toLowerAscii.contains(q):
       result.add ch
-  result.sort(proc (a, b: Room): int =
-    # Descending by `accessed`, then ascending by name — the juxt in the
-    # Clojure, which negates the first key and leaves the second alone.
-    if a.accessed != b.accessed:
-      cmp(b.accessed, a.accessed)
-    else:
-      cmp(a.name, b.name))
+  result.sort(proc (a, b: Room): int = cmp(a.name, b.name))
 
 func lastVisited*(channels: OrderedTable[string, Room]): string =
   ## The room the reader had open when they last put the client down, or "".
   ##
   ## `accessed` is stamped by `openRoom` and saved beside the name, so the
-  ## largest one is the last room opened — the same key `channelList` sorts
-  ## by, which is why this always agrees with the top of that list.
+  ## largest one is the last room opened. This is deliberately independent of
+  ## `channelList`: restoring the last room must not make that room jump to a
+  ## different position in the list.
   ##
   ## Zero is never-opened rather than long-ago: a channel the server put us
   ## in, or a DM that arrived while we were reading something else. A list

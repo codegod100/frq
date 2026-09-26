@@ -5,7 +5,7 @@
 ## and writes the config of whoever runs it, which would both lie about the
 ## result and cost them their room list.
 
-import std/[json, os, tables, times, unittest]
+import std/[json, os, sequtils, tables, times, unittest]
 
 let sandbox = getTempDir() / "frq-tstore-" & $epochTime()
 putEnv("XDG_CONFIG_HOME", sandbox)
@@ -84,10 +84,10 @@ suite "the rooms file":
     check app.rooms["#a"].accessed == 100
     check app.rooms["#b"].accessed == 300
 
-  test "and the most recently used is still top of the list":
+  test "and restored rooms have the same stable alphabetical order":
     discard saved()
     restore()
-    check channelList(app.rooms, "")[0].name == "#b"
+    check channelList(app.rooms, "").mapIt(it.name) == @["#a", "#b", "carol"]
 
   test "a record with no marker is caught up, not unread from the start":
     # An older frq's file, or one that lost it. The alternative announces a
