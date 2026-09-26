@@ -94,6 +94,12 @@ suite "step: CAP":
               "draft/message-ids"]:
       check c in got.send[0]
 
+  test "it asks for multiline batches, named without the value freeq advertises":
+    let m = parseLine(
+      ":s CAP * LS :message-tags batch draft/multiline=max-bytes=40000,max-lines=100")
+    let got = step(guest(), caps0(), m)
+    check got.send[0] == "CAP REQ :message-tags batch draft/multiline"
+
   test "it asks only for what was offered":
     let m = parseLine(":s CAP * LS :server-time")
     check step(guest(), caps0(), m).send[0] == "CAP REQ :server-time"

@@ -20,7 +20,8 @@ const
     ## reading lines off a WebSocket bridge rather than a 512-byte ircd.
 
   wantedCaps* = ["message-tags", "server-time", "account-tag", "echo-message",
-                 "draft/message-ids", "freeq.at/msgsig"]
+                 "draft/message-ids", "freeq.at/msgsig", "batch",
+                 "draft/multiline"]
     ## What this client can use, and why even a guest negotiates.
     ##
     ## `server-time`: without it a replayed backlog arrives untimed and every
@@ -36,6 +37,11 @@ const
     ## sent ids with plain `message-tags`, but requesting the narrower cap as
     ## well keeps the controls present on conforming relays and costs nothing
     ## when a server does not offer it.
+    ## `batch` and `draft/multiline`: a message with line breaks in it, live
+    ## or replayed, as one batch that `frq/multiline` puts back together.
+    ## Without them freeq sends the fallback — the lines as separate
+    ## messages with the tags on the first only — and every line after the
+    ## first arrives with no msgid, no account and no time.
 
 type
   Step* = object

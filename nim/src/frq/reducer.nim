@@ -16,6 +16,7 @@ import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
            atproto, handshake, textruns, members, msgsig, profile, store,
            profilefetch, edits]
+import frq/multiline as ml
 import frq/links as lk
 import frq/linkfetch as lf
 import frq/conn as tr
@@ -129,6 +130,11 @@ proc restorePrefs() =
 proc rememberPrefs() =
   discard savePrefs({"hideJoinPart": app.hideJoinPart,
                      "hideChatList": app.hideChatList}.toTable)
+
+var
+  multilines: ml.Assembler
+    ## The `draft/multiline` batches this connection has open — see
+    ## `frq/multiline`.
 
 var
   roomsSavedAt: int64 = 0
@@ -993,6 +999,7 @@ proc drain*() =
       # server expects. What comes back is answered by `handshake.step`.
       caps = initHashSet[string]()
       offeredCaps = initHashSet[string]()
+      multilines.reset()
       send("CAP LS 302")
       send("NICK " & app.formNick)
       send("USER " & app.formNick & " 0 * :frq")
@@ -1008,7 +1015,11 @@ proc drain*() =
   while true:
     let (ok, line) = tr.tryLine()
     if not ok: break
-    let p = parseLine(line)
+    # A multiline batch is held until it closes and comes out as one
+    # message; at most one line comes out of any line that goes in.
+    let whole = multilines.feed(parseLine(line))
+    if whole.len == 0: continue
+    let p = whole[0]
 
     # PING is the transport's housekeeping and the screens have no opinion.
     if p.command == "PING":

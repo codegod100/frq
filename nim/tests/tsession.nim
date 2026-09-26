@@ -458,6 +458,31 @@ suite "unsending a line":
     check app.rooms["#freeq"].messageById("line-1").get.task.id == "task-1"
     check app.rooms["#freeq"].messageById("line-2").get.task.id == ""
 
+  test "a multiline message is one row, with its sender's id, face and time":
+    # What freeq replayed for zapnap in #freeq-dev: the fallback put every
+    # line after the first in a row of its own with no msgid, account or
+    # time — no reply chip, no face, and stamped "now", so the paragraphs
+    # sat below the room's real latest lines.
+    joined("#freeq-dev")
+    say(":s BATCH +ch1 chathistory #freeq-dev",
+        "@batch=ch1;msgid=m1;time=2026-09-25T13:20:50.000Z;" &
+          "account=did:plc:k2n3e2vsihf3farequ44t5j7 " &
+          ":zapnap BATCH +ml1 draft/multiline #freeq-dev",
+        "@batch=ml1 :zapnap PRIVMSG #freeq-dev :Hmm yea kinda sorta agree.",
+        "@batch=ml1 :zapnap PRIVMSG #freeq-dev :",
+        "@batch=ml1 :zapnap PRIVMSG #freeq-dev :So yeah like redundancy.",
+        "@batch=ch1 :s BATCH -ml1",
+        "@batch=ch1;msgid=m2;time=2026-09-25T14:12:29.000Z " &
+          ":zapnap PRIVMSG #freeq-dev :the latest line",
+        ":s BATCH -ch1")
+    let r = app.rooms["#freeq-dev"]
+    let said = r.messages.filterIt(not it.system)
+    check said.len == 2
+    check said[0].id == "m1"
+    check said[0].text == "Hmm yea kinda sorta agree.\n\nSo yeah like redundancy."
+    check said[0].account == "did:plc:k2n3e2vsihf3farequ44t5j7"
+    check said[^1].text == "the latest line"
+
   test "a later move on a task is a card, named by the task and not the event":
     # freeq's companion carries the task id in `+freeq.at/ref`, and every
     # event after the opener has an id of its own. Looking the reference up
