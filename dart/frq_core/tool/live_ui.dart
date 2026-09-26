@@ -6,7 +6,13 @@
 ///
 /// Not in any test suite: it needs a network and a running freeq.
 ///
-///   just nim-live
+/// With FRQ_TEST_HANDLE and FRQ_TEST_APP_PASSWORD set it signs in with that
+/// account's app password rather than connecting as a guest, and checks that
+/// freeq took the sign-in — a refused SASL carries on as a guest, which looks
+/// like a success from the chats screen. `tools/set-test-account-github-secrets`
+/// puts the pair where `.github/workflows/live.yml` reads it.
+///
+///   just test live
 import 'dart:io';
 import 'package:frq_core/frq_core.dart' as core;
 
@@ -22,11 +28,20 @@ Future<void> main(List<String> args) async {
       ? args[1]
       : 'frq-ui-${DateTime.now().millisecondsSinceEpoch % 10000}';
 
+  final handle = Platform.environment['FRQ_TEST_HANDLE'] ?? '';
+  final password = Platform.environment['FRQ_TEST_APP_PASSWORD'] ?? '';
+  final signedIn = handle.isNotEmpty && password.isNotEmpty;
+
   core.resetUi();
-  print('→ $host as $nick');
+  print(signedIn ? '→ $host as $handle, by app password' : '→ $host as $nick');
 
   core.dispatch('nick.change', nick);
   core.dispatch('host.change', host);
+  if (signedIn) {
+    core.dispatch('mode.app-password');
+    core.dispatch('handle.change', handle);
+    core.dispatch('app-password.change', password);
+  }
   var tree = core.dispatch('connect');
 
   final deadline = DateTime.now().add(const Duration(seconds: 25));
@@ -46,6 +61,15 @@ Future<void> main(List<String> args) async {
     exit(1);
   }
   print('✓ chats screen: ${labels(tree, "title").first}');
+  // Signed in, the nick is whatever handle the PDS answered with — the same
+  // name, maybe cased differently from what was typed.
+  final me = labels(tree, 'title')
+      .firstWhere((l) => l.startsWith('Logged in as'))
+      .substring('Logged in as '.length);
+  if (signedIn && me.toLowerCase() != handle.toLowerCase()) {
+    print('✗ logged in as $me, not $handle');
+    exit(1);
+  }
 
   // The room list, from the real server. Waited for rather than read on the
   // instant we land: registration finishes before the JOIN echo that creates
@@ -110,6 +134,22 @@ Future<void> main(List<String> args) async {
   } else {
     print('✗ sent line appears $copies times');
     exit(1);
+  }
+
+  // Whether freeq took the sign-in. The echo of our own line is the proof: a
+  // signed-in sender's line carries an `account` tag, and the name on it then
+  // opens the profile by DID rather than by nick.
+  if (signedIn) {
+    final opens = find(tree, 'button')
+        .where((b) => b.prop('label', '') == me)
+        .map((b) => b.prop('onClick', ''))
+        .toList();
+    final did = opens.firstWhere((o) => o.contains(':did:'), orElse: () => '');
+    if (did.isEmpty) {
+      print('✗ freeq did not see $me as signed in (echo opens $opens)');
+      exit(1);
+    }
+    print('✓ freeq knows $me as ${did.substring(did.indexOf(':did:') + 1)}');
   }
 
   core.dispatch('disconnect');
