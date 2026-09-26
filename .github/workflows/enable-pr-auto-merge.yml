@@ -7,58 +7,37 @@ on:
 # This workflow does not check out or run pull-request code. Its only job is
 # to queue the PR for GitHub's native auto-merge, which waits for the branch's
 # required reviews and status checks before merging.
+#
+# That only works because main requires the `test` check (a ruleset, not a
+# file here). Without a required check, the one pending check on a new PR is
+# this job itself: GitHub calls the PR "unstable" for it and refuses to queue
+# auto-merge, so the job waits on itself and never gets anywhere.
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
   enable:
-    if: github.event.pull_request.draft == false
+    # Only branches pushed to this repository. pull_request_target fires for
+    # forks as well, and a fork's PR that passed `test` would otherwise merge
+    # itself and deploy.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Queue auto-merge
         uses: actions/github-script@v7
         with:
           script: |
-            const mutation = `mutation EnableAutoMerge($pullRequestId: ID!) {
-              enablePullRequestAutoMerge(input: {
-                pullRequestId: $pullRequestId,
-                mergeMethod: SQUASH
-              }) {
-                pullRequest { number }
-              }
-            }`;
-            const variables = {
-              pullRequestId: context.payload.pull_request.node_id,
-            };
-
-            // A synchronize event can reach this workflow before the checks
-            // for the new head SHA are registered. During that window GitHub
-            // reports the previous head's failure as "unstable" and refuses
-            // to enable auto-merge. Give the new check suite time to replace
-            // that stale state rather than silently abandoning this attempt.
-            const attempts = 20;
-            for (let attempt = 1; attempt <= attempts; attempt += 1) {
-              try {
-                await github.graphql(mutation, variables);
-                return;
-              } catch (error) {
-                const messages = (error.errors || [error])
-                  .map(({ message }) => message || '');
-                const unstable = messages.some((message) =>
-                  message.toLowerCase().includes('unstable status')
-                );
-                if (!unstable) throw error;
-
-                if (attempt === attempts) {
-                  core.notice(
-                    'Auto-merge was not queued because this pull request still has failing checks.',
-                  );
-                  return;
+            await github.graphql(
+              `mutation EnableAutoMerge($pullRequestId: ID!) {
+                enablePullRequestAutoMerge(input: {
+                  pullRequestId: $pullRequestId,
+                  mergeMethod: SQUASH
+                }) {
+                  pullRequest { number }
                 }
-                core.info(
-                  `Checks are temporarily unstable; retrying auto-merge (${attempt}/${attempts}).`,
-                );
-                await new Promise((resolve) => setTimeout(resolve, 15000));
-              }
-            }
+              }`,
+              { pullRequestId: context.payload.pull_request.node_id },
+            );
