@@ -107,8 +107,16 @@ suite "the signer":
     # ed25519:<kid>:<sig>
     let parts = tags["+freeq.at/sig"].split(':')
     check parts.len == 3
-    check parts[1].len == 16
+    check parts[1].len == 22
     check parts[2].len == 86
+
+  test "a key is named the way freeq names it":
+    # `sigtag::derive_kid`: base64url of the first sixteen bytes of the
+    # SHA-256 of the public key. Any other name is one the server has no key
+    # on file for, and every signed edit, delete and reaction is refused.
+    var pub: array[32, byte]
+    for i in 0 ..< 32: pub[i] = byte(i)
+    check kidOf(pub) == "Yw3NKWbEM2aRElRIu7JbTw"
 
   test "the signature verifies against the canonical form it covers":
     # Rebuilt here the way the server rebuilds it, which is the only check

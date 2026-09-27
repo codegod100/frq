@@ -43,6 +43,18 @@ proc b64url*(bs: openArray[byte]): string =
       result.add b64urlAlphabet[(v shr (6 * (3 - k))) and 0x3F]
     i += 3
 
+proc kidOf*(public: openArray[byte]): string =
+  ## How freeq names a key: base64url of the first sixteen bytes of the
+  ## SHA-256 of its public half — `sigtag::derive_kid` on the server.
+  ##
+  ## It used to be the first sixteen characters of the public key itself,
+  ## which the server never matches. Every signature then named a key it had
+  ## "no key on file" for, and an edit, a delete or a reaction from a
+  ## signed-in reader was refused with `SIGNATURE_REQUIRED` — applied on this
+  ## screen and nowhere else.
+  let digest = sha256(public)
+  b64url(digest[0 ..< 16])
+
 proc forget*() =
   ## Drop the session key.
   signer = Signer()
@@ -63,7 +75,7 @@ proc generate*(did: string): string =
     trace("msgsig", "no signing in this build; lines go out unsigned")
     return ""
   signer = Signer(has: true, did: did, key: key)
-  signer.kid = b64url(signer.key.public)[0 ..< 16]
+  signer.kid = kidOf(signer.key.public)
   trace("msgsig", "key for " & did & " kid=" & signer.kid)
   b64url(signer.key.public)
 
