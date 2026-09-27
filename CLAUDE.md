@@ -117,7 +117,7 @@ desktop is only the host: `nim/web/frq/*.nim` shadows `nim/src/frq/*.nim` by
 search path (`--path:../src --path:.`, resolved from `nim/web`; later wins),
 so `frq/conn` is a queue a
 WebSocket fills rather than two socket threads, `frq/store` is localStorage,
-and `frq/crypto` says plainly that it cannot sign. The shared code above them
+and `frq/crypto` signs through TweetNaCl rather than OpenSSL. The shared code above them
 imports the same names either way and never learns which host it is on. Dart
 does the same thing one layer up, in `dart/frq_core/lib/src/host.dart`.
 
@@ -143,13 +143,17 @@ are gone. The APK went with them and has not come back — it wants
 `libfrqcore.so` cross-compiled for Android's ABIs — but the web target has,
 by a different road than the one that was expected: `just build web`.
 
-Three things the web build does not do, all of them written down where they
-are done rather than only here. It cannot sign a message, because Ed25519 in
-a browser is asynchronous and every signature here is wanted inline, so a
-reader is in a guest's position for reactions and edits. It has no
-app-password tab, because that wants a blocking call to the reader's own PDS.
-And it does not keep a broker token, because `localStorage` is readable by
-every script the origin runs.
+Two things the web build does not do, both of them written down where they
+are done rather than only here. It has no app-password tab, because that
+wants a blocking call to the reader's own PDS. And it does not keep a broker
+token, because `localStorage` is readable by every script the origin runs.
+
+It used to be three: it could not sign, because WebCrypto's Ed25519 is a
+Promise and every signature here is wanted inline, so a signed-in reader was
+refused every edit, delete and reaction. It signs now with TweetNaCl,
+vendored as `flutter/web/nacl-fast.min.js` — synchronous, one file, no
+bundler — and `nim/web/tcrypto.nim` checks it under node, since the Nim
+suite builds for C and cannot see the browser's crypto at all.
 
 Two modules were never ported and are gone rather than moved: `frq.profile`
 (the Bluesky profile behind a nick) and `frq.replies` (asking freeq what a

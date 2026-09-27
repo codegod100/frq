@@ -65,6 +65,14 @@
     }
   </script>
 
+  <!--
+    TweetNaCl 1.0.3, `nacl-fast.min.js` from the npm tarball, unmodified
+    (sha256 3ec535c004aeeb225785d8e93fb33bf99f52e399bd7dfc01969b5629baea5131).
+    The core signs with it: WebCrypto's Ed25519 is a Promise, and a signature
+    here is wanted on the line being sent. Before the core, so the key it
+    mints at sign-in is a real one — see nim/web/frq/crypto.nim.
+  -->
+  <script src="nacl-fast.min.js"></script>
   <script src="frq_core.js"></script>
   <script src="frq_dpop.js"></script>
   <script src="frq_oauth.js"></script>

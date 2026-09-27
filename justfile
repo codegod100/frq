@@ -105,6 +105,11 @@ test suite="all" *args:
                 just _flutter layout test ;;
         nim)    just _nim-test "$@" ;;
         web)    just _nim-js
+                "{{tc}}" exec -- bash -euo pipefail -c '
+                    cd nim
+                    nim js -d:nodejs --hints:off --path:../src --path:. \
+                        --out:../build/web/tcrypto.js web/tcrypto.nim'
+                node build/web/tcrypto.js
                 node nim/web/test/smoke.js build/web/frq_core.js
                 node nim/web/test/session.js
                 exec python3 nim/web/test/serve.py ;;
