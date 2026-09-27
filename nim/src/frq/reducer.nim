@@ -55,6 +55,13 @@ var pendingEdits: seq[PendingEdit]
   ## back nor refused. freeq's `FAIL EDIT` names no msgid, but it answers in
   ## the order it was asked, so a refusal belongs to the oldest of these.
 
+var pendingMutations: seq[PendingMutation]
+  ## Deletes and reactions sent and shown, oldest first, whose PING has not
+  ## come back. See `edits.PendingMutation` for why a PING.
+var mutationCount: int
+
+const mutationPing = "frq-mut-"
+
 proc setError(msg: string) =
   app.error = msg
   app.hasError = true
@@ -379,14 +386,60 @@ proc signIn(): bool =
       app.connecting = false
       false
 
+proc forgetPending*() =
+  ## Nothing sent on the last connection will be answered on this one.
+  pendingEdits.setLen 0
+  pendingMutations.setLen 0
+
+proc awaitAnswer(p: PendingMutation) =
+  ## Hold a delete or reaction until the server has had its say, and ask it
+  ## to say when it has.
+  pendingMutations.add p
+  send("PING :" & p.token)
+
+proc mutationToken(): string =
+  inc mutationCount
+  mutationPing & $mutationCount
+
+proc sendReaction(mid, emoji: string) =
+  ## A reaction added or taken away, on whichever the reader does not have.
+  ##
+  ## Signed where there is a key. freeq answers an unsigned mutation from an
+  ## account with FAIL TAGMSG SIGNATURE_REQUIRED; a guest has no key and the
+  ## server asks one for nothing.
+  let m = app.currentRoom.messageById(mid)
+  let on = if m.isSome: not m.get.mine(emoji, app.formNick) else: true
+  var tags = "+draft/react=" & emoji & ";+draft/reply=" & mid
+  for k, v in mutationTags(if on: "react" else: "unreact",
+                           app.current, mid, emoji,
+                           peerDid(app.currentRoom, app.formNick), nowMs()):
+    tags.add ";" & k & "=" & v
+  send("@" & tags & " TAGMSG " & app.current)
+  app.rooms.updateReaction(app.current, mid, emoji, app.formNick, on)
+  if m.isSome:
+    awaitAnswer(PendingMutation(kind: mkReact, token: mutationToken(),
+                                room: app.current, id: mid, emoji: emoji,
+                                nick: app.formNick, on: on))
+
+proc refused(i: int, why, code: string) =
+  ## A delete or reaction the server said no to: undone here, and said.
+  let p = pendingMutations[i]
+  pendingMutations.delete(i)
+  discard app.rooms.undoMutation(p)
+  let what = case p.kind
+             of mkDelete: "Your message was not deleted"
+             of mkReact:
+               if p.on: "Your reaction was not added"
+               else: "Your reaction was not removed"
+  setError(what & (if why.len > 0: " — " & why else: "") & " (" & code & ").")
+
 proc openSocket() =
   ## The connection itself, with whoever we are already settled.
   ##
   ## Split from `connectNow` for the browser handoff: that path has signed in
   ## already, on a token that is single-use, and running `signIn` again would
   ## spend a broker round trip replacing a session it is holding.
-  # Nothing sent on the last connection will be answered on this one.
-  pendingEdits.setLen 0
+  forgetPending()
   app.connecting = true
   app.status = "Connecting to " & app.formHost & ":" & app.formPort &
                (if app.formTls: " over TLS" else: "") & "…"
@@ -695,11 +748,14 @@ proc dispatch*(event: JsonNode) =
                                nowMs()):
         tags.add ";" & k & "=" & v
       send("@" & tags & " TAGMSG " & app.current)
-      # Taken off the screen now rather than when the echo lands. The server
-      # relays the TAGMSG back and `TAGMSG` below would remove it again, to
-      # no effect -- but a reader who has just pressed Delete should not
-      # watch the line sit there while a round trip happens.
-      discard app.rooms.applyDelete(app.current, mid)
+      # Taken off the screen now: freeq relays the delete to everybody else
+      # in the room but never back to the one who asked, so there is no echo
+      # to wait for. The line is kept aside until the server has answered,
+      # so a refusal can put it back.
+      let (before, found) = app.rooms.beforeDelete(app.current, mid,
+                                                   mutationToken())
+      if app.rooms.applyDelete(app.current, mid) and found:
+        awaitAnswer(before)
     app.editing = EditTarget()
     app.draft = ""
 
@@ -752,17 +808,7 @@ proc dispatch*(event: JsonNode) =
   of "react.pick":
     # Picking is reacting, and then the panel has done its job.
     if app.reacting.has and arg.len > 0:
-      let mid = app.reacting.id
-      let m = app.currentRoom.messageById(mid)
-      let on = if m.isSome: not m.get.mine(arg, app.formNick) else: true
-      var tags = "+draft/react=" & arg & ";+draft/reply=" & mid
-      for k, v in mutationTags(if on: "react" else: "unreact",
-                               app.current, mid, arg,
-                               peerDid(app.currentRoom, app.formNick),
-                               nowMs()):
-        tags.add ";" & k & "=" & v
-      send("@" & tags & " TAGMSG " & app.current)
-      app.rooms.updateReaction(app.current, mid, arg, app.formNick, on)
+      sendReaction(app.reacting.id, arg)
     app.reacting = ReactTarget()
     app.emojiSearch = ""
     app.emojiGroup = ""
@@ -772,19 +818,7 @@ proc dispatch*(event: JsonNode) =
     # split is enough.
     let (mid, emoji) = split2(arg)
     if mid.len > 0 and emoji.len > 0:
-      let m = app.currentRoom.messageById(mid)
-      let on = if m.isSome: not m.get.mine(emoji, app.formNick) else: true
-      # Signed where there is a key. freeq answers an unsigned mutation from
-      # an account with FAIL TAGMSG SIGNATURE_REQUIRED; a guest has no key and
-      # the server asks one for nothing.
-      var tags = "+draft/react=" & emoji & ";+draft/reply=" & mid
-      for k, v in mutationTags(if on: "react" else: "unreact",
-                               app.current, mid, emoji,
-                               peerDid(app.currentRoom, app.formNick),
-                               nowMs()):
-        tags.add ";" & k & "=" & v
-      send("@" & tags & " TAGMSG " & app.current)
-      app.rooms.updateReaction(app.current, mid, emoji, app.formNick, on)
+      sendReaction(mid, emoji)
 
   of "goto":
     app.jumpTo = arg
@@ -1417,11 +1451,11 @@ proc drain*() =
     of "FAIL":
       # IRCv3 standard replies: `FAIL <command> <code> [context…] :<why>`.
       #
-      # An edit is the one handled here, because it is the one this client
-      # has already shown as done: the new wording went on screen when Send
-      # was pressed. A refusal takes it back off and says why, in freeq's own
-      # words — `SIGNATURE_REQUIRED` and `AUTHOR_MISMATCH` are different
-      # problems, and "your edit failed" would read the same for both.
+      # Edits, deletes and reactions are the ones handled here, because they
+      # are what this client has already shown as done: the change went on
+      # screen when it was asked for. A refusal takes it back and says why,
+      # in freeq's own words — `SIGNATURE_REQUIRED` and `AUTHOR_MISMATCH` are
+      # different problems, and "it failed" would read the same for both.
       if p.params.len >= 2 and p.params[0] == "EDIT":
         if pendingEdits.len > 0:
           let pe = pendingEdits[0]
@@ -1431,7 +1465,29 @@ proc drain*() =
         setError("Your edit was not saved" &
                  (if why.len > 0: " — " & why else: "") &
                  " (" & p.params[1] & ").")
+      # Deletes and reactions. A signature refusal is `FAIL TAGMSG`, whichever
+      # of the two it was; authorship and a missing line are `FAIL DELETE`.
+      # Either way it is for the oldest still waiting: anything older has had
+      # its PING answered already.
+      elif p.params.len >= 2 and p.params[0] in ["TAGMSG", "DELETE"]:
+        var i = -1
+        for j, pm in pendingMutations:
+          if p.params[0] == "TAGMSG" or pm.kind == mkDelete:
+            i = j
+            break
+        if i >= 0:
+          refused(i, if p.params.len >= 3: p.params[^1].strip() else: "",
+                  p.params[1])
       trace("fail", $p.params)
+
+    of "PONG":
+      # One of ours, after a delete or a reaction: everything sent up to it
+      # has been answered, and whatever was not refused was taken.
+      if p.params.len >= 1 and p.params[^1].startsWith(mutationPing):
+        for i, pm in pendingMutations:
+          if pm.token == p.params[^1]:
+            pendingMutations.delete(0 .. i)
+            break
 
     of "432", "433", "436":
       # Nickname refused — the likeliest way a guest connect fails and the

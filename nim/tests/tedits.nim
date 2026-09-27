@@ -1,7 +1,7 @@
 ## A revision folded into the buffer, and a line taken out of it.
 
 import std/[tables, unittest]
-import frq/[model, edits]
+import frq/[model, edits, reactions]
 
 proc roomWith(msgs: varargs[Message]): OrderedTable[string, Room] =
   var r = initRoom("#test")
@@ -68,3 +68,38 @@ suite "a refused edit":
     check not rooms.restoreEdit(PendingEdit(room: "#test", id: "m9"))
     check not rooms.restoreEdit(PendingEdit(room: "#nope", id: "m1"))
     discard before
+
+suite "a refused delete or reaction":
+  test "a deleted line goes back where it was":
+    var rooms = roomWith(Message(id: "m1", frm: "ann", text: "one"),
+                         Message(id: "m2", frm: "ann", text: "two"),
+                         Message(id: "m3", frm: "bob", text: "three"))
+    let (p, ok) = rooms.beforeDelete("#test", "m2", "t1")
+    check ok
+    check rooms.applyDelete("#test", "m2")
+    check rooms.undoMutation(p)
+    check rooms["#test"].messages.len == 3
+    check rooms["#test"].messages[1].text == "two"
+
+  test "and is not put back twice":
+    var rooms = roomWith(Message(id: "m1", frm: "ann", text: "one"))
+    let (p, _) = rooms.beforeDelete("#test", "m1", "t1")
+    check not rooms.undoMutation(p)       # never went
+    check rooms["#test"].messages.len == 1
+
+  test "a line that is not there has nothing to take":
+    var rooms = roomWith(Message(id: "m1", frm: "ann", text: "one"))
+    let (_, ok) = rooms.beforeDelete("#test", "m9", "t1")
+    check not ok
+
+  test "a reaction added is taken away again, and one removed comes back":
+    var rooms = roomWith(Message(id: "m1", frm: "bob", text: "hi"))
+    rooms.updateReaction("#test", "m1", "👍", "ann", true)
+    check rooms.undoMutation(PendingMutation(kind: mkReact, room: "#test",
+      id: "m1", emoji: "👍", nick: "ann", on: true))
+    check not rooms["#test"].messages[0].mine("👍", "ann")
+    rooms.updateReaction("#test", "m1", "🎉", "ann", true)
+    rooms.updateReaction("#test", "m1", "🎉", "ann", false)
+    check rooms.undoMutation(PendingMutation(kind: mkReact, room: "#test",
+      id: "m1", emoji: "🎉", nick: "ann", on: false))
+    check rooms["#test"].messages[0].mine("🎉", "ann")

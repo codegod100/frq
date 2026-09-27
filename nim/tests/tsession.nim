@@ -10,7 +10,7 @@
 ## reads what went out. No socket at either end.
 
 import std/[json, options, sequtils, strutils, tables, unittest]
-import frq/[cells, model, profile, reducer, rooms]
+import frq/[cells, model, profile, reactions, reducer, rooms]
 import frq/conn as tr
 
 proc sent(): seq[string] =
@@ -26,6 +26,7 @@ proc say(lines: varargs[string]) =
 
 proc reset() =
   app = initState()
+  forgetPending()
   app.formNick = "alice"
   discard sent()
 
@@ -417,9 +418,11 @@ suite "unsending a line":
     dispatch(%*{"id": "edit.start:m1"})
     dispatch(%*{"id": "edit.delete"})
     let out1 = sent()
-    check out1.len == 1
+    check out1.len == 2
     check "+draft/delete=m1" in out1[0]
     check " TAGMSG #freeq" in out1[0]
+    # And a PING behind it, whose answer says the server has had its say.
+    check out1[1].startsWith("PING :frq-mut-")
 
   test "and the line goes, without waiting for the echo":
     dispatch(%*{"id": "edit.start:m1"})
@@ -596,3 +599,77 @@ suite "an edit the server refuses":
     say("@+draft/edit=m1;msgid=m2 :alice!a@h PRIVMSG #freeq :hello")
     say(":server FAIL EDIT AUTHOR_MISMATCH :You can only edit your own messages")
     check app.rooms["#freeq"].messageById("m1").get.text == "hello"
+
+suite "a delete or reaction the server refuses":
+  setup:
+    reset()
+    joined("#freeq")
+    dispatch(%*{"id": "room.open:#freeq"})
+    say("@msgid=m1 :alice!a@h PRIVMSG #freeq :first",
+        "@msgid=m2 :alice!a@h PRIVMSG #freeq :second",
+        "@msgid=m3 :bob!b@h PRIVMSG #freeq :third")
+    discard sent()
+
+  proc pingOf(lines: seq[string]): string =
+    for l in lines:
+      if l.startsWith("PING :"): return l["PING :".len .. ^1]
+
+  test "a refused delete puts the line back where it was":
+    dispatch(%*{"id": "edit.delete:m2"})
+    let token = pingOf(sent())
+    check app.rooms["#freeq"].messageById("m2").isNone
+    say(":server FAIL TAGMSG SIGNATURE_REQUIRED " &
+        ":A signed request is required to modify messages on this server")
+    let r = app.rooms["#freeq"]
+    check r.indexById("m2") == r.indexById("m1") + 1
+    check r.messages[r.indexById("m2")].text == "second"
+    check "Your message was not deleted" in app.error
+    check "SIGNATURE_REQUIRED" in app.error
+    # Its PING still comes back, and finds nothing left to settle.
+    say(":server PONG server :" & token)
+    check app.rooms["#freeq"].messageById("m2").isSome
+
+  test "so does one refused as somebody else's":
+    dispatch(%*{"id": "edit.delete:m3"})
+    discard sent()
+    say(":server FAIL DELETE AUTHOR_MISMATCH :You can only delete your own messages")
+    check app.rooms["#freeq"].messageById("m3").isSome
+    check "You can only delete your own messages" in app.error
+
+  test "a delete whose PING comes back stays deleted":
+    dispatch(%*{"id": "edit.delete:m2"})
+    say(":server PONG server :" & pingOf(sent()))
+    # A refusal after that belongs to something else, not to this.
+    say(":server FAIL DELETE MESSAGE_NOT_FOUND :Original message not found")
+    check app.rooms["#freeq"].messageById("m2").isNone
+    check not app.hasError
+
+  test "a refused reaction is taken off again":
+    dispatch(%*{"id": "react.toggle:m3:👍"})
+    discard sent()
+    check app.rooms["#freeq"].messageById("m3").get.mine("👍", "alice")
+    say(":server FAIL TAGMSG SIGNATURE_INVALID " &
+        ":That signature does not verify against the key it names")
+    check not app.rooms["#freeq"].messageById("m3").get.mine("👍", "alice")
+    check "Your reaction was not added" in app.error
+
+  test "a refused un-reaction puts it back":
+    dispatch(%*{"id": "react.toggle:m3:👍"})
+    say(":server PONG server :" & pingOf(sent()))
+    dispatch(%*{"id": "react.toggle:m3:👍"})
+    discard sent()
+    check not app.rooms["#freeq"].messageById("m3").get.mine("👍", "alice")
+    say(":server FAIL TAGMSG SIGNATURE_REQUIRED :A signed request is required")
+    check app.rooms["#freeq"].messageById("m3").get.mine("👍", "alice")
+    check "Your reaction was not removed" in app.error
+
+  test "a refusal is for the oldest still waiting":
+    dispatch(%*{"id": "react.toggle:m3:👍"})
+    let first = pingOf(sent())
+    dispatch(%*{"id": "edit.delete:m2"})
+    discard sent()
+    say(":server PONG server :" & first)
+    say(":server FAIL TAGMSG SIGNATURE_REQUIRED :A signed request is required")
+    # The reaction was answered; the delete is what was refused.
+    check app.rooms["#freeq"].messageById("m3").get.mine("👍", "alice")
+    check app.rooms["#freeq"].messageById("m2").isSome
