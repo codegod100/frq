@@ -3,7 +3,7 @@
 ## From `common/frq/edits.cljc`.
 
 import std/[strutils, tables]
-import frq/[model]
+import frq/[model, reactions]
 
 type
   EditResult* = enum
@@ -98,3 +98,52 @@ proc restoreEdit*(rooms: var OrderedTable[string, Room],
     r.messages[i].edited = p.edited
     result = true
   rooms[p.room] = r
+
+type
+  MutationKind* = enum
+    mkDelete = "delete"
+    mkReact = "react"
+
+  PendingMutation* = object
+    ## A delete or a reaction that is on this screen and not yet known to be
+    ## on the server's, with what it takes to undo it.
+    ##
+    ## freeq never echoes a delete to the one who sent it, and a reaction's
+    ## echo says nothing a refusal would not also leave unsaid, so neither has
+    ## an "accepted" to wait for. What there is instead is order: the server
+    ## answers a connection's lines one at a time, so a `PING` sent after the
+    ## mutation comes back after any `FAIL` for it. `token` is that PING's.
+    token*: string
+    room*, id*: string
+    case kind*: MutationKind
+    of mkDelete:
+      line*: Message   ## the line as it was, to put back
+      at*: int         ## and where it stood
+    of mkReact:
+      emoji*, nick*: string
+      on*: bool        ## what was asked: added, or taken away
+
+proc beforeDelete*(rooms: OrderedTable[string, Room], room, msgid,
+                   token: string): (PendingMutation, bool) =
+  ## The line a delete is about to take, and where it was.
+  if not rooms.hasKey(room): return
+  let i = rooms[room].indexById(msgid)
+  if i < 0: return
+  (PendingMutation(kind: mkDelete, token: token, room: room, id: msgid,
+                   line: rooms[room].messages[i], at: i), true)
+
+proc undoMutation*(rooms: var OrderedTable[string, Room],
+                   p: PendingMutation): bool =
+  ## Take back a delete or a reaction the server refused.
+  if not rooms.hasKey(p.room): return false
+  case p.kind
+  of mkDelete:
+    var r = rooms[p.room]
+    # Somebody else may have put it back first — a replay, a reconnect.
+    if r.indexById(p.id) >= 0: return false
+    r.messages.insert(p.line, min(p.at, r.messages.len))
+    rooms[p.room] = r
+    true
+  of mkReact:
+    rooms.updateReaction(p.room, p.id, p.emoji, p.nick, not p.on)
+    true
