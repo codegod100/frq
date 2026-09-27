@@ -64,8 +64,8 @@ proc generate*(did: string): string =
   ## Mint a key for this connection and answer with its public half, base64url
   ## — which is what goes out as `MSGSIG <pub>`.
   ##
-  ## A key with no public half is a build that cannot sign — the web one, so
-  ## far, where Ed25519 is asynchronous and this is not. Nothing is claimed in
+  ## A key with no public half is a build that cannot sign — the web one, if
+  ## the page is missing the TweetNaCl it signs with. Nothing is claimed in
   ## that case: `signedIn` stays false, no MSGSIG goes out, and the server
   ## treats these lines as it treats a guest's. Better than announcing a key
   ## and then failing to sign with it.
