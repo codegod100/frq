@@ -50,6 +50,11 @@ var
     ## that failed. Cleared by Disconnect, so a reader who asked to leave is
     ## not dialled back in.
 
+var pendingEdits: seq[PendingEdit]
+  ## Edits sent and shown, oldest first, that the server has neither echoed
+  ## back nor refused. freeq's `FAIL EDIT` names no msgid, but it answers in
+  ## the order it was asked, so a refusal belongs to the oldest of these.
+
 proc setError(msg: string) =
   app.error = msg
   app.hasError = true
@@ -380,6 +385,8 @@ proc openSocket() =
   ## Split from `connectNow` for the browser handoff: that path has signed in
   ## already, on a token that is single-use, and running `signIn` again would
   ## spend a broker round trip replacing a session it is holding.
+  # Nothing sent on the last connection will be answered on this one.
+  pendingEdits.setLen 0
   app.connecting = true
   app.status = "Connecting to " & app.formHost & ":" & app.formPort &
                (if app.formTls: " over TLS" else: "") & "…"
@@ -458,7 +465,13 @@ proc sendDraft() =
     # Rewritten on screen now rather than when the echo lands, and — more to
     # the point — *instead* of the local echo below, which would leave the
     # original sitting above a copy of itself with the new wording.
-    discard app.rooms.applyEdit(app.current, mid, app.formNick, line, "")
+    #
+    # What it said before is kept until the server answers, so a refusal can
+    # put it back rather than leave this screen alone in believing it.
+    let (before, found) = app.rooms.beforeEdit(app.current, mid)
+    if app.rooms.applyEdit(app.current, mid, app.formNick, line, "") ==
+       erApplied and found:
+      pendingEdits.add before
     app.editing = EditTarget()
     app.draft = ""
     app.attachment = Attachment()
@@ -1166,6 +1179,13 @@ proc drain*() =
           let (v, ok2) = tagValue(p.tags, "+edit")
           if ok2: (v, true) else: tagValue(p.tags, "+draft/edit")
         if isEdit and editOf.len > 0:
+          # Our own edit, echoed: the server took it, and there is nothing
+          # left to put back.
+          if who == app.formNick:
+            for i, pe in pendingEdits:
+              if pe.room == room and pe.id == editOf:
+                pendingEdits.delete(i)
+                break
           if app.rooms.applyEdit(room, editOf, who, p.params[^1], msgid) ==
              erAbsent:
             # The original is older than the backlog we hold, so show the
@@ -1393,6 +1413,25 @@ proc drain*() =
       if p.params.len >= 2:
         note(if app.current.len > 0: app.current else: "#test",
              Message(frm: "notice", text: p.params[^1], at: at, system: true))
+
+    of "FAIL":
+      # IRCv3 standard replies: `FAIL <command> <code> [context…] :<why>`.
+      #
+      # An edit is the one handled here, because it is the one this client
+      # has already shown as done: the new wording went on screen when Send
+      # was pressed. A refusal takes it back off and says why, in freeq's own
+      # words — `SIGNATURE_REQUIRED` and `AUTHOR_MISMATCH` are different
+      # problems, and "your edit failed" would read the same for both.
+      if p.params.len >= 2 and p.params[0] == "EDIT":
+        if pendingEdits.len > 0:
+          let pe = pendingEdits[0]
+          pendingEdits.delete(0)
+          discard app.rooms.restoreEdit(pe)
+        let why = if p.params.len >= 3: p.params[^1].strip() else: ""
+        setError("Your edit was not saved" &
+                 (if why.len > 0: " — " & why else: "") &
+                 " (" & p.params[1] & ").")
+      trace("fail", $p.params)
 
     of "432", "433", "436":
       # Nickname refused — the likeliest way a guest connect fails and the

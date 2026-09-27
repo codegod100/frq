@@ -64,3 +64,37 @@ proc applyDelete*(rooms: var OrderedTable[string, Room],
   r.messages.delete(i)
   rooms[room] = r
   true
+
+type
+  PendingEdit* = object
+    ## An edit that is on this screen and not yet on the server's, and the
+    ## wording it replaced.
+    ##
+    ## An edit is shown the moment it is sent, so a refusal — a signature the
+    ## server cannot check, a line it has no record of — would otherwise leave
+    ## the new wording here and the old one everywhere else, with nothing to
+    ## say so. This is what puts it back.
+    room*, id*: string
+    text*: string
+    edited*: bool
+
+proc beforeEdit*(rooms: OrderedTable[string, Room],
+                 room, msgid: string): (PendingEdit, bool) =
+  ## The line as it stands, taken before an edit rewrites it.
+  if not rooms.hasKey(room): return
+  for m in rooms[room].messages:
+    if m.id == msgid:
+      return (PendingEdit(room: room, id: msgid, text: m.text,
+                          edited: m.edited), true)
+
+proc restoreEdit*(rooms: var OrderedTable[string, Room],
+                  p: PendingEdit): bool =
+  ## Put a refused edit's line back the way it was.
+  if not rooms.hasKey(p.room): return false
+  var r = rooms[p.room]
+  for i in 0 ..< r.messages.len:
+    if r.messages[i].id != p.id: continue
+    r.messages[i].text = p.text
+    r.messages[i].edited = p.edited
+    result = true
+  rooms[p.room] = r
