@@ -41,3 +41,30 @@ suite "applyDelete":
   test "a delete for a line we never had is not an error":
     var rooms = roomWith(Message(id: "m1", frm: "ann", text: "oops"))
     check not rooms.applyDelete("#test", "m9")
+
+suite "a refused edit":
+  test "the line goes back to the wording it had":
+    var rooms = roomWith(Message(id: "m1", frm: "ann", text: "helo"))
+    let (before, ok) = rooms.beforeEdit("#test", "m1")
+    check ok
+    check rooms.applyEdit("#test", "m1", "ann", "hello", "") == erApplied
+    check rooms.restoreEdit(before)
+    check rooms["#test"].messages[0].text == "helo"
+    check not rooms["#test"].messages[0].edited
+
+  test "an earlier edit stays marked as one":
+    var rooms = roomWith(Message(id: "m1", frm: "ann", text: "hello",
+                                 edited: true))
+    let (before, _) = rooms.beforeEdit("#test", "m1")
+    discard rooms.applyEdit("#test", "m1", "ann", "hello!", "")
+    check rooms.restoreEdit(before)
+    check rooms["#test"].messages[0].text == "hello"
+    check rooms["#test"].messages[0].edited
+
+  test "a line that is not there has nothing to take or put back":
+    var rooms = roomWith(Message(id: "m1", frm: "ann", text: "helo"))
+    let (before, ok) = rooms.beforeEdit("#test", "m9")
+    check not ok
+    check not rooms.restoreEdit(PendingEdit(room: "#test", id: "m9"))
+    check not rooms.restoreEdit(PendingEdit(room: "#nope", id: "m1"))
+    discard before

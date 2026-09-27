@@ -552,3 +552,47 @@ suite "a refused sign-in":
   test "and still says it was refused when no reason came":
     say(":server 904 alice")
     check app.error == "Sign-in refused — connected as a guest."
+
+suite "an edit the server refuses":
+  setup:
+    reset()
+    joined("#freeq")
+    dispatch(%*{"id": "room.open:#freeq"})
+    say("@msgid=m1 :alice!a@h PRIVMSG #freeq :helo")
+    discard sent()
+
+  proc edit(text: string) =
+    dispatch(%*{"id": "edit.start:m1"})
+    dispatch(%*{"id": "draft.change", "value": text})
+    dispatch(%*{"id": "send"})
+    discard sent()
+
+  test "the old wording comes back and freeq's reason is shown":
+    # Shown the moment Send is pressed, so a refusal that said nothing left
+    # the new wording on this screen and the old one on everybody else's.
+    edit("hello")
+    check app.rooms["#freeq"].messageById("m1").get.text == "hello"
+    say(":server FAIL EDIT SIGNATURE_REQUIRED " &
+        ":A signed request is required to modify messages on this server")
+    let m = app.rooms["#freeq"].messageById("m1").get
+    check m.text == "helo"
+    check not m.edited
+    check app.hasError
+    check "A signed request is required" in app.error
+    check "SIGNATURE_REQUIRED" in app.error
+
+  test "an edit the server echoes back stays":
+    edit("hello")
+    say("@+draft/edit=m1;msgid=m2 :alice!a@h PRIVMSG #freeq :hello")
+    # Nothing is waiting any more, so a later refusal of something else
+    # cannot reach back and undo this one.
+    say(":server FAIL EDIT MESSAGE_NOT_FOUND :Original message not found")
+    check app.rooms["#freeq"].messageById("m1").get.text == "hello"
+    check "Original message not found" in app.error
+
+  test "two in flight are answered in order":
+    edit("hello")
+    edit("hello there")
+    say("@+draft/edit=m1;msgid=m2 :alice!a@h PRIVMSG #freeq :hello")
+    say(":server FAIL EDIT AUTHOR_MISMATCH :You can only edit your own messages")
+    check app.rooms["#freeq"].messageById("m1").get.text == "hello"
