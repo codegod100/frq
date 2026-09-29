@@ -102,6 +102,23 @@ suite "the chat screen":
     check card.len == 1
     check card[0].props{"replyOnClick"}.getStr() == "reply.to:1"
 
+  test "a task card says what happened, not the protocol's bookkeeping":
+    var r = s.rooms["#test"]
+    r.messages[0].task = TaskEvent(
+      id: "01M3NK7WF90ED71GATYQZADF5N", taskId: "01M3NK7VNR", kind: "handoff",
+      verb: "complete", title: "Smoke test", note: "46s",
+      context: "diff --git a/x b/x")
+    s.rooms["#test"] = r
+    let card = cs.chatScreen(s, true).find("task-card")[0]
+    let dim = card.labels("dim-label")
+    check "note" in dim
+    check "context" in dim
+    for bookkeeping in ["task id", "event id", "kind", "verb"]:
+      check bookkeeping notin dim
+    # The event id is the head of the ULID, and output is a block, not prose.
+    check card.props{"eventId"}.getStr() == "01M3NK7WF90E…"
+    check card.find("code-block").len == 1
+
   test "reaction pills carry their count and whether they are mine":
     var r = s.rooms["#test"]
     r.messages[0].reactions = @[Reaction(emoji: "👍", nicks: @["frq-guest", "bob"])]

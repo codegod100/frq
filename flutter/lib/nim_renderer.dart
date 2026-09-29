@@ -696,6 +696,25 @@ class _NimAppState extends State<NimApp> {
       case 'label':
         return Text(n.prop('label', ''), style: _style(t.textBody, t.onBg));
 
+      // Output — a diff, a log — as a block: monospace, on the card's own
+      // tint, and scrolling past `maxHeight` rather than pushing the row
+      // further down a channel of them.
+      case 'code-block':
+        {
+          final maxHeight = _d(n.props['maxHeight'], 160);
+          return Container(
+            width: double.infinity,
+            constraints: BoxConstraints(maxHeight: maxHeight),
+            padding: const EdgeInsets.symmetric(
+                horizontal: t.spaceXxs, vertical: t.spaceXxxs),
+            child: SingleChildScrollView(
+              child: SelectableText(n.prop('text', ''),
+                  style: _style(t.textCaption, t.accent)
+                      .copyWith(fontFamily: 'monospace', height: 1.35)),
+            ),
+          );
+        }
+
       case 'dim-label':
         return Text(n.prop('label', ''), style: _style(t.textCaption, t.dim));
 

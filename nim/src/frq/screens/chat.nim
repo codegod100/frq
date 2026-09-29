@@ -190,6 +190,10 @@ func taskHeadline(verb: string): (string, string, string) =
   of "cancel": ("🚫", "cancelled", "danger")
   else: ("📌", verb, "neutral")
 
+func shortEventId(id: string): string =
+  ## The head of a ULID: enough to tell two events apart at a glance.
+  if id.len > 12: id[0 ..< 12] & "…" else: id
+
 proc taskCard(room: Room, m: Message, highlit: bool): Node =
   ## The visible companion of a typed FreeQ handoff event. The event itself is
   ## a TAGMSG; keeping its title and facts in this compact card makes the
@@ -198,7 +202,7 @@ proc taskCard(room: Room, m: Message, highlit: bool): Node =
   let (glyph, headline, tone) = taskHeadline(task.verb)
   var props = %*{"key": "task-" & rowId(m), "glyph": glyph,
                  "headline": headline, "tone": tone,
-                 "eventId": task.id, "time": clockTime(m.at),
+                 "eventId": shortEventId(task.id), "time": clockTime(m.at),
                  "highlight": highlit}
   # Task cards replace the ordinary message body, so they carry their own
   # reply control.  The companion PRIVMSG's msgid is still the target.
@@ -206,11 +210,11 @@ proc taskCard(room: Room, m: Message, highlit: bool): Node =
     props["replyOnClick"] = %("reply.to:" & rowId(m))
   result = n("task-card", props, @[])
   if task.title.len > 0: result.children.add text(task.title)
+  # Only what the event says. Its task id, event id, kind and verb are the
+  # protocol's bookkeeping, and the header already carries the verb and a
+  # short event id — repeating them as rows is what made a card three times
+  # the height of the sentence it announces.
   var facts = vbox(%*{"key": "task-facts", "spacing": 2})
-  for (name, value) in [("task id", task.taskId), ("event id", task.id),
-                         ("kind", task.kind), ("verb", task.verb)]:
-    if value.len > 0:
-      facts.children.add hbox(%*{"spacing": 8}, dimLabel(name), text(value))
   if task.verb == "offer" or task.offeredTo.len > 0:
     facts.children.add hbox(%*{"spacing": 8}, dimLabel("offered to"),
                              label(if task.offeredTo.len > 0: task.offeredTo else: "anyone"))
@@ -220,8 +224,14 @@ proc taskCard(room: Room, m: Message, highlit: bool): Node =
   if task.note.len > 0:
     facts.children.add hbox(%*{"spacing": 8}, dimLabel("note"), text(task.note))
   if task.context.len > 0:
-    facts.children.add hbox(%*{"spacing": 8}, dimLabel("context"),
-                             link(task.context, task.context))
+    # A URL is somewhere to go; anything else — a diff, a log — is output, and
+    # reads as a block of it rather than as prose.
+    let where =
+      if task.context.startsWith("http://") or task.context.startsWith("https://"):
+        link(task.context, task.context)
+      else:
+        n("code-block", %*{"text": task.context, "maxHeight": 160, "expand": true})
+    facts.children.add hbox(%*{"spacing": 8}, dimLabel("context"), where)
   if facts.children.len > 0: result.children.add facts
 
   var cards: seq[Message]
