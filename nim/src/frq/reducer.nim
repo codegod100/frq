@@ -923,26 +923,39 @@ proc notePreviewTags(tags: string) =
   lk.remember(url, lk.Preview(status: lk.lsReady, title: title,
                               description: desc, image: image))
 
+func freeqTag(tags, name: string): (string, bool) =
+  ## A `freeq.at/` tag under either spelling. The reference client folds
+  ## `+freeq.at/x` and `freeq.at/x` onto one key, since a server may relay
+  ## the client-only form with or without its `+`.
+  let (v, ok) = tagValue(tags, "+freeq.at/" & name)
+  if ok: (v, true) else: tagValue(tags, "freeq.at/" & name)
+
 proc taskEvent(tags: string): TaskEvent =
   ## The structured half of a FreeQ action.  It travels as a TAGMSG and its
   ## visible companion names this event through `+freeq.at/ref`.
   ##
   ## Only `handoff` is a task card for now. Other act kinds remain ordinary
   ## messages until they have their own reader-facing treatment.
-  let (kind, hasKind) = tagValue(tags, "+freeq.at/act")
-  let (verb, hasVerb) = tagValue(tags, "+freeq.at/act-verb")
-  let (eventId, hasEventId) = tagValue(tags, "+freeq.at/eventid")
+  let (kind, hasKind) = freeqTag(tags, "act")
+  let (verb, hasVerb) = freeqTag(tags, "act-verb")
+  # A signed event through a server that adopts the signer's id arrives with
+  # it in `msgid`, and without `+freeq.at/eventid`; one that predates adoption
+  # sends the tag. Either is the event's id.
+  let (eventId, hasEventId) =
+    block:
+      let (e, ok) = freeqTag(tags, "eventid")
+      if ok: (e, true) else: tagValue(tags, "msgid")
   if not hasKind or kind != "handoff" or not hasVerb or not hasEventId: return
-  let (actId, hasActId) = tagValue(tags, "+freeq.at/act-id")
+  let (actId, hasActId) = freeqTag(tags, "act-id")
   result.id = eventId
   result.taskId = if hasActId: actId else: eventId
   result.kind = kind
   result.verb = verb
-  (result.title, _) = tagValue(tags, "+freeq.at/act-title")
-  (result.offeredTo, _) = tagValue(tags, "+freeq.at/act-to")
-  (result.caps, _) = tagValue(tags, "+freeq.at/act-caps")
-  (result.note, _) = tagValue(tags, "+freeq.at/act-note")
-  (result.context, _) = tagValue(tags, "+freeq.at/act-ctx")
+  (result.title, _) = freeqTag(tags, "act-title")
+  (result.offeredTo, _) = freeqTag(tags, "act-to")
+  (result.caps, _) = freeqTag(tags, "act-caps")
+  (result.note, _) = freeqTag(tags, "act-note")
+  (result.context, _) = freeqTag(tags, "act-ctx")
 
 func ulidMs(id: string): int64 =
   ## The millisecond a ULID was minted in, or -1 for an id that is not one.
@@ -986,7 +999,7 @@ proc attachTask(tags: string, room: var Room, m: var Message) =
   ## this used to look the reference up as an event id, which is only true
   ## of a task's opener — so any line carrying the reference became another
   ## copy of the offer, and no later move on the task was ever a card.
-  let (taskRef, hasRef) = tagValue(tags, "+freeq.at/ref")
+  let (taskRef, hasRef) = freeqTag(tags, "ref")
   if not hasRef or taskRef.len == 0: return
   m.taskRef = taskRef
   if not room.taskEvents.hasKey(taskRef): return
@@ -1288,7 +1301,9 @@ proc drain*() =
           app.rooms.ensureRoom(room)
           var task = task
           task.frm = nickOf(p.prefix)
-          if p.hasAccount: task.did = p.account
+          let (signer, hasSigner) = freeqTag(p.tags, "from")
+          if hasSigner: task.did = signer
+          elif p.hasAccount: task.did = p.account
           var r = app.rooms[room]
           r.holdTask(task)
           app.rooms[room] = r

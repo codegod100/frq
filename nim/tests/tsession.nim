@@ -517,6 +517,16 @@ suite "unsending a line":
     check task.verb == "progress"
     check task.title == "ship the release"
 
+  test "an event a server relayed without the plus, and with its id in msgid, is still a card":
+    say("@freeq.at/act=handoff;freeq.at/act-verb=claim;freeq.at/act-id=task-1;" &
+        "msgid=ev-2;freeq.at/act-note=on\\sit " &
+        ":bot!b@h TAGMSG #freeq",
+        "@freeq.at/ref=task-1;msgid=line-2 :bot!b@h PRIVMSG #freeq :claimed the task")
+    let task = app.rooms["#freeq"].messageById("line-2").get.task
+    check task.id == "ev-2"
+    check task.verb == "claim"
+    check task.note == "on it"
+
   test "somebody else's line naming a task is chat, and leaves the event waiting":
     say("@+freeq.at/act=handoff;+freeq.at/act-verb=offer;" &
         "+freeq.at/eventid=task-1 :bot!b@h TAGMSG #freeq",
