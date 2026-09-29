@@ -105,7 +105,7 @@ suite "the chat screen":
   test "a task card says what happened, not the protocol's bookkeeping":
     var r = s.rooms["#test"]
     r.messages[0].task = TaskEvent(
-      id: "01M3NK7WF90ED71GATYQZADF5N", taskId: "01M3NK7VNR", kind: "handoff",
+      id: "01M3NK7WF90ED71GATYQZADF5N", taskId: "01M3NK7VNR0000000000000000", kind: "handoff",
       verb: "complete", title: "Smoke test", note: "46s",
       context: "diff --git a/x b/x")
     s.rooms["#test"] = r
@@ -115,8 +115,8 @@ suite "the chat screen":
     check "context" in dim
     for bookkeeping in ["task id", "event id", "kind", "verb"]:
       check bookkeeping notin dim
-    # The event id is the head of the ULID, and output is a block, not prose.
-    check card.props{"eventId"}.getStr() == "01M3NK7WF90E…"
+    # The header names the task by the head of its ULID, and output is a block, not prose.
+    check card.props{"eventId"}.getStr() == "01M3NK7VNR…"
     check card.find("code-block").len == 1
 
   test "reaction pills carry their count and whether they are mine":

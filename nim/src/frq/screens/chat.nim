@@ -191,8 +191,8 @@ func taskHeadline(verb: string): (string, string, string) =
   else: ("📌", verb, "neutral")
 
 func shortEventId(id: string): string =
-  ## The head of a ULID: enough to tell two events apart at a glance.
-  if id.len > 12: id[0 ..< 12] & "…" else: id
+  ## The head of a ULID: enough to tell two tasks apart at a glance.
+  if id.len > 10: id[0 ..< 10] & "…" else: id
 
 proc taskCard(room: Room, m: Message, highlit: bool): Node =
   ## The visible companion of a typed FreeQ handoff event. The event itself is
@@ -202,7 +202,7 @@ proc taskCard(room: Room, m: Message, highlit: bool): Node =
   let (glyph, headline, tone) = taskHeadline(task.verb)
   var props = %*{"key": "task-" & rowId(m), "glyph": glyph,
                  "headline": headline, "tone": tone,
-                 "eventId": shortEventId(task.id), "time": clockTime(m.at),
+                 "eventId": shortEventId(task.taskId), "time": clockTime(m.at),
                  "highlight": highlit}
   # Task cards replace the ordinary message body, so they carry their own
   # reply control.  The companion PRIVMSG's msgid is still the target.
