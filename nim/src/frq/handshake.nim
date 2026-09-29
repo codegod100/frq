@@ -20,8 +20,8 @@ const
     ## reading lines off a WebSocket bridge rather than a 512-byte ircd.
 
   wantedCaps* = ["message-tags", "server-time", "account-tag", "echo-message",
-                 "draft/message-ids", "freeq.at/msgsig", "batch",
-                 "draft/multiline"]
+                 "draft/message-ids", "freeq.at/msgsig", "freeq.at/act",
+                 "batch", "draft/multiline"]
     ## What this client can use, and why even a guest negotiates.
     ##
     ## `server-time`: without it a replayed backlog arrives untimed and every
@@ -37,6 +37,9 @@ const
     ## sent ids with plain `message-tags`, but requesting the narrower cap as
     ## well keeps the controls present on conforming relays and costs nothing
     ## when a server does not offer it.
+    ## `freeq.at/act`: typed task events. freeq gates them on this capability,
+    ## live and in the replay a join or CHATHISTORY hands back, so without it
+    ## no handoff event ever arrives and every bot line stays a plain message.
     ## `batch` and `draft/multiline`: a message with line breaks in it, live
     ## or replayed, as one batch that `frq/multiline` puts back together.
     ## Without them freeq sends the fallback — the lines as separate

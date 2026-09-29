@@ -100,6 +100,10 @@ suite "step: CAP":
     let got = step(guest(), caps0(), m)
     check got.send[0] == "CAP REQ :message-tags batch draft/multiline"
 
+  test "it asks for task events, which freeq sends only to a client that did":
+    let m = parseLine(":s CAP * LS :message-tags freeq.at/act")
+    check step(guest(), caps0(), m).send[0] == "CAP REQ :message-tags freeq.at/act"
+
   test "it asks only for what was offered":
     let m = parseLine(":s CAP * LS :server-time")
     check step(guest(), caps0(), m).send[0] == "CAP REQ :server-time"
