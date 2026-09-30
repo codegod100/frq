@@ -501,6 +501,7 @@ proc sendDraft() =
   let line = if picture.len == 0: text
              elif text.len == 0: picture
              else: text & " " & picture
+  var replyTo = ""
 
   if app.editing.has:
     # An edit is a fresh PRIVMSG tagged with what it replaces; the server
@@ -530,8 +531,14 @@ proc sendDraft() =
     app.attachment = Attachment()
     return
   elif app.replyingTo.has:
-    send("@+draft/reply=" & app.replyingTo.id & " PRIVMSG " & app.current &
-         " :" & line)
+    replyTo = app.replyingTo.id
+    # A local id is never sent: the server has no such line, so a reply naming
+    # it would be dropped or land as a plain message. Sent untagged instead.
+    if replyTo.startsWith("local-"):
+      send("PRIVMSG " & app.current & " :" & line)
+    else:
+      send("@+draft/reply=" & replyTo & " PRIVMSG " & app.current &
+           " :" & line)
     app.replyingTo = ReplyTarget()
   else:
     send("PRIVMSG " & app.current & " :" & line)
@@ -543,6 +550,7 @@ proc sendDraft() =
   var m = Message(frm: app.formNick, text: line, at: nowMs(),
                   localId: "local-" & $r.messages.len, pending: true)
   m.imageUrl = app.attachment.url
+  m.replyTo = replyTo
   r.messages.add m
   wantFace(m)
   app.rooms[app.current] = r.markRead
