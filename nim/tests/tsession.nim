@@ -193,6 +193,14 @@ suite "opening a profile":
     dispatch(%*{"id": "profile.open:bob:did:plc:fromtheaccounttag"})
     check app.profileViewing.actor == "did:plc:fromtheaccounttag"
 
+  test "Message opens a conversation with them and closes the panel":
+    dispatch(%*{"id": "profile.open:bob:did:plc:fromtheaccounttag"})
+    dispatch(%*{"id": "profile.message:bob"})
+    check app.current == "bob"
+    check app.screen == scChat
+    check app.rooms.hasKey("bob")
+    check not app.profileViewing.has
+
 suite "faces":
   setup:
     reset()
