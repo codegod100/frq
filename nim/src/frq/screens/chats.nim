@@ -53,6 +53,14 @@ func conversationListScreen(s: State, connected, direct: bool): Node =
     title(if connected: "Logged in as " & s.formNick else: section),
     errorNote(s))
 
+  # Across every buffer, not just this tab's: "all" means the DMs too. In a
+  # wrapper of its own, so the button coming and going does not renumber the
+  # head for the renderer.
+  var markAll = vbox(%*{"key": "mark-all-read"})
+  if anyUnread(s.rooms):
+    markAll.children.add button("Mark all read", "rooms.mark-read")
+  head.children.add markAll
+
   # `@nick` opens a DM and `#room` joins a channel, and the button says which
   # so the reader is not guessing what Enter will do.
   var joinRow = hbox(%*{"spacing": 8, "align": "end"},

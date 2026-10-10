@@ -91,6 +91,18 @@ suite "the read marker":
     for m in ch.messages:
       check seenMessage(marked.messages, m.id, m.frm, m.text, "me")
 
+  test "markAllRead clears every buffer, DMs included":
+    var rooms = initOrderedTable[string, Room]()
+    var dmr = initRoom("bob")
+    dmr.messages = @[msg("bob", "psst", at = 400)]
+    rooms["#a"] = ch.recount("me")
+    rooms["bob"] = dmr.recount("me")
+    check rooms.anyUnread
+    rooms.markAllRead()
+    check not rooms.anyUnread
+    check rooms["#a"].recount("me").unread == 0
+    check rooms["bob"].recount("me").unread == 0
+
   test "a line older than the marker counts for nothing":
     ch.lastReadId = ""
     ch.lastReadAt = 250

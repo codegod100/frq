@@ -2,8 +2,8 @@
 ##
 ## Transcribed from `common/frq/rooms.cljc`. Pure functions over the state —
 ## everything here is a question about rooms rather than a change to one, with
-## the two exceptions (`markRead`, `ensureRoom`) that are named for being
-## changes.
+## the exceptions (`markRead`, `markAllRead`, `ensureRoom`) that are named
+## for being changes.
 ##
 ## The marker is the part to read carefully. Unread is *derived* from it and
 ## never counted, because a count cannot survive what the server does: a JOIN
@@ -238,6 +238,17 @@ func markRead*(ch: Room): Room =
     let newest = ch.messages[^1]
     result.lastReadId = newest.id
     result.lastReadAt = max(ch.lastReadAt, newest.at)
+
+func anyUnread*(channels: OrderedTable[string, Room]): bool =
+  ## Whether there is anything for "mark all read" to do.
+  for _, ch in channels:
+    if ch.unread > 0 or ch.mention: return true
+
+proc markAllRead*(channels: var OrderedTable[string, Room]) =
+  ## `markRead` on every buffer, channels and DMs alike: the marker in each
+  ## moves to its newest line, so nothing already here counts as news.
+  for name in toSeq(channels.keys):
+    channels[name] = channels[name].markRead
 
 proc ensureRoom*(channels: var OrderedTable[string, Room], name: string) =
   ## Make sure a buffer exists, started caught up rather than at the

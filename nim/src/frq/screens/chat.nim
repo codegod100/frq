@@ -653,6 +653,10 @@ proc chatScreen*(s: State, connected: bool): Node =
   if showChatList:
     var panel = vbox(%*{"spacing": 4, "widthRequest": sidePanelWidth},
       title2("Chats"))
+    var markAll = vbox(%*{"key": "mark-all-read"})
+    if anyUnread(s.rooms):
+      markAll.children.add button("Mark all read", "rooms.mark-read", "plain")
+    panel.children.add markAll
     var list = vbox(%*{"key": "chat-list", "spacing": 4})
     for r in channelList(s.rooms, ""):
       let unread = if r.unread > 0: "  " & (if r.mention: "◆ " else: "● ") &

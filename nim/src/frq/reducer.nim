@@ -645,6 +645,11 @@ proc dispatch*(event: JsonNode) =
   of "screen.settings": app.screen = scSettings
 
   of "room.open": openRoom(arg)
+  of "rooms.mark-read":
+    app.rooms.markAllRead()
+    # Forced: this is the reader saying they are caught up everywhere, and a
+    # throttled write that never came would bring every count back next run.
+    rememberRooms(force = true)
 
   of "room.join":
     if arg.len > 0:

@@ -249,6 +249,15 @@ suite "the chats screen":
     s.rooms["#test"] = u
     check "◆ @ 3" in ch.chatsScreen(s, true).labels("label")
 
+  test "mark all read is offered only when something is unread":
+    check "Mark all read" notin ch.chatsScreen(s, true).labels("button")
+    var u = s.rooms["#test"]
+    u.unread = 2
+    s.rooms["#test"] = u
+    let t = ch.chatsScreen(s, true)
+    check "Mark all read" in t.labels("button")
+    check t.find("button").anyIt(it.props{"onClick"}.getStr() == "rooms.mark-read")
+
   test "a channel we are not in is badged, a DM never is":
     var away = s.rooms["#test"]
     away.joined = false

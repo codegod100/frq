@@ -316,6 +316,23 @@ suite "being renamed":
     say(":stranger!s@h NICK someoneelse")
     check app.formNick == "alice"
 
+suite "marking everything read":
+  setup:
+    reset()
+
+  test "every room and DM is caught up":
+    joined("#freeq")
+    joined("#other")
+    dispatch(%*{"id": "room.open:#freeq"})
+    say(":bob!b@h PRIVMSG #other :over here",
+        ":bob!b@h PRIVMSG alice :and here, alice")
+    check app.rooms["#other"].unread > 0
+    check app.rooms["bob"].unread > 0
+    dispatch(%*{"id": "rooms.mark-read"})
+    for name, r in app.rooms:
+      check r.unread == 0
+      check not r.mention
+
 suite "sending a picture":
   setup:
     reset()
