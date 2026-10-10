@@ -6,15 +6,21 @@
 ///
 /// The measure of whether the split is honest is how boring this file is. If a
 /// feature ever needs a change here AND in Nim, the boundary is in the wrong
-/// place. The treatments are `flutter/src/frq/hiccup.cljd`'s, so a tree from
-/// Nim paints the way the same tree painted under ClojureDart.
+/// place.
+///
+/// The widgets are flatkit's (github.com/codegod100/flutterkit): flat, with
+/// hover and press that change colour on the spot and nothing that ripples,
+/// fades or slides. Material is left only where flatkit has nothing of its
+/// own — text editing, selection and scrollbars — and `KitTheme.material`
+/// turns its splashes and highlights off.
 library;
 
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flatkit/flatkit.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:frq_core/frq_core.dart' as core;
@@ -97,6 +103,10 @@ class _NimAppState extends State<NimApp> {
   // Only the changes are sent: a notification arrives per pixel of a drag,
   // and the core has one question, not a thousand.
   final _atPresent = <String, bool>{};
+
+  // The colours of the frame being built, read once from `KitTheme` at the
+  // top of the build so every case below can reach them without a context.
+  KitColors _c = t.frqDark;
 
   @override
   void initState() {
@@ -199,55 +209,59 @@ class _NimAppState extends State<NimApp> {
   }
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: 'frq',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
-          brightness: Brightness.dark,
-          scaffoldBackgroundColor: t.bg,
-          colorScheme: const ColorScheme.dark(
-            primary: t.accent,
-            onPrimary: t.onAccent,
-            surface: t.bg,
-            onSurface: t.onBg,
-            error: t.destructive,
+  Widget build(BuildContext context) => KitSystemTheme(
+        // frq's own palette in the dark, the kit's in the light, and on KDE
+        // Plasma whatever System Settings says. Never on the web: there is no
+        // kdeglobals to read and no `Platform` to ask.
+        dark: t.frqDark,
+        followKde: !kIsWeb,
+        builder: (context, colors) => MaterialApp(
+          title: 'frq',
+          debugShowCheckedModeBanner: false,
+          theme: KitTheme.material(colors),
+          builder: (context, child) => KitTheme(
+            colors: colors,
+            child: DefaultTextStyle.merge(
+              style: _style(t.textBody, colors.text),
+              child: child!,
+            ),
           ),
-        ),
-        // Everything inside one SelectionArea, so a message can be selected
-        // and copied — and so can a nick, a timestamp, or a line of an error.
-        // Per-widget `SelectableText` was the alternative and is worse: it
-        // selects within one widget only, so a two-line answer and the name
-        // above it cannot be dragged across, which is most of what anyone
-        // wants to copy out of a chat.
-        //
-        // Taps still arrive: a selection starts on a drag, and the buttons,
-        // faces and reaction pills under here keep their gestures.
-        home: Scaffold(
-          backgroundColor: t.bg,
-          // The core decides what a window this size can hold — whether the
-          // room list rides beside the conversation, whether there is a back
-          // button — and it cannot measure one. A window is the host's, like
-          // a socket or a clock, so the host says.
+          // Everything inside one SelectionArea, so a message can be selected
+          // and copied — and so can a nick, a timestamp, or a line of an
+          // error. Per-widget `SelectableText` was the alternative and is
+          // worse: it selects within one widget only, so a two-line answer
+          // and the name above it cannot be dragged across, which is most of
+          // what anyone wants to copy out of a chat.
           //
-          // From the constraints rather than MediaQuery: this is the space
-          // the tree is actually given, which is what the decision is about.
-          // Reported after the frame, because a dispatch is a setState and a
-          // setState during build is an error.
-          body: SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final w = constraints.maxWidth.round();
-                final h = constraints.maxHeight.round();
-                if (w != _reportedW || h != _reportedH) {
-                  _reportedW = w;
-                  _reportedH = h;
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) _send('window.size', '${w}x$h');
-                  });
-                }
-                return SelectionArea(child: _build(_tree));
-              },
+          // Taps still arrive: a selection starts on a drag, and the buttons,
+          // faces and reaction pills under here keep their gestures.
+          home: Material(
+            color: colors.background,
+            // The core decides what a window this size can hold — whether
+            // the room list rides beside the conversation, whether there is
+            // a back button — and it cannot measure one. A window is the
+            // host's, like a socket or a clock, so the host says.
+            //
+            // From the constraints rather than MediaQuery: this is the space
+            // the tree is actually given, which is what the decision is
+            // about. Reported after the frame, because a dispatch is a
+            // setState and a setState during build is an error.
+            child: SafeArea(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final w = constraints.maxWidth.round();
+                  final h = constraints.maxHeight.round();
+                  if (w != _reportedW || h != _reportedH) {
+                    _reportedW = w;
+                    _reportedH = h;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _send('window.size', '${w}x$h');
+                    });
+                  }
+                  _c = colors;
+                  return SelectionArea(child: _build(_tree));
+                },
+              ),
             ),
           ),
         ),
@@ -305,14 +319,50 @@ class _NimAppState extends State<NimApp> {
     return host.localImage(src);
   }
 
-  Widget _wrapTap(String onClick, Widget child, {BorderRadius? radius}) {
+  /// [child] as a control that sends [onClick], or [child] alone when there
+  /// is nothing to send. Flat: the pointer turns into a hand and that is all
+  /// the feedback there is, because the child already looks like what it is.
+  Widget _wrapTap(String onClick, Widget child) {
     if (onClick.isEmpty) return child;
-    return InkWell(
-      onTap: () => _send(onClick),
-      borderRadius: radius,
-      child: child,
-    );
+    return _tap(() => _send(onClick), child);
   }
+
+  Widget _tap(VoidCallback onTap, Widget child) =>
+      Pressable(onPressed: onTap, builder: (_, _) => child);
+
+  /// A `KitButton` with less padding and smaller type, for a row of chips.
+  /// The same colours for the same states as the kit's own secondary and
+  /// primary buttons; only the size differs.
+  Widget _compactButton(String text, bool on, VoidCallback press) => Pressable(
+        onPressed: press,
+        builder: (context, s) {
+          final bg = on
+              ? (s.pressed
+                  ? _c.accentPressed
+                  : (s.hovered ? _c.accentHover : _c.accent))
+              : (s.pressed ? _c.pressed : (s.hovered ? _c.hover : _c.surface));
+          final border = s.focused ? _c.focus : (on ? bg : _c.border);
+          return Container(
+            height: kitControlHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(kitRadius),
+              border: Border.all(color: border, width: s.focused ? 2 : 1),
+            ),
+            // A Row that hugs its label, as KitButton's does: a Container
+            // with an alignment would fill the Wrap's whole width instead.
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(text,
+                  maxLines: 1,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: on ? _c.onAccent : _c.text)),
+            ]),
+          );
+        },
+      );
 
   // ------------------------------------------------------------------ build
 
@@ -459,10 +509,12 @@ class _NimAppState extends State<NimApp> {
                     // control with the backlog showing through it is a
                     // control nobody can read, and "↓ Jump to present" sat
                     // on top of whatever line happened to be under it.
-                    child: Material(
-                      color: t.bg,
-                      shape: const StadiumBorder(),
+                    child: Container(
                       clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        color: _c.background,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
                       child: o,
                     ),
                   ),
@@ -484,7 +536,7 @@ class _NimAppState extends State<NimApp> {
           // A panel that covers something needs a ground of its own, or what
           // it covers reads through it.
           if (n.prop('background', false)) {
-            col = ColoredBox(color: t.bg, child: col);
+            col = ColoredBox(color: _c.background, child: col);
           }
           // Said by a child of an `overlay`: fill it rather than float at the
           // bottom of it. Carried as a wrapper because the Stack above is the
@@ -543,40 +595,48 @@ class _NimAppState extends State<NimApp> {
       // Container::Card in the Clojure: padding 12, fills its width.
       case 'card':
         final task = n.prop('task', false);
-        final card = Container(
-          width: double.infinity,
-          margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
-          padding: const EdgeInsets.all(t.spaceXs),
-          decoration: BoxDecoration(
-            color: task ? t.cardComponent : t.card,
-            borderRadius: BorderRadius.circular(t.radiusS),
-            border: task
-                ? Border(
-                    left: const BorderSide(color: t.accent, width: 3),
-                    top: BorderSide(color: t.accent.withValues(alpha: 0.4)),
-                    right: BorderSide(color: t.accent.withValues(alpha: 0.4)),
-                    bottom: BorderSide(color: t.accent.withValues(alpha: 0.4)),
-                  )
-                : null,
-          ),
-          child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: _spaced(kids, spacing > 0 ? spacing : t.spaceXxs,
-                  vertical: true)),
-        );
+        final tap = n.prop('onClick', '');
+        final ground = task ? _c.hover : _c.surface;
+        final body = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: _spaced(kids, spacing > 0 ? spacing : t.spaceXxs,
+                vertical: true));
+        // The panel itself: flatkit's surface and border, or the accent edge
+        // a task wears.
+        Widget panel(Color fill) => Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(t.spaceXs),
+              decoration: BoxDecoration(
+                color: fill,
+                borderRadius: BorderRadius.circular(t.radiusS),
+                border: task
+                    ? Border(
+                        left: BorderSide(color: _c.accent, width: 3),
+                        top: BorderSide(color: _c.accent.withValues(alpha: 0.4)),
+                        right:
+                            BorderSide(color: _c.accent.withValues(alpha: 0.4)),
+                        bottom:
+                            BorderSide(color: _c.accent.withValues(alpha: 0.4)),
+                      )
+                    : Border.all(color: _c.border),
+              ),
+              child: body,
+            );
         // A card that is itself the control. Where every line in a list goes
         // to the same place, a button on each one is a small target beside a
         // large inert thing -- and on a phone the button is what wraps onto
-        // a row of its own. The whole card takes the press instead.
-        final tap = n.prop('onClick', '');
-        if (tap.isEmpty) return card;
-        return Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: () => _send(tap),
-            borderRadius: BorderRadius.circular(t.radiusS),
-            child: card,
-          ),
+        // a row of its own. The whole card takes the press instead, and its
+        // ground changes under the pointer the way a flatkit button's does.
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
+          child: tap.isEmpty
+              ? panel(ground)
+              : Pressable(
+                  onPressed: () => _send(tap),
+                  builder: (_, s) => panel(s.pressed
+                      ? _c.pressed
+                      : (s.hovered ? _c.hover : ground)),
+                ),
         );
 
       // A typed handoff event's visible companion. A tinted box and coloured
@@ -585,25 +645,25 @@ class _NimAppState extends State<NimApp> {
         {
           final tone = n.prop('tone', 'neutral');
           final edge = switch (tone) {
-            'new' => t.accent,
-            'active' => t.onBg,
-            'success' => t.success,
-            'danger' => t.destructive,
-            _ => t.dim,
+            'new' => _c.accent,
+            'active' => _c.text,
+            'success' => _c.success,
+            'danger' => _c.danger,
+            _ => _c.textDim,
           };
           final headlineColor = switch (tone) {
-            'new' => t.accent,
-            'success' => t.success,
-            'danger' => t.destructive,
-            _ => t.onBg,
+            'new' => _c.accent,
+            'success' => _c.success,
+            'danger' => _c.danger,
+            _ => _c.text,
           };
           return Container(
             width: double.infinity,
             margin: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
             decoration: BoxDecoration(
               color: n.prop('highlight', false)
-                  ? t.cardComponent
-                  : Color.alphaBlend(edge.withValues(alpha: 0.06), t.card),
+                  ? _c.hover
+                  : Color.alphaBlend(edge.withValues(alpha: 0.06), _c.surface),
               borderRadius: BorderRadius.circular(t.radiusS),
               border: Border(
                 left: BorderSide(color: edge, width: 3),
@@ -637,7 +697,7 @@ class _NimAppState extends State<NimApp> {
                       Flexible(
                         child: Text(n.prop('eventId', ''),
                             overflow: TextOverflow.ellipsis,
-                            style: _style(10, t.dim)),
+                            style: _style(10, _c.textDim)),
                       ),
                     ],
                     const Spacer(),
@@ -648,7 +708,7 @@ class _NimAppState extends State<NimApp> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 5, vertical: 3),
                           decoration: BoxDecoration(
-                            color: t.component,
+                            color: _c.hover,
                             borderRadius: BorderRadius.circular(t.radiusS),
                           ),
                           child: Text('💬', style: _emojiStyle(14)),
@@ -656,7 +716,7 @@ class _NimAppState extends State<NimApp> {
                       ),
                     if (n.prop('replyOnClick', '').isNotEmpty)
                       const SizedBox(width: t.spaceXxs),
-                    Text(n.prop('time', ''), style: _style(10, t.dim)),
+                    Text(n.prop('time', ''), style: _style(10, _c.textDim)),
                   ]),
                 ),
                 Padding(
@@ -676,7 +736,7 @@ class _NimAppState extends State<NimApp> {
         final heading = Text(n.prop('label', ''),
             maxLines: shrinks ? 1 : null,
             overflow: shrinks ? TextOverflow.ellipsis : TextOverflow.clip,
-            style: _style(t.textTitle3, t.onBg)
+            style: _style(t.textTitle3, _c.text)
                 .copyWith(fontWeight: FontWeight.bold));
         // `Flexible` and deliberately not `Expanded`: a room's name should
         // take the width it needs and no more, so the controls stay gathered
@@ -689,12 +749,12 @@ class _NimAppState extends State<NimApp> {
         return Padding(
           padding: const EdgeInsets.only(top: t.spaceXxs, bottom: t.spaceXxxs),
           child: Text(n.prop('label', ''),
-              style: _style(t.textTitle4, t.onBg)
+              style: _style(t.textTitle4, _c.text)
                   .copyWith(fontWeight: FontWeight.w600)),
         );
 
       case 'label':
-        return Text(n.prop('label', ''), style: _style(t.textBody, t.onBg));
+        return Text(n.prop('label', ''), style: _style(t.textBody, _c.text));
 
       // Output — a diff, a log — as a block: monospace, on the card's own
       // tint, and scrolling past `maxHeight` rather than pushing the row
@@ -709,14 +769,14 @@ class _NimAppState extends State<NimApp> {
                 horizontal: t.spaceXxs, vertical: t.spaceXxxs),
             child: SingleChildScrollView(
               child: SelectableText(n.prop('text', ''),
-                  style: _style(t.textCaption, t.accent)
+                  style: _style(t.textCaption, _c.accent)
                       .copyWith(fontFamily: 'monospace', height: 1.35)),
             ),
           );
         }
 
       case 'dim-label':
-        return Text(n.prop('label', ''), style: _style(t.textCaption, t.dim));
+        return Text(n.prop('label', ''), style: _style(t.textCaption, _c.textDim));
 
       /// Prose, as opposed to a label: this is what a message is, and it
       /// wraps. Kept apart from `label` because a wrapping label in a row
@@ -730,7 +790,7 @@ class _NimAppState extends State<NimApp> {
         return Text(n.prop('text', ''),
             maxLines: lines > 0 ? lines : null,
             overflow: lines > 0 ? TextOverflow.ellipsis : TextOverflow.clip,
-            style: _style(t.textBody, t.onBg));
+            style: _style(t.textBody, _c.text));
 
       case 'link':
         {
@@ -744,17 +804,17 @@ class _NimAppState extends State<NimApp> {
           final onClick = n.prop('onClick', '');
           final label = Text(
             n.prop('label', ''),
-            style: _style(t.textBody, t.accent)
+            style: _style(t.textBody, _c.accent)
                 .copyWith(decoration: TextDecoration.underline,
-                          decorationColor: t.accent),
+                          decorationColor: _c.accent),
           );
           if (onClick.isNotEmpty) return _wrapTap(onClick, label);
           if (url.isEmpty) return label;
-          return InkWell(onTap: () => host.openUrl(url), child: label);
+          return _tap(() => host.openUrl(url), label);
         }
 
       case 'separator':
-        return const Divider(height: 1, thickness: 1, color: t.divider);
+        return const KitDivider();
 
       case 'spacer':
         {
@@ -766,14 +826,10 @@ class _NimAppState extends State<NimApp> {
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: t.accent)),
+            const KitSpinner(),
             if (n.prop('label', '').isNotEmpty) ...[
               const SizedBox(width: t.spaceXxs),
-              Text(n.prop('label', ''), style: _style(t.textCaption, t.dim)),
+              Text(n.prop('label', ''), style: _style(t.textCaption, _c.textDim)),
             ],
           ],
         );
@@ -787,12 +843,12 @@ class _NimAppState extends State<NimApp> {
               width: 8,
               height: 8,
               decoration: BoxDecoration(
-                color: n.prop('live', false) ? t.success : t.dim,
+                color: n.prop('live', false) ? _c.success : _c.textDim,
                 borderRadius: BorderRadius.circular(t.radiusXs),
               ),
             ),
             const SizedBox(width: 6),
-            Text(n.prop('label', ''), style: _style(t.textCaption, t.dim)),
+            Text(n.prop('label', ''), style: _style(t.textCaption, _c.textDim)),
           ],
         );
 
@@ -800,21 +856,18 @@ class _NimAppState extends State<NimApp> {
         {
           final onClick = n.prop('onClick', '');
           final kind = n.prop('kind', 'default');
-          final label = Text(n.prop('label', ''));
-          if (kind == 'primary') {
-            return FilledButton(
-                onPressed: () => _send(onClick), child: label);
-          }
+          final text = n.prop('label', '');
+          void press() => _send(onClick);
           // A sender's name: a way in to who someone is, but it sits in the
           // middle of a line and must not look like a control. Text that
           // takes a press, with no chrome at all.
           if (kind == 'plain') {
-            final plain = InkWell(
-              onTap: () => _send(onClick),
-              child: Text(n.prop('label', ''),
+            final plain = _tap(
+              press,
+              Text(text,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: _style(t.textBody, t.onBg)),
+                  style: _style(t.textBody, _c.text)),
             );
             // `Expanded`, and the name is drawn at the left of the box it
             // gets. That box is the slack: it grows to fill the row, so
@@ -835,78 +888,33 @@ class _NimAppState extends State<NimApp> {
                 : plain;
           }
           // A control in a row that has more of them than a phone is wide.
-          //
-          // Measured: an ordinary chip here is 160.8 points, of which 48 is
-          // Material's own horizontal padding and the rest a short word.
-          // Three of them come to 385 before a room's name is drawn, on a
-          // screen 360 wide -- so the padding, not the wording, is what
-          // there is no room for. This keeps every label and spends the
-          // space on them instead.
-          if (kind == 'compact') {
-            return OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                minimumSize: const Size(0, 36),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-                textStyle: _style(t.textBody, t.onBg)
-                    .copyWith(fontSize: 13, fontWeight: FontWeight.w600),
-              ),
-              onPressed: () => _send(onClick),
-              child: label,
-            );
+          // Three chips beside a room's name come to more than 360 points
+          // at KitButton's 12 either side and 14-point label, so the padding
+          // and the type, not the wording, are what there is no room for.
+          // This keeps every label and spends the space on them instead.
+          if (kind == 'compact' || kind == 'compact-on') {
+            return _compactButton(text, kind == 'compact-on', press);
           }
-          if (kind == 'compact-on') {
-            return FilledButton(
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                minimumSize: const Size(0, 36),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-                textStyle: _style(t.textBody, t.onBg)
-                    .copyWith(fontSize: 13, fontWeight: FontWeight.w600),
-              ),
-              onPressed: () => _send(onClick),
-              child: label,
-            );
-          }
-          if (kind == 'destructive') {
-            return FilledButton(
-              style: FilledButton.styleFrom(
-                  backgroundColor: t.destructive,
-                  foregroundColor: t.onDestructive),
-              onPressed: () => _send(onClick),
-              child: label,
-            );
-          }
-          return OutlinedButton(onPressed: () => _send(onClick), child: label);
+          return switch (kind) {
+            'primary' => KitButton.primary(text, onPressed: press),
+            'destructive' => KitButton.danger(text, onPressed: press),
+            _ => KitButton(text, onPressed: press),
+          };
         }
 
       case 'checkbutton':
-        {
-          // The label is part of the target. 20 logical pixels is a fine tick
-          // on a desktop pointer and a miss on a thumb, so the whole row taps.
-          final onToggled = n.prop('onToggled', '');
-          return InkWell(
-            onTap: () => _send(onToggled),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Checkbox(
-                  value: n.prop('active', false),
-                  onChanged: (_) => _send(onToggled),
-                ),
-                // Flexible, because the label is prose and the row is as wide
-                // as the window: "Hide join/part messages" beside a checkbox
-                // overflows a phone otherwise.
-                Flexible(
-                  child: Text(n.prop('label', ''),
-                      style: _style(t.textBody, t.onBg)),
-                ),
-              ],
-            ),
-          );
-        }
+        // The label is part of the target, and Flexible inside the kit's
+        // row: "Hide join/part messages" beside a checkbox overflows a phone
+        // otherwise. A little air above and below, so the row is a target a
+        // thumb can find.
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
+          child: KitCheckbox(
+            value: n.prop('active', false),
+            label: n.prop('label', ''),
+            onChanged: (_) => _send(n.prop('onToggled', '')),
+          ),
+        );
 
       case 'emoji':
         return _wrapTap(
@@ -936,7 +944,7 @@ class _NimAppState extends State<NimApp> {
             Container(
               padding: EdgeInsets.symmetric(horizontal: pad, vertical: pad / 2),
               decoration: BoxDecoration(
-                color: mine ? t.accent : t.component,
+                color: mine ? _c.accent : _c.hover,
                 borderRadius: BorderRadius.circular(t.radiusS),
               ),
               child: Row(
@@ -947,7 +955,7 @@ class _NimAppState extends State<NimApp> {
                     const SizedBox(width: 4),
                     Text('$count',
                         style: _style(t.textCaption,
-                            mine ? t.onAccent : t.dim)),
+                            mine ? _c.onAccent : _c.textDim)),
                   ],
                 ],
               ),
@@ -965,31 +973,26 @@ class _NimAppState extends State<NimApp> {
           final fallback = n.prop('fallback', '');
           final initial = Text(
               fallback.isNotEmpty ? fallback.substring(0, 1).toUpperCase() : '?',
-              style: _style(t.textBody, t.onBg));
+              style: _style(t.textBody, _c.text));
           // Through the host rather than as a `backgroundImage`: on the web a
           // face is an <img> the browser fetches, which is the only kind CORS
           // lets through, and an element cannot be a decoration.
-          final face = CircleAvatar(
-            radius: size / 2,
-            backgroundColor: t.component,
+          final face = Container(
+            width: size,
+            height: size,
+            alignment: Alignment.center,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(color: _c.hover, shape: BoxShape.circle),
             child: url.isEmpty
                 ? initial
-                : ClipOval(
-                    child: SizedBox(
-                      width: size,
-                      height: size,
-                      child: host.networkImage(url,
-                          fit: BoxFit.cover, onError: () => initial),
-                    ),
+                : SizedBox(
+                    width: size,
+                    height: size,
+                    child: host.networkImage(url,
+                        fit: BoxFit.cover, onError: () => initial),
                   ),
           );
-          final onClick = n.prop('onClick', '');
-          if (onClick.isEmpty) return face;
-          return InkWell(
-            onTap: () => _send(onClick),
-            customBorder: const CircleBorder(),
-            child: face,
-          );
+          return _wrapTap(n.prop('onClick', ''), face);
         }
 
       case 'image':
@@ -1055,10 +1058,13 @@ class _NimAppState extends State<NimApp> {
           // `TextInputType.url` is the layout that suits it: a full stop on
           // the main plane and no space bar to be helpful with.
           final verbatim = n.prop('verbatim', false);
-          final field = TextField(
+          final focus = _focus.putIfAbsent(key, FocusNode.new);
+          final input = TextField(
             controller: c,
-            focusNode: _focus.putIfAbsent(key, FocusNode.new),
-            style: _style(t.textBody, t.onBg),
+            focusNode: focus,
+            style: _style(t.textBody, _c.text),
+            cursorColor: _c.accent,
+            cursorWidth: 1.5,
             autocorrect: !verbatim,
             enableSuggestions: !verbatim,
             textCapitalization: verbatim
@@ -1066,18 +1072,42 @@ class _NimAppState extends State<NimApp> {
                 : TextCapitalization.sentences,
             keyboardType: verbatim ? TextInputType.url : null,
             decoration: InputDecoration(
+              isCollapsed: true,
+              border: InputBorder.none,
               hintText: n.prop('placeholder', ''),
-              hintStyle: _style(t.textBody, t.dim),
-              isDense: true,
-              filled: true,
-              fillColor: t.component,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(t.radiusS),
-                borderSide: BorderSide.none,
-              ),
+              hintStyle: _style(t.textBody, _c.textDim),
+              hintFadeDuration: Duration.zero,
             ),
             onChanged: (v) => _send(n.prop('onChange', ''), v),
             onSubmitted: (_) => _send(n.prop('onSubmit', '')),
+          );
+          // `KitTextField`'s frame, drawn here rather than used: the kit's
+          // field owns its own focus node and keyboard settings, and this one
+          // needs the node held per key (see `_focus`) and the `verbatim`
+          // settings above. The look is the kit's — a flat border that turns
+          // the focus colour, no underline, no fill animation.
+          final field = GestureDetector(
+            onTap: focus.requestFocus,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.text,
+              child: ListenableBuilder(
+                listenable: focus,
+                builder: (_, child) => Container(
+                  height: kitControlHeight + 2,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  alignment: Alignment.centerLeft,
+                  decoration: BoxDecoration(
+                    color: _c.surface,
+                    borderRadius: BorderRadius.circular(kitRadius),
+                    border: Border.all(
+                        color: focus.hasFocus ? _c.focus : _c.border,
+                        width: focus.hasFocus ? 2 : 1),
+                  ),
+                  child: child,
+                ),
+                child: input,
+              ),
+            ),
           );
           final w = _d(n.props['widthRequest'], 0);
           final pasted = _pastingPictures(n.prop('onPastePicture', ''), field);
@@ -1166,11 +1196,21 @@ class _NimAppState extends State<NimApp> {
 
       /// A panel over the screen rather than a screen of its own.
       case 'dialog':
-        return Card(
-          color: t.cardComponent,
-          child: Padding(
-            padding: const EdgeInsets.all(t.spaceS),
-            child: Column(
+        // KitDialog's look, but laid out where the tree puts it: the core
+        // decides where a dialog goes, so this is a panel, not a route.
+        return Container(
+          margin: const EdgeInsets.all(t.spaceXxxs),
+          padding: const EdgeInsets.all(t.spaceS + t.spaceXxxs),
+          decoration: BoxDecoration(
+            color: _c.surface,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _c.border),
+            boxShadow: [
+              BoxShadow(
+                  color: _c.shadow, blurRadius: 24, offset: const Offset(0, 8)),
+            ],
+          ),
+          child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1178,13 +1218,12 @@ class _NimAppState extends State<NimApp> {
                   Padding(
                     padding: const EdgeInsets.only(bottom: t.spaceXxs),
                     child: Text(n.prop('title', ''),
-                        style: _style(t.textTitle4, t.onCard)
+                        style: _style(t.textTitle4, _c.text)
                             .copyWith(fontWeight: FontWeight.w600)),
                   ),
                 ..._spaced(kids, spacing, vertical: true),
               ],
             ),
-          ),
         );
 
       default:
@@ -1193,7 +1232,7 @@ class _NimAppState extends State<NimApp> {
         // is what makes the boundary pleasant to work across.
         return Container(
           padding: const EdgeInsets.all(4),
-          color: Colors.orange.withValues(alpha: 0.3),
+          color: _c.danger.withValues(alpha: 0.3),
           child: Text('?${n.tag}'),
         );
     }
@@ -1211,9 +1250,9 @@ class _NimAppState extends State<NimApp> {
         final onClick = n.prop('onClick', '');
         return TextSpan(
           text: n.prop('label', ''),
-          style: _style(t.textBody, t.accent)
+          style: _style(t.textBody, _c.accent)
               .copyWith(decoration: TextDecoration.underline,
-                        decorationColor: t.accent),
+                        decorationColor: _c.accent),
           // A link with no `onClick` opens itself, which is every link in a
           // message: `textruns` emits a label and a URL and nothing else, so
           // until now they were underlined, blue, and inert. Opening one is
@@ -1231,28 +1270,28 @@ class _NimAppState extends State<NimApp> {
         );
       case 'text':
         return TextSpan(
-            text: n.prop('text', ''), style: _style(t.textBody, t.onBg));
+            text: n.prop('text', ''), style: _style(t.textBody, _c.text));
       case 'strong':
         return TextSpan(
             text: n.prop('text', ''),
-            style: _style(t.textBody, t.onBg)
+            style: _style(t.textBody, _c.text)
                 .copyWith(fontWeight: FontWeight.w700));
       case 'emphasis':
         return TextSpan(
             text: n.prop('text', ''),
-            style: _style(t.textBody, t.onBg)
+            style: _style(t.textBody, _c.text)
                 .copyWith(fontStyle: FontStyle.italic));
       case 'code':
         return TextSpan(
             text: n.prop('text', ''),
-            style: _style(t.textBody, t.onBg).copyWith(
+            style: _style(t.textBody, _c.text).copyWith(
               fontFamily: 'monospace',
-              color: t.accent,
+              color: _c.accent,
             ));
       default:
         return TextSpan(
             text: n.prop('label', n.prop('text', '')),
-            style: _style(t.textBody, t.onBg));
+            style: _style(t.textBody, _c.text));
     }
   }
 

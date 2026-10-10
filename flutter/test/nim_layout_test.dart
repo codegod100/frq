@@ -13,6 +13,7 @@
 ///   just test layout
 library;
 
+import 'package:flatkit/flatkit.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -551,11 +552,11 @@ void main() {
       await layOut(tester, sizes['phone']!);
 
       // The entry carrying a known line, found by what is in it rather than
-      // by position among every InkWell on the screen.
+      // by position among every Pressable on the screen.
       final entry = find
           .ancestor(
               of: find.textContaining('sandbox-01'),
-              matching: find.byType(InkWell))
+              matching: find.byType(Pressable))
           .first;
       expect(entry, findsOneWidget, reason: 'the entry is not tappable');
 
@@ -568,7 +569,7 @@ void main() {
       // in a list rather than a page of its own.
       final long = find
           .ancestor(
-              of: find.textContaining('Result'), matching: find.byType(InkWell))
+              of: find.textContaining('Result'), matching: find.byType(Pressable))
           .first;
       final lh = tester.getRect(long).height;
       // 167 before the text was clamped, and the clamp is what holds this:
@@ -630,7 +631,7 @@ void main() {
       // answers, up in the backlog, and that one is not this one.
       final card = find
           .ancestor(
-              of: find.textContaining('sandbox-01'), matching: find.byType(InkWell))
+              of: find.textContaining('sandbox-01'), matching: find.byType(Pressable))
           .first;
       expect(find.descendant(of: card, matching: find.text('→')), findsNothing,
           reason: 'the arrow button is back');

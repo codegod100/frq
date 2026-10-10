@@ -53,6 +53,14 @@ dependencies:
   # the shared path would break the two targets that work to serve the spike.
   frq_core:
     path: ../dart/frq_core
+
+  # The widgets the renderer paints with: flat, instant, no ripples. A git
+  # dependency rather than the pixi path flatkit's README describes, because
+  # the toolchain here is `tools/toolchain.sh` and pub fetches git on its own.
+  flatkit:
+    git:
+      url: https://github.com/codegod100/flutterkit
+      ref: main
 dev_dependencies:
   flutter_test:
     sdk: flutter

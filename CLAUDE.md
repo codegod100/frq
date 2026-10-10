@@ -137,6 +137,16 @@ The renderer knows the tag vocabulary and nothing else — no screens, no state,
 no idea what "connect" means. If a feature ever needs a change on both sides,
 the boundary is in the wrong place.
 
+The widgets that walk paints with are flatkit's
+([`codegod100/flutterkit`](https://github.com/codegod100/flutterkit), a git
+dependency in `flutter/pubspec.yaml`): flat buttons, fields and checkboxes
+with instant hover and press, and no ripples. Colours come from `KitTheme`,
+never from the renderer: `flutter/lib/nim_theme.dart` holds frq's dark palette
+as a `KitColors`, and `KitSystemTheme` picks it, the kit's light one, or the
+KDE scheme. A control flatkit lacks is built on its `Pressable` rather than
+reached for in Material; Material stays only for text editing, selection and
+scrollbars.
+
 There used to be two more trees. `src/` was jolt and libcosmic; `common/` and
 `flutter/src/` were ClojureDart, compiled for Android, Linux and the web. Both
 are gone. The APK went with them and has not come back — it wants

@@ -1,35 +1,43 @@
 /// The design tokens, as Dart.
 ///
-/// The same numbers `flutter/src/frq/theme/tokens.cljd` carries, in the
-/// language the renderer is written in. Duplicated rather than imported
-/// because that file is ClojureDart and this is the half that is leaving it;
-/// when the ClojureDart app goes, so does the other copy.
+/// Colours are flatkit's: frq's own dark palette is a `KitColors`, and the
+/// light one is the kit's. `KitSystemTheme` picks between them (or the KDE
+/// scheme) and the renderer reads the result with `KitTheme.of`, so nothing
+/// below this file names a colour of its own.
+///
+/// What stays here is what flatkit does not carry: the spacing scale and the
+/// type sizes the screens were laid out against.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:flatkit/flatkit.dart';
+import 'package:flutter/widgets.dart';
 
-const accent = Color(0xFFF4E3CF);
-const onAccent = Color(0xFF000000);
-const bg = Color(0xFF202833);
-const onBg = Color(0xFFCCD1D7);
-const component = Color(0xFF343C48);
-const componentHover = Color(0xFF48505A);
-const divider = Color(0x33CCD1D7);
-const card = Color(0xFF2C3440);
-const cardComponent = Color(0xFF3B4450);
-const onCard = Color(0xFFFFFFFF);
-const destructive = Color(0xFFFDA1A0);
-const onDestructive = Color(0xFF000000);
-const success = Color(0xFF92CF9C);
-
-/// `dim` is not a token of its own in the Clojure either — it is `onBg` at
-/// the opacity a caption wants, and naming it here keeps that one decision in
-/// one place.
-const dim = Color(0x99CCD1D7);
+/// frq's own dark palette, the numbers the app has always painted with,
+/// mapped onto flatkit's roles.
+const frqDark = KitColors(
+  brightness: Brightness.dark,
+  background: Color(0xFF202833),
+  surface: Color(0xFF2C3440),
+  hover: Color(0xFF343C48),
+  pressed: Color(0xFF48505A),
+  border: Color(0xFF3B4450),
+  borderStrong: Color(0xFF55606C),
+  text: Color(0xFFCCD1D7),
+  textDim: Color(0x99CCD1D7),
+  accent: Color(0xFFF4E3CF),
+  accentHover: Color(0xFFF8ECDE),
+  accentPressed: Color(0xFFE6D2BB),
+  onAccent: Color(0xFF000000),
+  danger: Color(0xFFFDA1A0),
+  dangerHover: Color(0xFFFDB6B5),
+  onDanger: Color(0xFF000000),
+  success: Color(0xFF92CF9C),
+  focus: Color(0xFFF4E3CF),
+  shadow: Color(0x66000000),
+);
 
 const radiusXs = 2.0;
-const radiusS = 8.0;
-const radiusM = 8.0;
+const radiusS = kitRadius;
 
 const spaceXxxs = 4.0;
 const spaceXxs = 8.0;
