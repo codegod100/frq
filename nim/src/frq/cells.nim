@@ -11,7 +11,7 @@
 ## documentation of what it obviously holds.
 
 import std/tables
-import frq/[model]
+import frq/[model, complete]
 
 type
   Screen* = enum
@@ -123,6 +123,8 @@ type
 
     # The compose bar and its three companions.
     draft*: string
+    tab*: TabState
+      ## What the last Tab in the compose box did, so the next one can cycle.
     editing*: EditTarget
     replyingTo*: ReplyTarget
     attachment*: Attachment

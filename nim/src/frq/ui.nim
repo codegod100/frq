@@ -80,7 +80,8 @@ func button*(text: string, onClick: string, kind = "default"): Node =
   n("button", %*{"label": text, "kind": kind, "onClick": onClick})
 
 func entry*(key, text, placeholder, onChange: string, width = 0,
-            onSubmit = "", verbatim = false, onPastePicture = ""): Node =
+            onSubmit = "", verbatim = false, onPastePicture = "",
+            onTab = "", caret = -1): Node =
   ## Every entry carries a key, and for the reason the Clojure's comment
   ## gives: a renderer that keeps a text controller per field needs a stable
   ## name for it, and without one the host and the port shared a controller
@@ -101,6 +102,13 @@ func entry*(key, text, placeholder, onChange: string, width = 0,
   # one. Only the host can see a clipboard, so it says when a paste was a
   # picture rather than text, and the core decides what that means.
   if onPastePicture.len > 0: p["onPastePicture"] = %onPastePicture
+  # Tab, where the field completes rather than moving focus on. The host
+  # sends the caret with it and Shift-Tab as `:back`.
+  if onTab.len > 0: p["onTab"] = %onTab
+  # Where the caret goes when the core rewrote the text, in UTF-16 code
+  # units. Absent puts it at the end, which is right for everything but a
+  # completion in the middle of a line.
+  if caret >= 0: p["caret"] = %caret
   n("entry", p)
 
 func checkbutton*(text: string, active: bool, onToggled: string): Node =

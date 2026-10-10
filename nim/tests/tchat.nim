@@ -423,3 +423,23 @@ suite "the lightbox":
     dispatch(%*{"id": "lightbox:https://x.com/a.png"})
     dispatch(%*{"id": "lightbox.close"})
     check not app.lightbox.has
+
+suite "Tab in the compose box":
+  test "completes a nick in the room and cycles on the next Tab":
+    app = withRoom()
+    app.current = "#test"
+    app.rooms["#test"].users = {"alice": "", "alicia": "@", "bob": ""}.toTable
+    dispatch(%*{"id": "draft.change", "value": "alic"})
+    dispatch(%*{"id": "draft.complete", "value": "4"})
+    # alice spoke last, so she comes first.
+    check app.draft == "alice: "
+    dispatch(%*{"id": "draft.complete", "value": $app.draft.len})
+    check app.draft == "alicia: "
+    # The entry says where the caret goes while the draft is Tab's.
+    let draft = cs.chatScreen(app, true).find("entry").filterIt(
+      it.props{"key"}.getStr == "draft")[0]
+    check draft.props{"onTab"}.getStr == "draft.complete"
+    check draft.props{"caret"}.getInt == app.draft.len
+    dispatch(%*{"id": "draft.change", "value": app.draft & "x"})
+    check not cs.chatScreen(app, true).find("entry").filterIt(
+      it.props{"key"}.getStr == "draft")[0].props.hasKey("caret")

@@ -15,7 +15,7 @@ import std/[json, options, sequtils, strutils, tables]
 import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
            atproto, handshake, textruns, members, msgsig, profile, store,
-           profilefetch, edits]
+           profilefetch, edits, complete]
 import frq/multiline as ml
 import frq/links as lk
 import frq/linkfetch as lf
@@ -740,7 +740,31 @@ proc dispatch*(event: JsonNode) =
         app.windowHeight = h
 
   # ------------------------------------------------------------ the compose
-  of "draft.change": app.draft = value
+  of "draft.change":
+    app.draft = value
+    app.tab = TabState()
+  of "draft.complete":
+    # Tab. `value` is the caret as the host counts it; `arg` is "back" for
+    # Shift-Tab. The nicks are this room's, whoever spoke last first.
+    let room = app.currentRoom
+    var users: seq[string]
+    for nick in room.users.keys: users.add nick
+    if room.name.len > 0 and not room.name.startsWith('#') and
+       room.name notin users:
+      users.add room.name
+    var spoke: seq[string]
+    for m in room.messages[max(0, room.messages.len - 500) .. ^1]:
+      spoke.add m.frm
+    var channels: seq[string]
+    for name in app.rooms.keys:
+      if name.startsWith('#'): channels.add name
+    let caret =
+      if value.len == 0: app.draft.len
+      else: byteOffset(app.draft, (try: parseInt(value) except ValueError: 0))
+    let t = tabComplete(app.draft, caret, byRecency(users, spoke, app.formNick),
+                        channels, app.tab, back = arg == "back")
+    app.tab = t
+    if t.active: app.draft = t.text
   of "send": sendDraft()
 
   of "reply.to":

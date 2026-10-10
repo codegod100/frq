@@ -16,6 +16,7 @@ library;
 import 'package:flatkit/flatkit.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frq_core/frq_core.dart' as core;
 import 'package:frq/nim_renderer.dart';
@@ -80,6 +81,24 @@ void main() {
       expect(find.text('hello there'), findsOneWidget);
       expect(find.text('#test'), findsWidgets);
       expectLaidOut(tester, 'chat content');
+    });
+
+    testWidgets('Tab completes a nick and stays in the box', (tester) async {
+      core.demoUi();
+      await layOut(tester, sizes['desktop']!);
+      final draft = find.byWidgetPredicate(
+          (w) => w is TextField && w.decoration?.hintText == 'Message #test');
+      expect(draft, findsOneWidget);
+      await tester.tap(draft);
+      await tester.enterText(draft, 'hi al');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      final field = tester.widget<TextField>(draft);
+      expect(field.controller!.text, 'hi alice ');
+      expect(field.controller!.selection.baseOffset, 'hi alice '.length);
+      expect(field.focusNode!.hasFocus, isTrue);
+      expectLaidOut(tester, 'chat after Tab');
     });
 
     testWidgets('lays out with the people panel up', (tester) async {

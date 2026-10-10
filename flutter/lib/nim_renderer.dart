@@ -184,6 +184,32 @@ class _NimAppState extends State<NimApp> {
     );
   }
 
+  /// An entry where Tab completes rather than moving focus on, sending
+  /// [event] with the caret — and `:back` for Shift-Tab. Which word, and
+  /// what it becomes, is the core's to decide.
+  Widget _completing(String event, TextEditingController c, Widget field) {
+    if (event.isEmpty) return field;
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: (_, e) {
+        if (e is KeyUpEvent || e.logicalKey != LogicalKeyboardKey.tab) {
+          return KeyEventResult.ignored;
+        }
+        final keys = HardwareKeyboard.instance;
+        // Ctrl-Tab and Alt-Tab belong to the window, not the field.
+        if (keys.isControlPressed || keys.isAltPressed || keys.isMetaPressed) {
+          return KeyEventResult.ignored;
+        }
+        final sel = c.selection;
+        final caret = sel.isValid ? sel.baseOffset : c.text.length;
+        _send(keys.isShiftPressed ? '$event:back' : event, '$caret');
+        return KeyEventResult.handled;
+      },
+      child: field,
+    );
+  }
+
   void _send(String id, [String value = '']) {
     if (id.isEmpty) return;
     setState(() => _frame = core.dispatchFrame(id, value));
@@ -1054,10 +1080,18 @@ class _NimAppState extends State<NimApp> {
               key, () => TextEditingController(text: value));
           // Only when it actually differs: assigning unconditionally moves the
           // caret to the end on every keystroke.
+          //
+          // At the end unless the core says where: a Tab completion in the
+          // middle of a line leaves the caret after the name, not after the
+          // rest of the line.
           if (c.text != value) {
+            final caret = n.prop<int>('caret', -1);
             c.value = c.value.copyWith(
               text: value,
-              selection: TextSelection.collapsed(offset: value.length),
+              selection: TextSelection.collapsed(
+                  offset: caret < 0 || caret > value.length
+                      ? value.length
+                      : caret),
             );
           }
           // A field holding an identifier, not a sentence.
@@ -1124,7 +1158,8 @@ class _NimAppState extends State<NimApp> {
             ),
           );
           final w = _d(n.props['widthRequest'], 0);
-          final pasted = _pastingPictures(n.prop('onPastePicture', ''), field);
+          final pasted = _completing(n.prop('onTab', ''), c,
+              _pastingPictures(n.prop('onPastePicture', ''), field));
           if (w > 0) return SizedBox(width: w, child: pasted);
           // No width asked for: take the rest of the row where there is a row
           // to take it from, and otherwise a definite width. NOT Expanded

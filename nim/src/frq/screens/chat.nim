@@ -14,7 +14,7 @@
 
 import std/[algorithm, json, strutils, tables]
 import std/options
-import frq/[ui, cells, model, clock, reactions, textruns, members,
+import frq/[ui, cells, model, clock, reactions, textruns, members, complete,
            glyphs, emoji, rooms, profile]
 import frq/links as lk
 from frq/screens/connect import errorNote
@@ -774,7 +774,13 @@ proc chatScreen*(s: State, connected: bool): Node =
     image("asset:assets/insert-image.png", maxWidth = 36, maxHeight = 36,
           onClick = "image.pick"),
     entry("draft", s.draft, "Message " & name, "draft.change",
-          onSubmit = "send", onPastePicture = "image.paste"),
+          onSubmit = "send", onPastePicture = "image.paste",
+          onTab = "draft.complete",
+          # Only while the draft is still what Tab left: a caret kept past
+          # that would point into a different line.
+          caret = if s.tab.active and s.tab.text == s.draft:
+                    utf16Offset(s.draft, s.tab.caret)
+                  else: -1),
     button("Send", "send", "primary"))
 
   vbox(%*{"spacing": 8, "margin": 12, "expand": true},
