@@ -487,10 +487,13 @@ proc profilePane(s: State): Node =
   let nick = s.profileViewing.nick
   let actor = s.profileViewing.actor
 
-  result = card(
-    hbox(%*{"spacing": 8},
-      title2(nick),
-      button("Close", "profile.close")))
+  # Somebody else gets a way to talk to them on their own; the reader's own
+  # profile does not, since a conversation with yourself goes nowhere.
+  var bar = hbox(%*{"spacing": 8}, title2(nick))
+  if cmpIgnoreCase(nick, s.formNick) != 0:
+    bar.children.add button("Message", "profile.message:" & nick)
+  bar.children.add button("Close", "profile.close")
+  result = card(bar)
 
   if actor.len == 0:
     # A guest has no identity to fetch. The honest answer, rather than a

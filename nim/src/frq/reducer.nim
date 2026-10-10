@@ -1076,6 +1076,13 @@ proc dispatch*(event: JsonNode) =
 
   of "profile.close": app.profileViewing = ProfileView()
 
+  of "profile.message":
+    # The profile's Message: what `/query nick` does, from the face rather
+    # than the compose bar, and the panel goes with it.
+    if arg.len > 0:
+      app.profileViewing = ProfileView()
+      runCommand(Command(kind: ckQuery, target: arg))
+
   of "lightbox":
     app.lightbox = Lightbox(has: true, url: arg, path: arg)
   of "lightbox.close": app.lightbox = Lightbox()

@@ -301,6 +301,13 @@ suite "the chat screen's panes":
     # What `room.open` does, and what the tab bar reads to light Chats.
     s.screen = scChat
 
+  test "a profile offers Message for somebody else, not for yourself":
+    s.formNick = "me"
+    s.profileViewing = ProfileView(has: true, nick: "alice")
+    check "Message" in cht.chatScreen(s, true).labels("button")
+    s.profileViewing = ProfileView(has: true, nick: "Me")
+    check "Message" notin cht.chatScreen(s, true).labels("button")
+
   test "the backlog and the rooms sit side by side when the list is up":
     # The toggle had a button and rendered nothing at all: `hideChatList` was
     # read for the button's own highlight and by nobody else.
