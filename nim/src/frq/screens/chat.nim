@@ -576,7 +576,11 @@ proc chatScreen*(s: State, connected: bool): Node =
   # fires at a real phone's width -- the three compact chips come to 352 of
   # 360. On a wide window the name is here and is `Flexible`, which a Wrap
   # cannot hold, so the row is a Row.
-  var headRow = hbox(%*{"spacing": 8, "wrap": compact})
+  # A little air off the window's corner, so the first chip is not jammed
+  # into it. Left only where there is width to spare: a phone's three chips
+  # already come to 352 of 360.
+  var headRow = hbox(%*{"spacing": 8, "wrap": compact, "marginTop": 6,
+                        "marginLeft": (if compact: 0 else: 10)})
 
   # Each control that comes and goes is in a wrapper of its own, so a child
   # appearing does not renumber the row for the renderer.
