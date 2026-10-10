@@ -66,6 +66,25 @@ proc setError(msg: string) =
   app.error = msg
   app.hasError = true
 
+var quietly: bool
+  ## Whether the connection under way is one nobody pressed Connect for: the
+  ## one `autoConnect` started from a remembered sign-in at launch. A sign-in
+  ## that turns out to be stale then ends on the connect screen it would have
+  ## opened on anyway, rather than in an error about a press nobody made.
+  ## Cleared by the next thing the reader does, and by getting in.
+var autoTried: bool
+  ## Whether this run has auto-connected already. Once: a reader who
+  ## disconnects meant it.
+
+proc signInFailed(msg: string) =
+  ## A sign-in that did not work: said, unless nobody asked for it.
+  app.connecting = false
+  app.status = "Not connected"
+  if quietly:
+    trace("oauth", "auto-connect gave up: " & msg)
+  else:
+    setError(msg)
+
 const historyLimit = 100
   ## How many lines of backlog to ask a room for.
 
@@ -232,8 +251,7 @@ when oa.hostSignsIn:
     ## by the host because minting it is WebCrypto. The last thing a browser
     ## connection waits for.
     if proof.len == 0:
-      setError("Could not prove the sign-in; try signing in again.")
-      app.connecting = false
+      signInFailed("Could not prove the sign-in; try signing in again.")
       return
     webSession.dpopProof = proof
     session = webSession
@@ -255,7 +273,12 @@ when oa.hostSignsIn:
     app.hasSession = false
     clearSession()
     app.connecting = false
-    if app.formHandle.strip().len > 0:
+    if quietly:
+      # Found out at launch rather than on a press: the connect screen is
+      # already the answer, and leaving the page for the authorization server
+      # is something the reader should ask for.
+      signInFailed("the browser holds no sign-in")
+    elif app.formHandle.strip().len > 0:
       app.hasError = false
       app.status = "Signing in with Bluesky…"
       oa.begin("", app.formHandle)
@@ -395,9 +418,9 @@ proc signIn(): bool =
       # way — so it goes, and the next press opens the browser.
       trace("oauth", "refresh refused: " & e.msg)
       app.brokerToken = ""
+      app.hasSession = false
       clearSession()
-      setError(e.msg)
-      app.connecting = false
+      signInFailed(e.msg)
       false
     except CatchableError as e:
       # Anything else is the network, not the answer: a name that did not
@@ -406,8 +429,7 @@ proc signIn(): bool =
       # meant a dropped wifi or a stray SIGPROF cost the reader their saved
       # sign-in and sent them back to a browser.
       trace("oauth", "refresh failed: " & e.msg)
-      setError("Could not reach the broker — " & e.msg)
-      app.connecting = false
+      signInFailed("Could not reach the broker — " & e.msg)
       false
 
 proc forgetPending*() =
@@ -481,6 +503,22 @@ proc connectNow() =
   if not signIn(): return
   openSocket()
 
+proc autoConnect*() =
+  ## At launch, with a sign-in remembered: connect without being asked.
+  ##
+  ## Only a Bluesky sign-in counts. A guest has nothing to be remembered as,
+  ## and an app password is never written down. Once per run, and never over
+  ## a connection the reader has already started or a screen they have moved
+  ## to. If the sign-in turns out to be stale it is dropped and the reader is
+  ## left on the connect screen with no error — see `quietly`.
+  if autoTried or not app.hasSession or app.authMode != amBluesky or
+     app.connecting or registered or app.screen != scConnect:
+    return
+  autoTried = true
+  quietly = true
+  trace("oauth", "connecting with the remembered sign-in")
+  connectNow()
+
 proc reconnects(): bool =
   ## Whether a dropped connection is dialled again by itself.
   ##
@@ -511,6 +549,7 @@ proc askForPicture(source, status: string) =
     app.status = status
 
 proc disconnect() =
+  quietly = false
   rememberRooms(force = true)
   # A browser wait is part of connecting, so Cancel ends it too — otherwise
   # a tab finished ten minutes later would sign in behind the reader.
@@ -722,7 +761,11 @@ proc dispatch*(event: JsonNode) =
     app.status = "Saved session forgotten."
 
   # --------------------------------------------------------- the connection
-  of "connect": connectNow()
+  of "connect":
+    quietly = false
+    connectNow()
+
+  of "auto-connect": autoConnect()
 
   of "cancel", "disconnect": disconnect()
 
@@ -1242,9 +1285,7 @@ proc drain*() =
     elif e.startsWith("error: "):
       oa.finished()
       app.loginUrl = ""
-      setError(e[7 .. ^1])
-      app.connecting = false
-      app.status = "Not connected"
+      signInFailed(e[7 .. ^1])
 
   while true:
     let (ok, e) = tr.tryEvent()
@@ -1329,6 +1370,7 @@ proc drain*() =
     case p.command
     of "001":
       app.connecting = false
+      quietly = false
       registered = true
       app.status = "Connected as " & app.formNick
       app.screen = scChats

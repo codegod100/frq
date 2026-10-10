@@ -276,16 +276,23 @@
 
   frq.init("");
 
-  // Two ways a session arrives, and they mean different things. Coming back
-  // from the authorization server is a sign-in the reader asked for and is
-  // waiting on, so it connects; finding one in storage at load is not, so it
-  // only fills the name in.
+  // Two ways a session arrives, and both connect. Coming back from the
+  // authorization server is a sign-in the reader asked for and is waiting
+  // on; finding one in storage at load is one they made on an earlier visit,
+  // and connects the way a remembered sign-in does on the desktop, quietly
+  // giving up if it has gone stale.
   frqOauth.resume().then(
     function (session) {
       if (session) frq.handoff(JSON.stringify(session));
       else {
         var saved = frqOauth.saved();
-        if (saved) frq.restoreSession(JSON.stringify(saved));
+        if (saved) {
+          // Remembered from an earlier visit, so it connects without being
+          // asked. A session the browser no longer holds is found out when
+          // the proof is minted, and ends quietly on the connect screen.
+          frq.restoreSession(JSON.stringify(saved));
+          frq.dispatch(JSON.stringify({id: "auto-connect"}));
+        }
       }
     },
     function (e) { frq.signInFailed(String(e && e.message ? e.message : e)); });
