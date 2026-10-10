@@ -231,14 +231,29 @@ suite "the chat screen":
     check not cs.chatScreen(dmState, true).labels("button")
       .anyIt(it.startsWith("People"))
 
-  test "the people panel lists who is here, only when asked":
+  test "the people panel waits to be asked on a narrow window":
+    s.windowWidth = 400
     check "People" notin cs.chatScreen(s, true).labels("title-2")
     s.showUsers = true
+    check "People" in cs.chatScreen(s, true).labels("title-2")
+
+  test "and is up by default on a wide one, until folded":
     s.windowWidth = 1200
     let t = cs.chatScreen(s, true)
     check "People" in t.labels("title-2")
     # With the mode prefix in front of the name, ops first.
-    check "@alice" in t.labels("label")
+    check "@alice" in t.labels("button")
+    s.hideUsers = true
+    check "People" notin cs.chatScreen(s, true).labels("title-2")
+
+  test "each person in the panel has a face":
+    s.windowWidth = 1200
+    let rows = cs.chatScreen(s, true).find("hbox").filterIt(
+      it.props{"key"}.getStr() == "member-alice")
+    check rows.len == 1
+    let faces = rows[0].find("avatar")
+    check faces.len == 1
+    check faces[0].props{"fallback"}.getStr() == "alice"
 
   test "Jump to present only when we are not at it":
     check "↓ Jump to present" notin cs.chatScreen(s, true).labels("button")

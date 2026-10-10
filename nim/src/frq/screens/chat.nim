@@ -22,6 +22,7 @@ from frq/screens/frame import tabBar
 
 const
   faceSize = 32
+  memberFaceSize = 20
   pillSize = 20
   chipGap = 4
   overviewLines* = 40
@@ -537,7 +538,7 @@ proc chatScreen*(s: State, connected: bool): Node =
   let room = s.currentRoom
   let name = if room.name.len > 0: room.name else: "Chat"
   let isChannel = room.name.startsWith("#")
-  let showUsers = s.showUsers and isChannel
+  let showUsers = s.usersOpen and isChannel
   # The chat list rides beside the backlog on a wide window. On a narrow one
   # there is `← Chats`, which goes to the list as a screen of its own — a
   # panel and a whole-screen list in the same place would be two ways to the
@@ -605,7 +606,7 @@ proc chatScreen*(s: State, connected: bool): Node =
   var people = vbox(%*{"key": "people"})
   if isChannel:
     people.children.add chip("People " & $room.users.len, "users.toggle",
-                             s.showUsers)
+                             s.usersOpen)
   headRow.children.add people
 
   # Not in a conditional wrapper: the overview is about every room rather than
@@ -680,7 +681,16 @@ proc chatScreen*(s: State, connected: bool): Node =
     # Ops first, then alphabetically, with the mode prefix in front of the
     # name — the order every other client lists them in.
     for m in memberList(room.users):
-      list.children.add label(m.prefix & m.nick)
+      # The same face and the same press the backlog gives them, so the list
+      # is people rather than a column of names.
+      let actor = actorFor(s.dids.getOrDefault(m.nick, ""), m.nick)
+      let open = "profile.open:" & m.nick & ":" & actor
+      list.children.add hbox(%*{"key": "member-" & m.nick, "spacing": 6,
+                                "wrap": false},
+        avatar(avatarFor(actor, m.nick), m.nick, size = memberFaceSize,
+               onClick = open),
+        n("button", %*{"label": m.prefix & m.nick, "kind": "plain",
+                       "onClick": open, "expand": true}))
     panel.children.add list
     peoplePane.children.add panel
 

@@ -129,6 +129,15 @@ suite "the prefs file":
     app = initState()
     restore()
     check not app.showUsers
+
+  test "folding it away on a wide window is remembered":
+    restore()
+    app.windowWidth = 1200
+    dispatch(%*{"id": "users.toggle"})
+    check app.hideUsers
+    app = initState()
+    restore()
+    check app.hideUsers
   test "the overview is not one of them":
     # It is a way of looking at the moment you are in rather than a
     # preference, and reopening into it would answer a question nobody asked

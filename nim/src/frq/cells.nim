@@ -131,6 +131,9 @@ type
 
     # Chat chrome.
     showUsers*: bool
+      ## The people panel on a narrow window, where it is asked for.
+    hideUsers*: bool
+      ## The people panel on a wide one, where it is up unless folded away.
     hideChatList*: bool
     overview*: bool
     atPresent*: bool
@@ -207,6 +210,13 @@ func wide*(s: State): bool =
   ## Past this the room list and the conversation are both on screen instead
   ## of taking turns.
   s.windowWidth >= wideWidth
+
+func usersOpen*(s: State): bool =
+  ## Whether the people panel is up. Two switches because it starts in two
+  ## places: beside the conversation on a wide window there is room for it,
+  ## so it is there until folded; on a narrow one it takes a strip the
+  ## messages need, so it waits to be asked.
+  if s.wide: not s.hideUsers else: s.showUsers
 
 func currentRoom*(s: State): Room =
   if s.current.len > 0 and s.rooms.hasKey(s.current): s.rooms[s.current]

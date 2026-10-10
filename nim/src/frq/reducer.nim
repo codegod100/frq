@@ -162,10 +162,14 @@ proc restorePrefs() =
   let prefs = loadPrefs()
   app.hideJoinPart = prefs.getOrDefault("hideJoinPart", app.hideJoinPart)
   app.hideChatList = prefs.getOrDefault("hideChatList", app.hideChatList)
+  # Folding it away on a wide window is, though: there it is beside the room
+  # rather than instead of it, so a saved "off" costs nothing on a phone.
+  app.hideUsers = prefs.getOrDefault("hideUsers", app.hideUsers)
 
 proc rememberPrefs() =
   discard savePrefs({"hideJoinPart": app.hideJoinPart,
-                     "hideChatList": app.hideChatList}.toTable)
+                     "hideChatList": app.hideChatList,
+                     "hideUsers": app.hideUsers}.toTable)
 
 var
   multilines: ml.Assembler
@@ -832,8 +836,12 @@ proc dispatch*(event: JsonNode) =
     app.hideChatList = not app.hideChatList
     rememberPrefs()
   of "users.toggle":
-    # Not remembered; see `restorePrefs`.
-    app.showUsers = not app.showUsers
+    # Narrow is not remembered and wide is; see `restorePrefs`.
+    if app.wide:
+      app.hideUsers = not app.hideUsers
+      rememberPrefs()
+    else:
+      app.showUsers = not app.showUsers
   of "overview.toggle":
     # Not kept: the overview is a way of looking at the moment you are in
     # rather than a preference, and a client that reopened into it would be
@@ -1585,6 +1593,11 @@ proc drain*() =
             r.users = r.namesAcc
             r.namesAcc.clear()
           app.rooms[room] = r
+          # Faces for the people panel. WHO asks for everyone it learns a DID
+          # for; this is the handle-shaped nicks it may never answer about.
+          for nick in r.users.keys:
+            let actor = actorFor(app.dids.getOrDefault(nick, ""), nick)
+            if actor.len > 0 and not isAgent(actor): want(actor)
           # And the only moment this client knows a room has fully arrived.
           #
           # freeq re-joins an authenticated user's channels at registration
