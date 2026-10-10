@@ -92,6 +92,8 @@ func runNodes(m: Message): Node =
   ## the left edge.
   result = paragraph()
   result.props["key"] = %"runs"
+  if m.action:
+    result.children.add n("emphasis", %*{"text": "* " & m.frm & " "})
   for r in textRuns(m.text):
     case r.kind
     of rkText: result.children.add text(r.value)
@@ -396,9 +398,10 @@ proc messageRows*(s: State, room: Room, messages: seq[Message]): seq[Node] =
 proc visible(s: State, messages: seq[Message]): seq[Message] =
   ## The lines this reader wants to see. Comings and goings are the room
   ## talking about itself; a quiet room reads better with them and a busy one
-  ## drowns in them, so it is the reader's call.
+  ## drowns in them, so it is the reader's call. Only those: a notice, or
+  ## what a `/help` answered, is still something the reader wants to see.
   for m in messages:
-    if s.hideJoinPart and m.system: continue
+    if s.hideJoinPart and m.system and m.frm == "*": continue
     result.add m
 
 proc overviewPane(s: State): Node =

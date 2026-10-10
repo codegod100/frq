@@ -45,8 +45,8 @@ func render(st: TabState, word: string, whole: bool): string =
   ## text after the caret already starts with one.
   result = st.lead & word
   if not whole: return
-  let channel = word.startsWith('#')
-  if st.atStart and st.lead.len == 0 and not channel: result.add ':'
+  let addressed = not word.startsWith('#') and not word.startsWith('/')
+  if st.atStart and st.lead.len == 0 and addressed: result.add ':'
   if not st.tail.startsWith(' '): result.add ' '
 
 func place(st: var TabState, word: string, whole: bool) =
@@ -56,12 +56,14 @@ func place(st: var TabState, word: string, whole: bool) =
   st.active = true
 
 func tabComplete*(text: string, caret: int, nicks, channels: seq[string],
-                  prev: TabState, back = false): TabState =
+                  prev: TabState, back = false,
+                  commands: seq[string] = @[]): TabState =
   ## Tab pressed with the caret at byte offset `caret` of `text`.
   ##
   ## `nicks` in the order a cycle visits them — the caller puts whoever spoke
   ## last first, which is who a reader is most often answering. A word
-  ## starting with `#` is matched against `channels` instead.
+  ## starting with `#` is matched against `channels` instead, and one starting
+  ## with `/` at the very start of the line against `commands`.
   let caret = clamp(caret, 0, text.len)
 
   # A Tab straight after a Tab: the next match, or the previous one.
@@ -87,7 +89,11 @@ func tabComplete*(text: string, caret: int, nicks, channels: seq[string],
     word = word[1 .. ^1]
   if word.len == 0: return
 
-  let pool = if word.startsWith('#'): channels else: nicks
+  let command = word.startsWith('/') and result.head.len == 0 and
+                result.lead.len == 0
+  let pool = if command: commands
+             elif word.startsWith('#'): channels
+             else: nicks
   let lower = word.toLowerAscii
   for c in pool:
     if c.toLowerAscii.startsWith(lower) and c notin result.matches:

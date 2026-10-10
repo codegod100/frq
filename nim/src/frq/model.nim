@@ -51,6 +51,7 @@ type
                           ## first draft of this said seconds and the day
                           ## headings quietly stopped appearing.
     system*: bool         ## a join/part/notice rather than something said
+    action*: bool         ## a `/me`: `text` is what they did, not what they said
     mention*: bool
     edited*: bool
     replyTo*: string      ## the id this answers, "" for a line answering none

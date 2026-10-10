@@ -15,7 +15,7 @@ import std/[json, options, sequtils, strutils, tables]
 import std/sets
 import frq/[cells, model, rooms, reactions, trace, ircparse, clock,
            atproto, handshake, textruns, members, msgsig, profile, store,
-           profilefetch, edits, complete]
+           profilefetch, edits, complete, commands]
 import frq/multiline as ml
 import frq/links as lk
 import frq/linkfetch as lf
@@ -510,8 +510,119 @@ proc askForPicture(source, status: string) =
     app.pickFrom = source
     app.status = status
 
+proc disconnect() =
+  rememberRooms(force = true)
+  # A browser wait is part of connecting, so Cancel ends it too — otherwise
+  # a tab finished ten minutes later would sign in behind the reader.
+  oa.cancel()
+  app.loginUrl = ""
+  # The key goes with the connection, so a reconnect signs with one the
+  # server has actually been told about.
+  msgsig.forget()
+  registered = false
+  tr.close()
+  app.connecting = false
+  app.screen = scConnect
+  app.status = "Not connected"
+
+proc echoLine(room, line: string, action = false, replyTo = "") =
+  ## Our own line on screen now, because the server does not send your own
+  ## PRIVMSG back unless echo-message was negotiated — and every client that
+  ## forgets this looks like it dropped the message.
+  app.rooms.ensureRoom(room)
+  var r = app.rooms[room]
+  var m = Message(frm: app.formNick, text: line, at: nowMs(), action: action,
+                  localId: "local-" & $r.messages.len, pending: true)
+  if room == app.current: m.imageUrl = app.attachment.url
+  m.replyTo = replyTo
+  r.messages.add m
+  wantFace(m)
+  app.rooms[room] = r.markRead
+
+proc localNote(room, line: string) =
+  ## Something this client says to its reader, in the room they are looking
+  ## at. Not `note`: that one drops a line it has seen before, and the answer
+  ## to a second `/help` is the same as to the first.
+  app.rooms.ensureRoom(room)
+  var r = app.rooms[room]
+  r.messages.add Message(frm: "frq", text: line, at: nowMs(), system: true)
+  app.rooms[room] = r.markRead
+
+proc runCommand(c: Command) =
+  ## A `/` line, carried out. See `commands` for what each one is.
+  case c.kind
+  of ckNone: discard
+  of ckUsage: setError(c.text)
+  of ckJoin:
+    app.rooms.ensureRoom(c.target)
+    var r = app.rooms[c.target]
+    r.joining = true
+    app.rooms[c.target] = r
+    send("JOIN " & c.target & (if c.text.len > 0: " " & c.text else: ""))
+    openRoom(c.target)
+  of ckPart:
+    if not dm(c.target):
+      send("PART " & c.target & (if c.text.len > 0: " :" & c.text else: ""))
+    if app.rooms.hasKey(c.target):
+      app.rooms.del(c.target)
+      rememberRooms(force = true)
+      if app.current == c.target:
+        app.current = ""
+        app.screen = scChats
+  of ckMsg:
+    send("PRIVMSG " & c.target & " :" & c.text)
+    # Into the conversation it went to, without leaving this one: `/msg` is
+    # the way to say something somewhere else, and `/query` the way to go.
+    echoLine(c.target, c.text)
+  of ckQuery:
+    openRoom(c.target)
+    if c.text.len > 0:
+      send("PRIVMSG " & c.target & " :" & c.text)
+      echoLine(c.target, c.text)
+  of ckMe:
+    if c.target.len == 0:
+      setError("Open a conversation to do that in.")
+      return
+    send("PRIVMSG " & c.target & " :" & actionLine(c.text))
+    echoLine(c.target, c.text, action = true)
+  of ckNick:
+    # Settled when the server's NICK comes back, which renames us everywhere;
+    # a refusal is a 433 and says so.
+    send("NICK " & c.target)
+  of ckTopic:
+    if c.text.len > 0:
+      send("TOPIC " & c.target & " :" & c.text)
+    else:
+      let topic = if app.rooms.hasKey(c.target): app.rooms[c.target].topic
+                  else: ""
+      if app.current.len > 0:
+        localNote(app.current,
+                  if topic.len > 0: "Topic for " & c.target & ": " & topic
+                  else: "No topic is set for " & c.target & ".")
+      send("TOPIC " & c.target)
+  of ckQuit:
+    send("QUIT" & (if c.text.len > 0: " :" & c.text else: ""))
+    disconnect()
+  of ckHelp:
+    if app.current.len == 0:
+      setError("Commands: " & commandNames().join(" "))
+    else:
+      for line in helpLines(): localNote(app.current, line)
+  of ckRaw:
+    send(c.text)
+
 proc sendDraft() =
-  let text = app.draft.strip()
+  let raw = app.draft.strip()
+  # A command is carried out rather than said — but not while editing: an
+  # edit is a line's new wording, and `/me` there is what it now says.
+  if not app.editing.has and raw.isCommand:
+    let c = parseCommand(raw, app.current)
+    # A mistake keeps the line, so the reader can mend it rather than retype.
+    if c.kind != ckUsage: app.draft = ""
+    app.tab = TabState()
+    runCommand(c)
+    return
+  let text = unescapeSlash(raw)
   # A picture with no words is a message; words with no picture are too.
   let picture = app.attachment.url
   if (text.len == 0 and picture.len == 0) or app.current.len == 0: return
@@ -567,17 +678,7 @@ proc sendDraft() =
   else:
     send("PRIVMSG " & app.current & " :" & line)
 
-  # Echoed locally, because the server does not send your own PRIVMSG back
-  # unless echo-message was negotiated — and every client that forgets this
-  # looks like it dropped the message.
-  var r = app.rooms[app.current]
-  var m = Message(frm: app.formNick, text: line, at: nowMs(),
-                  localId: "local-" & $r.messages.len, pending: true)
-  m.imageUrl = app.attachment.url
-  m.replyTo = replyTo
-  r.messages.add m
-  wantFace(m)
-  app.rooms[app.current] = r.markRead
+  echoLine(app.current, line, replyTo = replyTo)
   app.draft = ""
   app.attachment = Attachment()
 
@@ -618,20 +719,7 @@ proc dispatch*(event: JsonNode) =
   # --------------------------------------------------------- the connection
   of "connect": connectNow()
 
-  of "cancel", "disconnect":
-    rememberRooms(force = true)
-    # A browser wait is part of connecting, so Cancel ends it too — otherwise
-    # a tab finished ten minutes later would sign in behind the reader.
-    oa.cancel()
-    app.loginUrl = ""
-    # The key goes with the connection, so a reconnect signs with one the
-    # server has actually been told about.
-    msgsig.forget()
-    registered = false
-    tr.close()
-    app.connecting = false
-    app.screen = scConnect
-    app.status = "Not connected"
+  of "cancel", "disconnect": disconnect()
 
   of "error.dismiss":
     app.error = ""
@@ -767,7 +855,8 @@ proc dispatch*(event: JsonNode) =
       if value.len == 0: app.draft.len
       else: byteOffset(app.draft, (try: parseInt(value) except ValueError: 0))
     let t = tabComplete(app.draft, caret, byRecency(users, spoke, app.formNick),
-                        channels, app.tab, back = arg == "back")
+                        channels, app.tab, back = arg == "back",
+                        commands = commandNames())
     app.tab = t
     if t.active: app.draft = t.text
   of "send": sendDraft()
@@ -1279,6 +1368,9 @@ proc drain*() =
         # A message to us rather than to a channel belongs in a buffer named
         # for the sender: the target is our own nick and is nobody's room.
         let room = if target.startsWith("#"): target else: who
+        # A `/me` is the action alone, with a flag; how it reads is the
+        # screen's business.
+        let (said, isAction) = ctcpAction(p.params[^1])
         # A revision is not a new line: it replaces the one it names, under
         # that line's own id — never the revision's own wire msgid, which
         # nothing else refers to. Before the echo check below, because our
@@ -1316,13 +1408,14 @@ proc drain*() =
         # msgid the server gave it — not a new message.
         if who == app.formNick and app.rooms.hasKey(room):
           var r = app.rooms[room]
-          let adopted = r.adoptEcho(who, p.params[^1], msgid, at,
+          let adopted = r.adoptEcho(who, said, msgid, at,
                                     if p.hasAccount: p.account else: "")
           if adopted:
             app.rooms[room] = r
             continue
 
-        var m = Message(id: msgid, frm: who, text: p.params[^1], at: at)
+        var m = Message(id: msgid, frm: who, text: said, at: at,
+                        action: isAction)
         if p.hasAccount: m.account = p.account
         # The picture link out of the text, which is what draws the inline
         # preview. This was hardcoded to "" — assigning a field its own
@@ -1512,6 +1605,21 @@ proc drain*() =
           var r = app.rooms[room]
           r.users.withMode(p.params[1], p.params[2 .. ^1])
           app.rooms[room] = r
+
+    of "TOPIC":
+      if p.params.len >= 2 and app.rooms.hasKey(p.params[0]):
+        var r = app.rooms[p.params[0]]
+        r.topic = p.params[^1]
+        app.rooms[p.params[0]] = r
+        note(p.params[0], Message(frm: "*", text: nickOf(p.prefix) &
+                                  " set the topic: " & p.params[^1],
+                                  at: at, system: true))
+
+    of "331":
+      if p.params.len >= 2 and app.rooms.hasKey(p.params[^2]):
+        var r = app.rooms[p.params[^2]]
+        r.topic = ""
+        app.rooms[p.params[^2]] = r
 
     of "332":
       if p.params.len >= 2 and app.rooms.hasKey(p.params[^2]):
