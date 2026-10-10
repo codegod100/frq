@@ -17,6 +17,7 @@ type
   CommandKind* = enum
     ckNone      ## not a command: say the line
     ckJoin, ckPart, ckMsg, ckQuery, ckMe, ckNick, ckTopic, ckQuit, ckHelp
+    ckMarkRead  ## the Mark all read button, typed
     ckRaw       ## `/quote`, `/raw`, and anything not named above
     ckUsage     ## a known command missing what it needs; `text` says what
 
@@ -38,6 +39,7 @@ const commandHelp*: seq[CommandHelp] = @[
   ("nick", "newnick", "change your nickname"),
   ("topic", "[text]", "show or set this channel's topic"),
   ("quit", "[reason]", "disconnect"),
+  ("markread", "", "mark every room and DM read"),
   ("quote", "LINE", "send a raw IRC line (also /raw)"),
   ("help", "", "list these commands")]
 
@@ -115,6 +117,8 @@ func parseCommand*(text: string, current = ""): Command =
     else: Command(kind: ckTopic, target: current, text: rest)
   of "quit", "disconnect":
     Command(kind: ckQuit, text: rest)
+  of "markread", "markallread":
+    Command(kind: ckMarkRead)
   of "help", "commands", "?":
     Command(kind: ckHelp)
   of "quote", "raw":

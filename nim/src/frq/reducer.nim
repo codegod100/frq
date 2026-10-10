@@ -548,6 +548,9 @@ proc localNote(room, line: string) =
   r.messages.add Message(frm: "frq", text: line, at: nowMs(), system: true)
   app.rooms[room] = r.markRead
 
+proc dispatch*(event: JsonNode)
+  ## Forward, because `/markread` is the button typed and sends its event.
+
 proc runCommand(c: Command) =
   ## A `/` line, carried out. See `commands` for what each one is.
   case c.kind
@@ -608,6 +611,8 @@ proc runCommand(c: Command) =
       setError("Commands: " & commandNames().join(" "))
     else:
       for line in helpLines(): localNote(app.current, line)
+  of ckMarkRead:
+    dispatch(%*{"id": "rooms.mark-read"})
   of ckRaw:
     send(c.text)
 

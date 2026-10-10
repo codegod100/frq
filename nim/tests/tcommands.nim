@@ -142,3 +142,11 @@ suite "commands on the wire":
     tr.feed(":bob!b@h TOPIC #freeq :new topic")
     drain()
     check app.rooms["#freeq"].topic == "new topic"
+  test "markread is the Mark all read button":
+    tr.feed(":bob!b@h PRIVMSG #other :unread")
+    drain()
+    check app.rooms["#other"].unread > 0
+    check parseCommand("/markread", "").kind == ckMarkRead
+    typed("/markread")
+    check sent().len == 0
+    check app.rooms["#other"].unread == 0
