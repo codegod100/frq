@@ -579,8 +579,8 @@ proc chatScreen*(s: State, connected: bool): Node =
   # A little air off the window's corner, so the first chip is not jammed
   # into it. Left only where there is width to spare: a phone's three chips
   # already come to 352 of 360.
-  var headRow = hbox(%*{"spacing": 8, "wrap": compact, "marginTop": 6,
-                        "marginLeft": (if compact: 0 else: 10)})
+  var headRow = hbox(%*{"spacing": 8, "wrap": compact, "marginTop": 8,
+                        "marginLeft": (if compact: 0 else: 28)})
 
   # Each control that comes and goes is in a wrapper of its own, so a child
   # appearing does not renumber the row for the renderer.
