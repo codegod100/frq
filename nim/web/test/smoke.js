@@ -203,5 +203,30 @@ frq.dispatch(JSON.stringify({ id: "connect" }));
 check("the next Connect signs in again rather than asking for a proof",
       frq.needProof() === false && frq.wantedSignIn() === "alice.bsky.social");
 
+// A sign-in remembered from an earlier visit connects at load, without a
+// press. When the browser turns out not to hold it any more, that ends on
+// the connect screen with no error and no trip to the authorization server.
+frq.dispatch(JSON.stringify({ id: "error.dismiss" }));
+frq.restoreSession(JSON.stringify({
+  did: "did:plc:alice", handle: "alice.bsky.social",
+  accessJwt: "tok-stale", pds: "https://pds.example",
+}));
+check("restoring a session alone does not connect", frq.needProof() === false);
+frq.dispatch(JSON.stringify({ id: "auto-connect" }));
+check("auto-connect asks for a proof", frq.needProof() === true);
+frq.sessionGone();
+check("a stale one does not leave for a sign-in",
+      frq.wantedSignIn() === "");
+check("nor says anything about it",
+      !frq.render().includes("error.dismiss"));
+check("and stays on the connect screen",
+      frq.render().includes("\"connect\""));
+frq.restoreSession(JSON.stringify({
+  did: "did:plc:alice", handle: "alice.bsky.social",
+  accessJwt: "tok-new", pds: "https://pds.example",
+}));
+frq.dispatch(JSON.stringify({ id: "auto-connect" }));
+check("and only once a run", frq.needProof() === false);
+
 console.log(failures === 0 ? "all ok" : failures + " failed");
 process.exit(failures === 0 ? 0 : 1);

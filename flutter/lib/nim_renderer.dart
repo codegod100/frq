@@ -111,6 +111,13 @@ class _NimAppState extends State<NimApp> {
   @override
   void initState() {
     super.initState();
+    // A remembered sign-in connects by itself, once the first frame is up:
+    // on the desktop it is a round trip to the broker, and the window should
+    // not wait on it to appear. The core decides whether there is anything
+    // to connect as. In a browser the sign-in arrives later than this, and
+    // the page asks again when it does.
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _send('auto-connect'));
     // Polling, because the socket lives on a Nim thread and there is no
     // callback into Dart. At ~70µs a render a 100ms timer costs nothing.
     _poll = Timer.periodic(const Duration(milliseconds: 100), (_) {

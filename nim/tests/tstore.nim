@@ -142,3 +142,20 @@ suite "the prefs file":
     check loadPrefs().len == 0
     restore()
     check not app.hideJoinPart
+
+suite "connecting at launch":
+  setup: clean()
+  test "with nothing remembered, does nothing":
+    restore()
+    dispatch(%*{"id": "auto-connect"})
+    check not app.connecting
+    check not app.hasError
+    check app.screen == scConnect
+  test "a guest nick is not a sign-in to connect as":
+    # A guest has nothing remembered to be; the connect screen is where one
+    # says who they are this time.
+    restore()
+    app.authMode = amGuest
+    app.formNick = "someone"
+    dispatch(%*{"id": "auto-connect"})
+    check not app.connecting
