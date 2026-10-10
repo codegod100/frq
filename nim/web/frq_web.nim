@@ -142,6 +142,9 @@ proc frqNeedForget(): bool {.exportc.} = oa.needForget()
 proc frqProofReady(proof: cstring) {.exportc.} = proofReady($proof)
   ## The proof, minted. The last thing a browser connection waits for.
 
+proc frqSessionGone() {.exportc.} = sessionGone()
+  ## The host was asked for a proof and has no sign-in to make one from.
+
 proc frqSignInFailedWith(reason: cstring) {.exportc.} = oa.failed($reason)
 
 proc frqSignInFailed(reason: cstring) {.exportc.} = oa.failed($reason)
@@ -197,6 +200,7 @@ globalThis.frq = {
   wantedPicture: frqWantedPicture,
   proofReady: frqProofReady,
   signInFailed: frqSignInFailed,
+  sessionGone: frqSessionGone,
   trace: frqTrace,
   demo: frqDemo,
 };

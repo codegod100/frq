@@ -239,6 +239,30 @@ when oa.hostSignsIn:
     session = webSession
     openSocket()
 
+  proc sessionGone*() =
+    ## The host was asked for a proof and holds no sign-in to mint one from.
+    ##
+    ## The core can believe in a session the host no longer has: one restored
+    ## from storage the host has since cleared, or one the host forgot when
+    ## its refresh token was refused. Until this, every Connect asked for a
+    ## proof again, the host answered "not signed in" again, and the only way
+    ## out was the Forget button. A session the host does not have is not a
+    ## session, so it goes, and the Connect that found out carries on as the
+    ## first sign-in it now is.
+    webSession = Session()
+    session = Session()
+    app.brokerToken = ""
+    app.hasSession = false
+    clearSession()
+    app.connecting = false
+    if app.formHandle.strip().len > 0:
+      app.hasError = false
+      app.status = "Signing in with Bluesky…"
+      oa.begin("", app.formHandle)
+    else:
+      setError("Your Bluesky sign-in has ended. Enter your handle and " &
+               "press Connect to sign in again.")
+
 proc setSessionForTest*(did, pds: string) =
   ## A signed-in connection, for a test that is about what follows one.
   session = Session(kind: skPdsOauth, did: did, pds: pds, accessJwt: "tok")

@@ -255,6 +255,15 @@
           frq.proofReady(s.dpopProof);
         },
         function (e) {
+          // No session left to prove: never had one, or it was forgotten
+          // when the refresh token was refused. The core still thinks it is
+          // signed in, so tell it otherwise and let it start a fresh
+          // sign-in, rather than answering every Connect with the same
+          // "not signed in".
+          if (!frqOauth.saved()) {
+            frq.sessionGone();
+            return;
+          }
           frq.signInFailed(String(e && e.message ? e.message : e));
           frq.proofReady("");
         });

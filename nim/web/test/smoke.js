@@ -185,5 +185,23 @@ frq.render();
 check("a disconnect is not answered with a reconnect",
       frq.wanted() === "" && frq.needProof() === false);
 
+// A session the core remembers and the host has lost: Connect asks for a
+// proof, the host has nothing to prove it with, and says so. That used to
+// end in "not signed in" on every press; now it starts a fresh sign-in.
+frq.restoreSession(JSON.stringify({
+  did: "did:plc:alice", handle: "alice.bsky.social",
+  accessJwt: "tok-gone", pds: "https://pds.example",
+}));
+frq.dispatch(JSON.stringify({ id: "connect" }));
+check("a remembered session asks for a proof", frq.needProof() === true);
+frq.sessionGone();
+check("a session the host lost starts a fresh sign-in",
+      frq.wantedSignIn() === "alice.bsky.social");
+check("and does not say it is signed in",
+      !frq.render().includes("not signed in"));
+frq.dispatch(JSON.stringify({ id: "connect" }));
+check("the next Connect signs in again rather than asking for a proof",
+      frq.needProof() === false && frq.wantedSignIn() === "alice.bsky.social");
+
 console.log(failures === 0 ? "all ok" : failures + " failed");
 process.exit(failures === 0 ? 0 : 1);

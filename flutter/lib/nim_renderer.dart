@@ -328,12 +328,26 @@ class _NimAppState extends State<NimApp> {
   }
 
   Widget _tap(VoidCallback onTap, Widget child) =>
-      Pressable(onPressed: onTap, builder: (_, _) => child);
+      _pointing(Pressable(onPressed: onTap, builder: (_, _) => child));
+
+  /// A control's pointer, kept over its label.
+  ///
+  /// Everything here sits in one SelectionArea, and under a selection area
+  /// every `Text` puts its own mouse region round itself asking for the text
+  /// cursor. That region is deeper than the control's, so it wins: over the
+  /// word on a button the pointer was an I-beam, and it only became a hand
+  /// in the padding around it. The text asks `DefaultSelectionStyle` which
+  /// cursor to show, so a control tells it -- and the label stays selectable.
+  Widget _pointing(Widget control) => DefaultSelectionStyle.merge(
+        mouseCursor: SystemMouseCursors.click,
+        child: control,
+      );
 
   /// A `KitButton` with less padding and smaller type, for a row of chips.
   /// The same colours for the same states as the kit's own secondary and
   /// primary buttons; only the size differs.
-  Widget _compactButton(String text, bool on, VoidCallback press) => Pressable(
+  Widget _compactButton(String text, bool on, VoidCallback press) =>
+      _pointing(Pressable(
         onPressed: press,
         builder: (context, s) {
           final bg = on
@@ -362,7 +376,7 @@ class _NimAppState extends State<NimApp> {
             ]),
           );
         },
-      );
+      ));
 
   // ------------------------------------------------------------------ build
 
@@ -631,12 +645,12 @@ class _NimAppState extends State<NimApp> {
           padding: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
           child: tap.isEmpty
               ? panel(ground)
-              : Pressable(
+              : _pointing(Pressable(
                   onPressed: () => _send(tap),
                   builder: (_, s) => panel(s.pressed
                       ? _c.pressed
                       : (s.hovered ? _c.hover : ground)),
-                ),
+                )),
         );
 
       // A typed handoff event's visible companion. A tinted box and coloured
@@ -895,11 +909,11 @@ class _NimAppState extends State<NimApp> {
           if (kind == 'compact' || kind == 'compact-on') {
             return _compactButton(text, kind == 'compact-on', press);
           }
-          return switch (kind) {
+          return _pointing(switch (kind) {
             'primary' => KitButton.primary(text, onPressed: press),
             'destructive' => KitButton.danger(text, onPressed: press),
             _ => KitButton(text, onPressed: press),
-          };
+          });
         }
 
       case 'checkbutton':
@@ -909,11 +923,11 @@ class _NimAppState extends State<NimApp> {
         // thumb can find.
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: t.spaceXxxs),
-          child: KitCheckbox(
+          child: _pointing(KitCheckbox(
             value: n.prop('active', false),
             label: n.prop('label', ''),
             onChanged: (_) => _send(n.prop('onToggled', '')),
-          ),
+          )),
         );
 
       case 'emoji':
@@ -1259,6 +1273,8 @@ class _NimAppState extends State<NimApp> {
           // the platform's job rather than the core's — a browser tab here,
           // `xdg-open` there — so it goes through the host rather than back
           // across the seam as an event the core could not act on.
+          // The span's own cursor, for the reason `_pointing` gives.
+          mouseCursor: SystemMouseCursors.click,
           recognizer: _linkTaps[url] ??= TapGestureRecognizer()
             ..onTap = () {
               if (onClick.isNotEmpty) {
