@@ -579,11 +579,8 @@ proc chatScreen*(s: State, connected: bool): Node =
   # fires at a real phone's width -- the three compact chips come to 352 of
   # 360. On a wide window the name is here and is `Flexible`, which a Wrap
   # cannot hold, so the row is a Row.
-  # A little air off the window's corner, so the first chip is not jammed
-  # into it. Left only where there is width to spare: a phone's three chips
-  # already come to 352 of 360.
-  var headRow = hbox(%*{"spacing": 8, "wrap": compact, "marginTop": 8,
-                        "marginLeft": (if compact: 0 else: 28)})
+  # A little air above the row, so it is not jammed into the window's top.
+  var headRow = hbox(%*{"spacing": 8, "wrap": compact, "marginTop": 8})
 
   # Each control that comes and goes is in a wrapper of its own, so a child
   # appearing does not renumber the row for the renderer.
@@ -596,7 +593,14 @@ proc chatScreen*(s: State, connected: bool): Node =
     back.children.add chip("←", "screen.chats", false)
   headRow.children.add back
 
-  var fold = vbox(%*{"key": "fold"})
+  # While the chat list is up, the fold chip's slot is as wide as the list
+  # below it, so the name and the chips after it start over the backlog's
+  # column rather than crowding the corner. The empty `back` wrapper and the
+  # row's spacing already account for 8 + 8 of the 8 the split puts between
+  # the list and the backlog, hence the 8 off.
+  var fold = if showChatList:
+               vbox(%*{"key": "fold", "widthRequest": sidePanelWidth - 8})
+             else: vbox(%*{"key": "fold"})
   if s.wide:
     # One label, lit while the list is up. It used to drop to a bare "☰" with
     # the list showing, which made the switch two different-looking controls in
