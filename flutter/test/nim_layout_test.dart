@@ -101,6 +101,27 @@ void main() {
       expectLaidOut(tester, 'chat after Tab');
     });
 
+    testWidgets('typing keeps the text through a rebuild, and Enter clears it',
+        (tester) async {
+      core.demoUi();
+      await layOut(tester, sizes['desktop']!);
+      final draft = find.byWidgetPredicate(
+          (w) => w is TextField && w.decoration?.hintText == 'Message #test');
+      await tester.tap(draft);
+      await tester.enterText(draft, 'hello');
+      await tester.pump();
+      // A rebuild from the tree in hand, which was built before the typing:
+      // it must not put the empty draft back.
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      await tester.pump();
+      expect(tester.widget<TextField>(draft).controller!.text, 'hello');
+      // The core rewrites the draft on a send, and that does reach the box.
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(tester.widget<TextField>(draft).controller!.text, '');
+      expectLaidOut(tester, 'chat after typing');
+    });
+
     testWidgets('lays out with the people panel up', (tester) async {
       core.demoUi();
       core.dispatch('users.toggle');

@@ -81,7 +81,7 @@ func button*(text: string, onClick: string, kind = "default"): Node =
 
 func entry*(key, text, placeholder, onChange: string, width = 0,
             onSubmit = "", verbatim = false, onPastePicture = "",
-            onTab = "", caret = -1): Node =
+            onTab = "", caret = -1, rev = -1): Node =
   ## Every entry carries a key, and for the reason the Clojure's comment
   ## gives: a renderer that keeps a text controller per field needs a stable
   ## name for it, and without one the host and the port shared a controller
@@ -109,6 +109,12 @@ func entry*(key, text, placeholder, onChange: string, width = 0,
   # units. Absent puts it at the end, which is right for everything but a
   # completion in the middle of a line.
   if caret >= 0: p["caret"] = %caret
+  # A field the reader types into at speed. With a revision the renderer
+  # hands each keystroke over with `input` — no tree back — and takes the
+  # text from the tree only when the revision moves. Without one, every
+  # keystroke is a dispatch and a whole screen, which is nothing on the
+  # connect form and was a quarter of a second a key in a busy room.
+  if rev >= 0: p["rev"] = %rev
   n("entry", p)
 
 func checkbutton*(text: string, active: bool, onToggled: string): Node =

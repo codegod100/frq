@@ -22,18 +22,21 @@ class _Frq {}
 extension on _Frq {
   external JSString render();
   external JSString dispatch(JSString event);
+  external void input(JSString event);
   external void demo();
   external void trace(JSBoolean on);
 }
 
 String? uiRender() => _frq.render().toDart;
 
-/// The same call as [uiRender]. There is no cheaper "has anything changed?"
-/// on this side either — the core drains its queue and builds a tree, and the
-/// comparison that saves the work happens a layer up, on the JSON.
+/// The same call as [uiRender]. The core builds a tree only when its state
+/// moved, and otherwise hands back the very JavaScript string it handed out
+/// last, so the comparison a layer up is one identity check.
 String? uiPoll() => _frq.render().toDart;
 
 String? uiDispatch(String event) => _frq.dispatch(event.toJS).toDart;
+
+void uiInput(String event) => _frq.input(event.toJS);
 
 void uiDemo() => _frq.demo();
 

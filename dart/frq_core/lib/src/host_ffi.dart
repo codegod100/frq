@@ -27,6 +27,9 @@ typedef _VersionDart = Pointer<Uint8> Function();
 typedef _Str1Native = Pointer<Uint8> Function(Pointer<Uint8>);
 typedef _Str1Dart = Pointer<Uint8> Function(Pointer<Uint8>);
 
+typedef _In1Native = Void Function(Pointer<Uint8>);
+typedef _In1Dart = void Function(Pointer<Uint8>);
+
 typedef _Str2Native = Pointer<Uint8> Function(Pointer<Uint8>, Pointer<Uint8>);
 typedef _Str2Dart = Pointer<Uint8> Function(Pointer<Uint8>, Pointer<Uint8>);
 
@@ -93,6 +96,7 @@ final _connEventFn = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_conn_event
 final _uiRender = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_render');
 final _uiPoll = _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_poll');
 final _uiDispatch = _lib.lookupFunction<_Str1Native, _Str1Dart>('frq_ui_dispatch');
+final _uiInput = _lib.lookupFunction<_In1Native, _In1Dart>('frq_ui_input');
 final _uiDemo = _lib.lookupFunction<_VoidNative, _VoidDart>('frq_ui_demo');
 final _uiWantedPicture =
     _lib.lookupFunction<_Str0Native, _Str0Dart>('frq_ui_wanted_picture');
@@ -183,6 +187,15 @@ String? uiDispatch(String event) {
   final a = _toC(event);
   try {
     return _takeString(_uiDispatch(a));
+  } finally {
+    _freeArg(a);
+  }
+}
+
+void uiInput(String event) {
+  final a = _toC(event);
+  try {
+    _uiInput(a);
   } finally {
     _freeArg(a);
   }

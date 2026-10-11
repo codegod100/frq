@@ -25,13 +25,9 @@
 ## from `common/frq/screens/` rather than reimagined, which is the difference
 ## between this and the experiment that was deleted for being a facsimile.
 
-import std/[json, strutils, tables]
-import frq/[ircparse, trace, ui, cells, reducer, model, rooms, eintr]
+import std/[json, tables]
+import frq/[ircparse, trace, cells, reducer, model, rooms, eintr, tree]
 import frq/conn as tr
-import frq/screens/connect as scConnectScreen
-import frq/screens/chats as scChatsScreen
-import frq/screens/chat as scChatScreen
-import frq/screens/settings as scSettingsScreen
 
 proc frq_init*() {.exportc, dynlib.} =
   ## Reads the saved sign-in, and otherwise stays out of the way.
@@ -163,20 +159,12 @@ proc frq_conn_event*(): cstring {.exportc, dynlib.} =
 # crossing are a tree going out and an event id coming back.
 
 proc currentTree(): string =
-  ## Whichever screen the state says. `drain` first, so the tree Dart gets is
-  ## built after every line that had arrived when it asked — that is the whole
-  ## of the polling model, and why there is no callback into Dart.
-  drain()
-  let connected = app.status.startsWith("Connected")
-  let node =
-    case app.screen
-    of scChat: scChatScreen.chatScreen(app, connected)
-    of scChats: scChatsScreen.chatsScreen(app, connected)
-    of scDms: scChatsScreen.dmsScreen(app, connected)
-    of scDiscover: scSettingsScreen.discoverScreen(app)
-    of scSettings: scSettingsScreen.settingsScreen(app, connected, true)
-    of scConnect: scConnectScreen.connectScreen(app)
-  $node.toJson
+  ## Whichever screen the state says, built only when the state moved — see
+  ## `frq/tree`. `drain` first, so the tree Dart gets is built after every
+  ## line that had arrived when it asked — that is the whole of the polling
+  ## model, and why there is no callback into Dart.
+  discard refresh()
+  treeJson
 
 proc frq_ui_render*(): cstring {.exportc, dynlib.} =
   ## The current screen as a widget tree, in JSON.
@@ -198,6 +186,11 @@ proc frq_ui_dispatch*(event: cstring): cstring {.exportc, dynlib.} =
     except JsonParsingError:
       discard
   dup(currentTree())
+
+proc frq_ui_input*(event: cstring) {.exportc, dynlib.} =
+  ## Apply an event and answer with nothing: a keystroke in a field whose
+  ## text the renderer already has. See `ui.entry` for which those are.
+  if event != nil: input($event)
 
 proc frq_ui_poll*(): cstring {.exportc, dynlib.} =
   ## The tree, for a renderer asking because time passed rather than because

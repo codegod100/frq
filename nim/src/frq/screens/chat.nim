@@ -808,7 +808,8 @@ proc chatScreen*(s: State, connected: bool): Node =
           # that would point into a different line.
           caret = if s.tab.active and s.tab.text == s.draft:
                     utf16Offset(s.draft, s.tab.caret)
-                  else: -1),
+                  else: -1,
+          rev = s.draftRev),
     button("Send", "send", "primary"))
 
   vbox(%*{"spacing": 8, "margin": 12, "expand": true},

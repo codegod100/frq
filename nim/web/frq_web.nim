@@ -17,28 +17,20 @@
 ## learns which host it is on.
 
 import std/[json, strutils, tables]
-import frq/[cells, model, reducer, rooms, trace, ui]
+import frq/[cells, model, reducer, rooms, trace, tree]
 import frq/conn as tr
 import frq/oauth as oa
-import frq/screens/connect as scConnectScreen
-import frq/screens/chats as scChatsScreen
-import frq/screens/chat as scChatScreen
-import frq/screens/settings as scSettingsScreen
 
-proc currentTree(): string =
-  ## Whichever screen the state says. `drain` first, so the tree the host gets
-  ## is built after every line that had arrived when it asked.
-  drain()
-  let connected = app.status.startsWith("Connected")
-  let node =
-    case app.screen
-    of scChat: scChatScreen.chatScreen(app, connected)
-    of scChats: scChatsScreen.chatsScreen(app, connected)
-    of scDms: scChatsScreen.dmsScreen(app, connected)
-    of scDiscover: scSettingsScreen.discoverScreen(app)
-    of scSettings: scSettingsScreen.settingsScreen(app, connected, true)
-    of scConnect: scConnectScreen.connectScreen(app)
-  $node.toJson
+var shownTree: cstring = ""
+  ## `treeJson` as a JavaScript string, made once per tree. Turning half a
+  ## megabyte of Nim string into one is most of a frame on its own, and a
+  ## poll that found nothing new used to pay it ten times a second.
+
+proc currentTree(): cstring =
+  ## Whichever screen the state says, built only when the state moved — see
+  ## `frq/tree`.
+  if refresh(): shownTree = treeJson.cstring
+  shownTree
 
 # ----------------------------------------------------------------- the seam
 #
@@ -54,7 +46,7 @@ proc frqInit(payload: cstring) {.exportc.} =
   restore()
   discard payload
 
-proc frqRender(): cstring {.exportc.} = currentTree().cstring
+proc frqRender(): cstring {.exportc.} = currentTree()
   ## The current screen as a widget tree, in JSON.
 
 proc frqDispatch(event: cstring): cstring {.exportc.} =
@@ -64,7 +56,11 @@ proc frqDispatch(event: cstring): cstring {.exportc.} =
     dispatch(parseJson($event))
   except CatchableError as e:
     trace("dispatch", "!! " & e.msg)
-  currentTree().cstring
+  currentTree()
+
+proc frqInput(event: cstring) {.exportc.} = input($event)
+  ## Apply an event and answer with nothing: a keystroke in a field whose
+  ## text the host already has. See `ui.entry` for which those are.
 
 # --------------------------------------------------------------- the socket
 #
@@ -186,6 +182,7 @@ globalThis.frq = {
   init: frqInit,
   render: frqRender,
   dispatch: frqDispatch,
+  input: frqInput,
   wanted: frqWanted,
   feed: frqFeed,
   pump: frqPump,

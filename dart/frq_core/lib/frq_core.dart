@@ -193,6 +193,11 @@ UiFrame dispatchFrame(String id, [String value = '']) {
   return UiFrame(json, _treeFrom(json));
 }
 
+/// Apply an event and get nothing back: a keystroke in a field that carries
+/// a `rev`, whose text the renderer already holds because it was typed there.
+/// The next [pollIfChanged] brings a tree if anything else moved.
+void input(String id, [String value = '']) =>
+    host.uiInput(jsonEncode({'id': id, 'value': value}));
 
 /// What an upload needs — `{host, did, channel}` as JSON — or empty where
 /// nothing is wanted. Taken as it is read: a file dialog opened twice is one

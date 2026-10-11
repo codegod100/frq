@@ -123,6 +123,13 @@ type
 
     # The compose bar and its three companions.
     draft*: string
+    draftRev*: int
+      ## Goes up whenever the core rewrites the draft itself — a send that
+      ## empties it, a Tab that completes a name, an edit that loads a line —
+      ## and never for a keystroke. The renderer takes the text from the tree
+      ## only when this moves, which is what lets a keystroke skip the tree:
+      ## the box already holds what was typed, and a tree built before it was
+      ## typed must not put the old text back.
     tab*: TabState
       ## What the last Tab in the compose box did, so the next one can cycle.
     editing*: EditTarget

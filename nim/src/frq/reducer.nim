@@ -730,7 +730,23 @@ proc sendDraft() =
   app.draft = ""
   app.attachment = Attachment()
 
+var draftRevs = 0
+  ## Never reset, so a fresh state's revision is one the renderer has not
+  ## already seen.
+
+proc apply(event: JsonNode)
+
 proc dispatch*(event: JsonNode) =
+  ## `apply`, and a new `draftRev` where it rewrote the draft. A keystroke is
+  ## the one event that changes the draft without one: the renderer already
+  ## has that text, because the reader typed it there.
+  let before = app.draft
+  apply(event)
+  if app.draft != before and event{"id"}.getStr() != "draft.change":
+    inc draftRevs
+    app.draftRev = draftRevs
+
+proc apply(event: JsonNode) =
   let raw = event{"id"}.getStr()
   let value = event{"value"}.getStr()
   let (id, arg) = split2(raw)

@@ -63,6 +63,9 @@ class _NimAppState extends State<NimApp> {
   final _controllers = <String, TextEditingController>{};
   final _focus = <String, FocusNode>{};
 
+  // The `rev` each keyed entry last took its text at. See the `entry` case.
+  final _revs = <String, int>{};
+
   // One tap recogniser per link URL, kept across rebuilds and disposed with
   // the state. A recogniser made during build and dropped on the next frame
   // leaks, and this tree is rebuilt on every keystroke.
@@ -215,6 +218,17 @@ class _NimAppState extends State<NimApp> {
       },
       child: field,
     );
+  }
+
+  /// A keystroke, handed to the core with no tree back and no rebuild.
+  ///
+  /// The box already shows what was typed, and a whole screen per key was
+  /// the latency: a busy room is half a megabyte of tree, rebuilt, encoded,
+  /// decoded and laid out again for one letter. Whatever else the keystroke
+  /// changed arrives with the next poll.
+  void _type(String id, String value) {
+    if (id.isEmpty) return;
+    core.input(id, value);
   }
 
   void _send(String id, [String value = '']) {
@@ -1091,7 +1105,14 @@ class _NimAppState extends State<NimApp> {
           // At the end unless the core says where: a Tab completion in the
           // middle of a line leaves the caret after the name, not after the
           // rest of the line.
-          if (c.text != value) {
+          // A field with a revision takes its text from the tree only when
+          // the revision moves — when the core rewrote it — because its
+          // keystrokes go over without a tree coming back (see `_type`), so
+          // the tree in hand can be older than what is in the box.
+          final rev = n.prop<int>('rev', -1);
+          final rewritten = rev < 0 || _revs[key] != rev;
+          _revs[key] = rev;
+          if (rewritten && c.text != value) {
             final caret = n.prop<int>('caret', -1);
             c.value = c.value.copyWith(
               text: value,
@@ -1133,7 +1154,9 @@ class _NimAppState extends State<NimApp> {
               hintStyle: _style(t.textBody, _c.textDim),
               hintFadeDuration: Duration.zero,
             ),
-            onChanged: (v) => _send(n.prop('onChange', ''), v),
+            onChanged: (v) => rev < 0
+                ? _send(n.prop('onChange', ''), v)
+                : _type(n.prop('onChange', ''), v),
             onSubmitted: (_) => _send(n.prop('onSubmit', '')),
           );
           // `KitTextField`'s frame, drawn here rather than used: the kit's
