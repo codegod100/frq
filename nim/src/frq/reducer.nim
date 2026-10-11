@@ -1711,9 +1711,20 @@ proc drain*() =
         app.rooms[p.params[^2]] = r
 
     of "NOTICE":
-      if p.params.len >= 2:
-        note(if app.current.len > 0: app.current else: "#test",
-             Message(frm: "notice", text: p.params[^1], at: at, system: true))
+      # freeq tells a channel when one of its members declares itself an
+      # agent: `@+freeq.at/actor-class=agent NOTICE #room :registered as
+      # agent`, once per shared channel, every time a bot connects. That is a
+      # fact about the member, not something anyone said, and a bot that
+      # reconnects every few minutes would otherwise fill the room with it.
+      if p.params.len >= 2 and not tagValue(p.tags, "+freeq.at/actor-class")[1]:
+        # A notice to a channel belongs in that channel; one to us goes
+        # wherever the reader is looking.
+        let target = p.params[0]
+        let room =
+          if target.startsWith("#") or target.startsWith("&"): target
+          elif app.current.len > 0: app.current
+          else: "#test"
+        note(room, Message(frm: "notice", text: p.params[^1], at: at, system: true))
 
     of "FAIL":
       # IRCv3 standard replies: `FAIL <command> <code> [context…] :<why>`.

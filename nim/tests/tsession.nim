@@ -137,6 +137,19 @@ suite "the rest of the conversation":
     check messages.len == 1
     check messages[0].text == "current"
 
+  test "an agent declaring itself is not a line in the room":
+    joined("#freeq")
+    say("@+freeq.at/actor-class=agent :bot!b@h NOTICE #freeq :registered as agent")
+    check not app.rooms["#freeq"].messages.anyIt(it.text == "registered as agent")
+
+  test "a channel notice lands in its channel, not the one on screen":
+    joined("#freeq")
+    joined("#other")
+    app.current = "#other"
+    say(":server NOTICE #freeq :maintenance at noon")
+    check app.rooms["#freeq"].messages.anyIt(it.text == "maintenance at noon")
+    check not app.rooms["#other"].messages.anyIt(it.text == "maintenance at noon")
+
   test "a late history replay is placed by server time":
     joined("#freeq")
     say("@time=2026-09-23T19:00:00Z :bob!b@h PRIVMSG #freeq :current",
