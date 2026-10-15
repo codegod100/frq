@@ -458,6 +458,10 @@ proc realize(w: Widget): JsObject =
   w.realized = true
   w.sync()
   for child in w.children: e.appendChild(child.realize())
+  # A scroll view that arrives already holding its content (a room switched
+  # to) is not in the page yet, so `sync` above had no height to scroll to:
+  # go to the end once it has been put in and laid out.
+  if w.kind == wkScroll and w.followEnd: followAncestors(w)
   e
 
 proc unrealize(w: Widget) =
