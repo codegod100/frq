@@ -15,10 +15,9 @@
 FROM debian:13-slim AS build
 
 # The toolchain's own needs (the unpacker; ca-certificates for curl) and
-# Nim's one host dependency, a C compiler. `python3` is one too — CLAUDE.md lists it
-# among what the host brings, and this image is the host here: it writes the
-# OAuth client metadata below. No GTK: the Linux desktop target
-# wants those, and this is the web one.
+# Nim's one host dependency, a C compiler. `python3` is one too — CLAUDE.md
+# lists it among what the host brings, and this image is the host here. No
+# GTK: the Linux desktop target wants those, and this is the web one.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential ca-certificates curl python3 tar xz-utils \
     && rm -rf /var/lib/apt/lists/*
@@ -31,14 +30,10 @@ COPY . .
 # flags have to be kept in step with that recipe: the page in web/ copied
 # beside `frq.js`, which is the core, its renderer and nimkit's web backend
 # compiled by `nim js`.
-# Where the deployed bundle answers, for the OAuth client metadata. An
-# authorization server fetches that document from the `client_id` URL and
-# takes it as the authority on where a code may be sent, so it has to name
-# this origin — and a Dockerfile is where the build learns what it will be.
-ARG FRQ_WEB_ORIGIN=https://codegod100--frq-web-serve.modal.run
-RUN rm -rf build/web && mkdir -p build/web && cp -r web/. build/web/ && \
-    python3 tools/client-metadata.py "$FRQ_WEB_ORIGIN" \
-      > build/web/client-metadata.json
+# The OAuth client metadata is not in the bundle: `tools/webserve.py` answers
+# `/client-metadata.json` from the host each request arrives at, because the
+# `client_id` in it has to equal that URL and the build cannot know it.
+RUN rm -rf build/web && mkdir -p build/web && cp -r web/. build/web/
 
 RUN tools/toolchain.sh exec -- bash -euo pipefail -c '\
       cd /src/nim && \

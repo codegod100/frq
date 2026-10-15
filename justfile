@@ -178,17 +178,11 @@ _web-bundle:
     mkdir -p build/web
     cp -r web/. build/web/
     just _app-js
-    # Where this bundle will be served from. Every value in the client
-    # metadata is absolute — the `client_id` has to equal the URL the document
-    # is served from — so the origin is a build input rather than something
-    # the page can work out for itself.
-    #
-    # The default is the dev server `just run web` starts. A page served from
-    # there cannot complete a Bluesky sign-in: an authorization server will
-    # not fetch client metadata over http from a non-loopback host, and this
-    # is `localhost` only when it is. Guest works everywhere.
-    python3 tools/client-metadata.py "${FRQ_WEB_ORIGIN:-http://localhost:8000}" \
-        > build/web/client-metadata.json
+    # No client-metadata.json here: `tools/webserve.py` answers it from the
+    # host each request arrives at, since its `client_id` has to equal that
+    # URL. Served from `just run web` it cannot complete a Bluesky sign-in
+    # unless the host is loopback -- an authorization server will not fetch
+    # metadata over http from anywhere else. Guest works everywhere.
     echo "built build/web"
 
 # The app for a page: the core, its renderer and nimkit's web backend, as one

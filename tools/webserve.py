@@ -44,6 +44,7 @@ the small one because the page sends no credentials.
 """
 
 import ipaddress
+import json
 import os
 import sys
 import threading
@@ -58,6 +59,7 @@ UPSTREAM = os.environ.get("FRQ_API_ORIGIN", "https://irc.freeq.at").rstrip("/")
 UPLOAD = "/api/v1/upload"
 OG = "/api/v1/og"
 PROFILE = "/api/v1/profile"
+METADATA = "/client-metadata.json"
 PROFILE_UPSTREAM = os.environ.get(
     "FRQ_PROFILE_ORIGIN", "https://public.api.bsky.app"
 ).rstrip("/") + "/xrpc/app.bsky.actor.getProfile"
@@ -161,6 +163,61 @@ def og_remember(query, status, body, kind):
         _og_cache[query] = (time.monotonic() + ttl, status, body, kind)
 
 
+def client_metadata(origin):
+    """The OAuth client metadata document, for the origin it is served from.
+
+    An authorization server fetches this from the URL in `client_id` and
+    takes *this document* as the authority on where a code may be sent --
+    which is the whole reason the browser build can sign in at all: freeq's
+    broker only redirects to its own allowlist, and this list is ours.
+
+    Every value in it is absolute, and the `client_id` has to equal the URL
+    it was fetched from. It used to be written into the bundle at build time
+    from an origin the build was told, and the build was told wrong: Modal
+    put the region in the hostname (`...-serve.us-east.modal.run`), the page
+    asked for metadata under the name it was actually opened at, and the
+    document named somewhere else. So it is answered here, from the `Host`
+    the request arrived with, and is right on whatever name the bundle is
+    reached by.
+    """
+    return json.dumps({
+        "client_id": f"{origin}{METADATA}",
+        "client_name": "frq",
+        "client_uri": f"{origin}/",
+        "redirect_uris": [f"{origin}/"],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        # `atproto` is the identity scope freeq needs; `transition:generic`
+        # is what a PDS still wants for ordinary reads and writes. The page
+        # asks for the same in `web/frq_oauth.js`, and the two must agree.
+        "scope": "atproto transition:generic",
+        # No secret. A page cannot keep one, and does not need to: what
+        # stands in for it is DPoP -- every token is bound to a key this
+        # client proves it holds.
+        "token_endpoint_auth_method": "none",
+        "application_type": "web",
+        "dpop_bound_access_tokens": True,
+    }, indent=2).encode()
+
+
+def request_origin(headers):
+    """`scheme://host` as the browser saw it, behind a proxy or not.
+
+    Modal terminates TLS and forwards plain HTTP, so the scheme is the
+    proxy's `X-Forwarded-Proto` when there is one. Without one, a loopback
+    host is the dev server and http; anything else is assumed https, since
+    an authorization server will not fetch metadata over http from a public
+    host anyway.
+    """
+    host = (headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",")[0].strip()
+    proto = (headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
+    if proto not in ("http", "https"):
+        name = urllib.parse.urlsplit("//" + host).hostname or ""
+        loop = name in ("localhost", "::1") or name.startswith("127.")
+        proto = "http" if loop else "https"
+    return f"{proto}://{host}"
+
+
 class Handler(SimpleHTTPRequestHandler):
     # `http.server` answers HTTP/1.0 and closes the connection after every
     # response, which is a new one for each of the fifteen-odd files a load
@@ -220,6 +277,14 @@ class Handler(SimpleHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == PROFILE:
             self.profile()
+            return
+        if path == METADATA:
+            body = client_metadata(request_origin(self.headers))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if path != OG:
             SimpleHTTPRequestHandler.do_GET(self)

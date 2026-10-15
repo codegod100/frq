@@ -123,6 +123,23 @@ def main():
         assert code == 304, code
         ok("and an unchanged file comes back 304, with no body")
 
+        # The OAuth client metadata names the host it was fetched from, since
+        # its `client_id` has to equal that URL -- behind Modal's proxy, which
+        # says https in X-Forwarded-Proto, and on the dev server alike.
+        req = urllib.request.Request(base + "/client-metadata.json", headers={
+            "Host": "frq.example-serve.us-east.modal.run",
+            "X-Forwarded-Proto": "https"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            meta = json.loads(r.read())
+            assert r.headers.get_content_type() == "application/json"
+        want = "https://frq.example-serve.us-east.modal.run"
+        assert meta["client_id"] == want + "/client-metadata.json", meta
+        assert meta["redirect_uris"] == [want + "/"], meta
+        with urllib.request.urlopen(base + "/client-metadata.json", timeout=5) as r:
+            meta = json.loads(r.read())
+        assert meta["client_id"] == base + "/client-metadata.json", meta
+        ok("the client metadata names whatever host it is fetched from")
+
         # The relay, with the body and its multipart boundary intact --
         # without the Content-Type the body is unreadable at the far end.
         status, body = post(base + "/api/v1/upload", b"--b\r\npicture\r\n--b--",

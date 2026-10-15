@@ -20,7 +20,7 @@ let assigned = '';
 // the same probe as a page served from a developer's own machine, which takes
 // the other branch of `clientId` -- the `http://localhost` exception.
 const served = new URL(process.env.FRQ_WEB_ORIGIN ||
-  'https://codegod100--frq-web-serve.modal.run');
+  'https://codegod100--frq-web-serve.us-east.modal.run');
 global.window = {
   location: { origin: served.origin, hostname: served.hostname,
               pathname: '/', search: '',
