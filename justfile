@@ -1,21 +1,20 @@
-# Six verbs over one tree.
+# Five verbs over one tree.
 #
-# There is no nix here any more. `tools/toolchain.sh` fetches Flutter (which
-# carries Dart), a JDK, the Clojure CLI and Nim as sha256-pinned tarballs into
-# `.toolchain/`, and every recipe below runs inside the environment that
-# script prints. One mechanism, and the same one the containers in `.modal/`
-# use — which is what lets a plain Debian image build this.
+# There is no nix here. `tools/toolchain.sh` fetches Nim as a sha256-pinned
+# tarball into `.toolchain/`, and every recipe below runs inside the
+# environment that script prints. One mechanism, and the same one the
+# containers in `.modal/` use — which is what lets a plain Debian image build
+# this.
 #
 # What the host still brings: a C compiler (Nim shells out to one), OpenSSL
-# (nim.cfg is `-d:ssl`), git, curl, unzip, python3. For `run desktop` and the
-# other Linux builds, GTK and the usual CMake/Ninja/pkg-config.
+# (nim.cfg is `-d:ssl`), git, curl, python3, and for the desktop, GTK 3 and
+# pkg-config. `test web` wants node.
 #
-#   just build TARGET      apk desktop web lib ui app
-#   just run TARGET        apk desktop web ui app
-#   just test SUITE        all nim dart layout web
+#   just build TARGET      desktop web lib core-js
+#   just run TARGET        desktop web
+#   just test SUITE        all nim web desktop
 #   just modal CONTAINER   dev
 #   just deploy web        the CI-built image, to a Modal URL
-#   just serve [PORT]      the Modal-built web bundle, on localhost
 #   just tools ...         the toolchain itself
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
@@ -31,7 +30,7 @@ default:
     @just --list
 
 # The toolchain, directly: `just tools versions`,
-# `just tools exec -- flutter doctor`.
+# `just tools exec -- nim --version`.
 [doc('the toolchain itself: versions, exec -- CMD')]
 tools *args:
     #!/usr/bin/env bash
@@ -40,24 +39,22 @@ tools *args:
 
 # Build a target.
 #
-#   desktop    the app: Nim owns the state and the screens, Flutter paints
-#   web        the same, in a browser: the core compiled by `nim js`, the
-#              socket a WebSocket to freeq's own bridge, Flutter painting
-#   lib        the Nim core alone, as build/nim/libfrqcore.so
+#   desktop    the app on GTK, as build/frq: the core, and nimkit painting it
+#   web        the same, in a browser, as build/web: the core and its
+#              renderer compiled by `nim js`, beside the page in web/
+#   lib        the core alone, as build/nim/libfrqcore.so
 #   core-js    the core alone, as build/web/frq_core.js
 #
-# There were four more. `apk` and `web` compiled ClojureDart and went with it:
-# the web target cannot come back without a wasm build of the core, since a
-# browser has no dart:ffi, and the APK wants libfrqcore.so cross-compiled for
-# Android's ABIs. `ui` and `app` were the two halves of the migration, and
-# there is one app now.
+# There used to be an APK, and a Flutter renderer over both of the first two.
+# The APK went with ClojureDart and the renderer with Flutter: nimkit draws
+# the same widget tree on GTK and in a page, so there is one language left.
 [doc('build a target: desktop web lib core-js')]
 build target="desktop":
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{root}}"
     case "{{target}}" in
-        desktop) just _flutter desktop build ;;
+        desktop) just _desktop ;;
         web)     just _web-bundle ;;
         lib)     just _nim-lib ;;
         core-js) just _nim-js ;;
@@ -66,16 +63,23 @@ build target="desktop":
 
 # Build a target and start it.
 #
-#   FRQ_TRACE=1        every line in and out, both languages in one log
+#   FRQ_TRACE=1        every line in and out
 #   FRQ_AUTOCONNECT=1  press Connect at startup, for a window a script cannot
 #                      click; FRQ_NICK overrides the nickname
+#   FRQ_DEMO=1         open on a representative room, no server
+#   FRQ_THEME=dark     or light; otherwise the desktop's own
 [doc('build the app and start it: desktop web')]
 run target="desktop":
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{root}}"
     case "{{target}}" in
-        desktop) just _flutter desktop run ;;
+        # Nim resolves OpenSSL through dynlib at run time; without the host
+        # library on the loader path `newContext` dies in a SIGSEGV that says
+        # nothing about SSL.
+        desktop) just _desktop
+                 export LD_LIBRARY_PATH="${FRQ_OPENSSL_LIB:-}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                 exec build/frq ;;
         web)     just _web-bundle
                  exec python3 tools/webserve.py 8000 build/web ;;
         *)       echo "usage: just run [desktop|web]" >&2; exit 1 ;;
@@ -83,40 +87,35 @@ run target="desktop":
 
 # Test a suite.
 #
-#   nim      the Nim core. No Flutter, no Dart, no SDK — a rule about the IRC
-#            wire format is checkable in a second.
-#   dart     the Dart side of the FFI boundary, on the plain Dart VM. Passing
-#            `nim` and failing this one is a marshalling bug, which is why the
-#            two are separate suites.
+#   nim      the Nim core. No GTK and no browser — a rule about the IRC wire
+#            format is checkable in a second.
 #   web      the JavaScript build of the same core, driven as a browser
-#            drives it. Needs node and nothing else.
+#            drives it, and the page's own app compiled. Needs node.
+#   desktop  the GTK app compiled, which is the check that nimkit and the
+#            renderer still agree. Needs GTK's headers, not a display.
 #   just test              all of them
 #   just test nim tircparse    one Nim file
-[doc('run a suite: all nim dart layout web')]
+[doc('run a suite: all nim web desktop')]
 test suite="all" *args:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{root}}"
     shift
     case "{{suite}}" in
-        all)    just test nim && just test dart && just test layout \
-                             && just test web ;;
-        layout) just _nim-lib
-                just _flutter layout test ;;
-        nim)    just _nim-test "$@" ;;
-        web)    just _nim-js
-                "{{tc}}" exec -- bash -euo pipefail -c '
-                    cd nim
-                    nim js -d:nodejs --hints:off --path:../src --path:. \
-                        --out:../build/web/tcrypto.js web/tcrypto.nim'
-                node build/web/tcrypto.js
-                node nim/web/test/smoke.js build/web/frq_core.js
-                node nim/web/test/session.js
-                exec python3 nim/web/test/serve.py ;;
-        dart)   just _nim-lib
-                exec "{{tc}}" exec -- bash -c \
-                    'cd dart/frq_core && dart pub get && dart test -r expanded' ;;
-        *)      echo "usage: just test [all|nim|dart|layout|web]" >&2; exit 1 ;;
+        all)     just test nim && just test web && just test desktop ;;
+        nim)     just _nim-test "$@" ;;
+        web)     just _nim-js
+                 just _app-js
+                 "{{tc}}" exec -- bash -euo pipefail -c '
+                     cd nim
+                     nim js -d:nodejs --hints:off --path:../src --path:. \
+                         --out:../build/web/tcrypto.js web/tcrypto.nim'
+                 node build/web/tcrypto.js
+                 node nim/web/test/smoke.js build/web/frq_core.js
+                 node nim/web/test/session.js
+                 exec python3 nim/web/test/serve.py ;;
+        desktop) just _desktop ;;
+        *)       echo "usage: just test [all|nim|web|desktop]" >&2; exit 1 ;;
     esac
 
 # The containers in `.modal/`, run on Modal rather than here: this machine
@@ -165,27 +164,20 @@ deploy container="web":
     }
     exec modal deploy "$spec"
 
-# The same core, compiled to JavaScript.
+# The web bundle: the page in web/, and the app compiled beside it.
 #
-# The main module lives under `nim/web`, and Nim resolves command-line search
-# paths from that directory. `../src` is the shared tree and `.` is the web
-# tree; the later path wins, so every module under `nim/web/frq` shadows the
-# one beside it in `nim/src/frq`. Thus
-# `frq/conn` is a queue the host fills rather than two socket threads, and the
-# shared code above them never learns which host it is on.
-# The web bundle: the core as JavaScript, and Flutter around it.
-#
-# The core goes into `flutter/web/` rather than being copied afterwards,
-# because `flutter build web` copies that directory into the bundle — so the
-# page's `<script src="frq_core.js">` resolves the same in a dev server as it
-# does in the built output.
+# Copied rather than built into: web/ is source, and build/web is what a
+# server serves — `just run web` here, and the image `.modal/web/Dockerfile`
+# makes for the deployment.
 [private]
 _web-bundle:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{root}}"
-    just _nim-js
-    cp build/web/frq_core.js flutter/web/frq_core.js
+    rm -rf build/web
+    mkdir -p build/web
+    cp -r web/. build/web/
+    just _app-js
     # Where this bundle will be served from. Every value in the client
     # metadata is absolute — the `client_id` has to equal the URL the document
     # is served from — so the origin is a build input rather than something
@@ -196,27 +188,32 @@ _web-bundle:
     # not fetch client metadata over http from a non-loopback host, and this
     # is `localhost` only when it is. Guest works everywhere.
     python3 tools/client-metadata.py "${FRQ_WEB_ORIGIN:-http://localhost:8000}" \
-        > flutter/web/client-metadata.json
-    # `--pwa-strategy=none` leaves out Flutter's service worker, and
-    # `flutter/web/frq_sw.js` is registered in its place. The page is still
-    # a PWA -- a browser will not offer to install one without a worker that
-    # handles fetches -- but not that worker: Flutter's is offline-first, so
-    # a new copy of it waits for every tab on the origin to close before it
-    # takes over, and until then the app serves the bundle it already had.
-    # Twice in one afternoon a working fix read as broken because of it.
-    # Ours is network-first and claims its clients at once.
-    #
-    # The comment lives out here rather than inside the quoted script below,
-    # which is single-quoted -- an apostrophe in there ends the string, and
-    # the build silently stopped after `pub get` and still exited 0.
-    exec "{{tc}}" exec -- bash -euo pipefail -c '
-        cd flutter
-        flutter pub get
-        flutter build web --pwa-strategy=none
-        rm -rf ../build/web
-        cp -r build/web ../build/web
-        echo "built build/web"'
+        > build/web/client-metadata.json
+    echo "built build/web"
 
+# The app for a page: the core, its renderer and nimkit's web backend, as one
+# script. The main module lives under `nim/web`, and Nim resolves
+# command-line search paths from that directory. `../src` is the shared tree
+# and `.` is the web tree; the later path wins, so every module under
+# `nim/web/frq` shadows the one beside it in `nim/src/frq`. Thus `frq/conn` is
+# a queue the host fills rather than two socket threads, and the shared code
+# above them never learns which host it is on.
+[private]
+_app-js:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{root}}"
+    out="{{root}}/build/web"
+    mkdir -p "$out"
+    exec "{{tc}}" exec -- bash -euo pipefail -c '
+        cd nim
+        nim js -d:release --hints:off \
+            --path:../src --path:. --out:"'"$out"'/frq.js" web/frq_app.nim
+        printf "built %s (%s)\n" "'"$out"'/frq.js" \
+            "$(gzip -9c "'"$out"'/frq.js" | wc -c | awk "{printf \"%d KB gzipped\", \$1/1024}")"'
+
+# The core alone as JavaScript, for the node tests: the same seam the page
+# uses, with no renderer and no DOM.
 [private]
 _nim-js:
     #!/usr/bin/env bash
@@ -260,25 +257,15 @@ _nim-test *args:
             nim c -r --hints:off --path:src "$t"
         done' _ "$@"
 
+# The desktop app, as one binary. nimkit's GTK backend takes its flags from
+# pkg-config, so GTK's headers are all it needs from the host.
 [private]
-_flutter target action:
+_desktop:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{root}}"
-    just _nim-lib
+    mkdir -p build
     exec "{{tc}}" exec -- bash -euo pipefail -c '
-        cd flutter
-        # Nim resolves OpenSSL through dynlib at run time; without the host
-        # library on the loader path `newContext` dies in a SIGSEGV that says
-        # nothing about SSL.
-        export LD_LIBRARY_PATH="${FRQ_OPENSSL_LIB:-}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        flutter pub get
-        case "$1:$2" in
-            desktop:build) exec flutter build linux --debug ;;
-            desktop:run)   exec flutter run -d linux ;;
-            # Widget tests, which lay every screen out for real. Headless: no
-            # GL and no window, which is what makes them the check a Wayland
-            # window cannot be.
-            layout:test)   exec flutter test test/nim_layout_test.dart ;;
-            *) echo "unknown target/action: $1 $2" >&2; exit 1 ;;
-        esac' _ "{{target}}" "{{action}}"
+        cd nim
+        nim c -d:release --hints:off --out:"'"{{root}}"'/build/frq" kit/frq_desktop.nim
+        echo "built '"{{root}}"'/build/frq"'

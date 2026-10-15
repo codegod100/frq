@@ -9,8 +9,9 @@ on:
     branches: [main]
 
 # `test` is the check the ruleset on main requires, and the run `merge.yml`
-# waits for before it merges a pull request and deploys. It runs the two suites that need no Flutter build:
-# the Nim core, and the Dart binding against a freshly built libfrqcore.so.
+# waits for before it merges a pull request and deploys. It runs every suite:
+# the Nim core, the web build under node, and the desktop app compiled
+# against GTK's headers (no display; compiling is what that suite checks).
 permissions:
   contents: read
 
@@ -33,5 +34,11 @@ jobs:
       - name: Nim core
         run: just test nim
 
-      - name: Dart binding
-        run: just test dart
+      - name: Web build
+        run: just test web
+
+      - name: GTK headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgtk-3-dev
+
+      - name: Desktop build
+        run: just test desktop

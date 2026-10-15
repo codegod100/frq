@@ -5,7 +5,7 @@
 ## work: WebCrypto signs through a Promise, and everything that wants a
 ## signature here wants it inline, on the line being sent.
 ##
-## Ed25519 comes from TweetNaCl (`flutter/web/nacl-fast.min.js`, loaded by
+## Ed25519 comes from TweetNaCl (`web/nacl-fast.min.js`, loaded by
 ## `index.html` before this core), which signs synchronously. It is the same
 ## sort of answer as binding OpenSSL: somebody else's audited implementation,
 ## not ours. It is a single self-contained script, so it needs no bundling

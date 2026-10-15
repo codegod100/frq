@@ -17,7 +17,7 @@ import frq/[atprotocore, crypto, handshake, ircparse, msgsig]
 # TweetNaCl, as the page has it: on `self.nacl`, drawing on WebCrypto.
 {.emit: """
 globalThis.self = globalThis;
-(0, eval)(require('fs').readFileSync('flutter/web/nacl-fast.min.js', 'utf8'));
+(0, eval)(require('fs').readFileSync('web/nacl-fast.min.js', 'utf8'));
 """.}
 
 proc fromHex(s: string): seq[byte] =

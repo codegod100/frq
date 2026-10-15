@@ -35,8 +35,8 @@ global.TextEncoder = require('util').TextEncoder;
 global.URLSearchParams = URLSearchParams;
 global.fetch = fetch;
 
-(0, eval)(fs.readFileSync('flutter/web/frq_dpop.js', 'utf8'));
-(0, eval)(fs.readFileSync('flutter/web/frq_oauth.js', 'utf8'));
+(0, eval)(fs.readFileSync('web/frq_dpop.js', 'utf8'));
+(0, eval)(fs.readFileSync('web/frq_oauth.js', 'utf8'));
 
 (async () => {
   try {

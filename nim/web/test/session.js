@@ -93,8 +93,8 @@ global.fetch = async (url, opts) => {
   throw new Error('unexpected request: ' + url);
 };
 
-(0, eval)(fs.readFileSync('flutter/web/frq_dpop.js', 'utf8'));
-(0, eval)(fs.readFileSync('flutter/web/frq_oauth.js', 'utf8'));
+(0, eval)(fs.readFileSync('web/frq_dpop.js', 'utf8'));
+(0, eval)(fs.readFileSync('web/frq_oauth.js', 'utf8'));
 
 const ok = (name) => console.log('  ok   ' + name);
 const session = (over) => Object.assign({

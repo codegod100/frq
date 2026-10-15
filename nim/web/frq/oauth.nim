@@ -11,7 +11,7 @@
 ## server takes the client's *own* metadata document as the authority on where
 ## a code may be sent — and that document is served from this origin.
 ##
-## None of that is here. It is `flutter/web/frq_oauth.js`, because every step
+## None of that is here. It is `web/frq_oauth.js`, because every step
 ## of it is asynchronous — `fetch`, and WebCrypto for the DPoP key — and this
 ## core is not. What this module does is what the desktop half does: say what
 ## is wanted, and take the answer when it comes.

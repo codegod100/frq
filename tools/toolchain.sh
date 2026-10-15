@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# The toolchain the web build needs, fetched by hand.
+# The toolchain the build needs, fetched by hand.
 #
-# Archives — Flutter (which carries Dart) and Nim —
-# pinned by version and by sha256, unpacked into `.toolchain/`, and put on a
-# PATH. That is the whole of it. No nix, no image, no devShell: a checkout
-# plus this script is a machine that can build any target here, and the same
-# script is what the Modal containers run.
+# One archive — Nim — pinned by version and by sha256, unpacked into
+# `.toolchain/`, and put on a PATH. That is the whole of it. No nix, no image,
+# no devShell: a checkout plus this script is a machine that can build any
+# target here, and the same script is what the Modal containers run.
 #
-# The Android SDK is the one thing not fetched by default, because only
+# It used to fetch Flutter too, which carried Dart, and before that a JDK,
+# the Clojure CLI and an Android SDK. The app is Nim from the state to the
+# pixels now — nimkit paints it, on GTK and in a page — so Nim is all of it.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,15 +18,6 @@ TC="${FRQ_TOOLCHAIN:-$root/.toolchain}"
 # toolchain that resolves "latest" is a toolchain that changes under you
 # between two builds of the same commit.
 #
-# Flutter 3.47.0 is the version this tree was building with under nix, and
-# its Dart 3.13.0 is what `flutter/pubspec.yaml` asks for with `sdk: ^3.13.0`.
-# To move it: take `version`, `archive` and `sha256` from
-# https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
-FLUTTER_VERSION="3.47.0"
-FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
-FLUTTER_SHA="26cd99d3d94b1367e6b50535a18aeef0282c10a535bbe3ec493534dcdab75296"
-
-
 # Nim, for `nim/` — the portable core. Upstream's prebuilt linux_x64 tarball,
 # so there is no bootstrap compile here. The core deliberately has no
 # dependencies outside Nim's standard library, so the compiler is all of it.
@@ -41,12 +33,11 @@ NIM_SHA="791802138aaf19c8579232c50b4998ce2ae2928b791127ce5b4ef3c7af53fb46"
 
 
 # What the host still has to bring. Small, boring, and on every machine and
-# in every base image that is not deliberately empty — but Flutter shells out
-# to `git` on its own SDK and to `unzip` on its downloads, so a missing one
-# fails somewhere far from here with a much worse message than this.
+# in every base image that is not deliberately empty — but a missing one fails
+# somewhere far from here with a much worse message than this.
 require_host_tools() {
     local missing=()
-    for t in curl tar git unzip cc; do
+    for t in curl tar cc; do
         command -v "$t" >/dev/null 2>&1 || missing+=("$t")
     done
     if [ ${#missing[@]} -gt 0 ]; then
@@ -77,48 +68,17 @@ install_archive() {
     echo "$sha" > "$stamp"
 }
 
-# Upstream's install.sh, minus the ruby. The scripts ship with `PREFIX` and
-# `BINDIR` written into them literally and an installer that substitutes the
-# directory it is installing to; this is that, done where the tarball landed.
-
-# The Android SDK, which is a zip rather than a tarball and has to land in a
-# layout sdkmanager recognises: cmdline-tools/latest/, with the tools' own
-# top-level directory renamed. Everything after that — platform-tools, the
-# platform, the build-tools — Gradle asks sdkmanager for as it goes, which is
-# why this directory is ours and writable rather than a read-only artifact.
-#
-
 install_all() {
     require_host_tools
     mkdir -p "$TC"
-    install_archive flutter "$FLUTTER_URL" "$FLUTTER_SHA" 1
     install_archive nim "$NIM_URL" "$NIM_SHA" 1
 }
 
-# The environment, as shell. What would otherwise land in a home directory is
-# named here and kept inside the toolchain instead — one directory to keep on
-# a volume, one directory to delete when it goes wrong.
-#
-# It used to carry a JDK, the Clojure CLI, a maven repo, a gitlibs cache and
-# an Android SDK. All of those were ClojureDart's or the APK's, and both are
-# gone: the toolchain is a Flutter and a Nim now.
+# The environment, as shell: the toolchain's own directory, and Nim on PATH.
 print_env() {
     cat <<ENV
 export FRQ_TOOLCHAIN="$TC"
-# Flutter's SDK tarball is a git checkout, and the tool shells out to git
-# against it for its version -- which fails with "detected dubious ownership"
-# whenever the files' owner is not the user running the build. That is the
-# normal case on a Modal volume, and the failure is not a warning: the dart
-# process ClojureDart's live analyzer talks to dies with it, and the compile
-# ends at 'EOF while reading' with nothing about git in the message.
-#
-# Said through the environment rather than 'git config --global', so it
-# travels with this shell and writes nothing into anyone's ~/.gitconfig.
-export GIT_CONFIG_COUNT=1
-export GIT_CONFIG_KEY_0=safe.directory
-export GIT_CONFIG_VALUE_0="$TC/flutter"
-export PUB_CACHE="$TC/pub-cache"
-export PATH="$TC/flutter/bin:$TC/nim/bin:\$PATH"
+export PATH="$TC/nim/bin:\$PATH"
 ENV
 }
 
@@ -133,7 +93,6 @@ case "${1:-install}" in
         exec "$@"
         ;;
     versions)
-        echo "flutter $FLUTTER_VERSION"
         echo "nim     $NIM_VERSION"
         ;;
     *) echo "usage: toolchain.sh [install|env|exec -- cmd...|versions]" >&2; exit 1 ;;
