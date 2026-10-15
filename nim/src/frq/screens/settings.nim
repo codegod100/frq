@@ -37,7 +37,7 @@ func settingsScreen*(s: State, connected: bool, desktop: bool): Node =
 
   var about = card(
     title2("frq"),
-    dimLabel("freeq client — Nim over Flutter, on Android, Linux and the web."))
+    dimLabel("freeq client — Nim on nimkit, on Linux and the web."))
   # No Quit where there is nothing to quit: closing an app is a window's idea,
   # and Android has its own way of leaving one.
   if desktop:

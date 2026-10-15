@@ -24,6 +24,15 @@ var
   treeJson*: string
     ## The last tree built, which is the current one whenever `refresh` has
     ## just said so. Read it rather than copy it: it is the size of a room.
+  treeNode*: Node
+    ## The same tree before it was written out, for a renderer in this
+    ## process — the nimkit hosts walk it directly.
+  treeGen*: int
+    ## Counts the trees built, so a renderer that did not ask can tell that
+    ## somebody else's dispatch moved the screen.
+  wantJson* = true
+    ## Whether `treeJson` is written at all. A host that walks `treeNode`
+    ## has no use for half a megabyte of string per change.
   built = false
   shown: State
   shownDay: string
@@ -55,7 +64,9 @@ proc refresh*(): bool =
     of scDiscover: scSettingsScreen.discoverScreen(app)
     of scSettings: scSettingsScreen.settingsScreen(app, connected, true)
     of scConnect: scConnectScreen.connectScreen(app)
-  treeJson = $node.toJson
+  treeNode = node
+  inc treeGen
+  if wantJson: treeJson = $node.toJson
   shown = app
   shownDay = today
   built = true
