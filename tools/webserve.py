@@ -179,16 +179,15 @@ class Handler(SimpleHTTPRequestHandler):
 
         A deploy changed what was served and browsers went on showing what
         they had -- twice in one afternoon a fix looked broken because the
-        page was yesterday's. Flutter stamps a fresh `serviceWorkerVersion`
-        so the new worker does download, but the spec leaves it *waiting*
-        until every tab on the origin is closed; reloading does not do it,
-        and the cure was clearing the site's data by hand.
+        page was yesterday's. That was Flutter's service worker, which a
+        fresh `serviceWorkerVersion` did make download, but which the spec
+        leaves *waiting* until every tab on the origin is closed; reloading
+        does not do it, and the cure was clearing the site's data by hand.
 
         The usual answer -- cache the hashed assets forever, revalidate the
         few files with stable names -- does not apply, because nothing in
-        this bundle is hashed. `main.dart.js`, `frq_core.js`,
-        `flutter_bootstrap.js` and the rest keep their names and change
-        their contents on every deploy, so a name here says nothing about
+        this bundle is hashed. `frq.js`, `frq_host.js` and the rest keep
+        their names and change their contents on every deploy, so a name here says nothing about
         what is behind it.
 
         `no-cache` is not `no-store`: the copy is kept and revalidated, so

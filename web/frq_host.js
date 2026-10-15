@@ -19,8 +19,7 @@
 //   * a picture: the file dialog, a paste and the upload, because all three
 //     are the platform's rather than the core's.
 //
-// Flutter draws. It reaches the core through `dart:js_interop`, and never
-// touches any of this.
+// nimkit draws, from inside `frq.js`, and never touches any of this.
 
 (function () {
   "use strict";
@@ -101,8 +100,8 @@
     }
   }
 
-  // The pump. Both directions, on a timer, because nothing here is allowed to
-  // call into Dart and Dart is not going to ask on the core's behalf.
+  // The pump. Both directions, on a timer, because nothing calls in here when
+  // the core has something to say.
   //
   // Twenty times a second: fast enough that a keystroke's PRIVMSG does not
   // sit in a queue where a reader would notice, and slow enough to be free.
@@ -202,7 +201,7 @@
 
   // A picture pasted into the page — a screenshot, an image copied from
   // another tab. The browser hands it to this event and to nothing else:
-  // Flutter's text field sees a paste with no text in it and does nothing.
+  // the field sees a paste with no text in it and does nothing.
   //
   // Kept here until the core says it may go: it is the core that knows
   // whether the reader is signed in and has a conversation open, and it

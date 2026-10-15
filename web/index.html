@@ -2,18 +2,12 @@
 <html>
 <head>
   <!--
-    Committed rather than generated. `just flutter-web` used to run
-    `flutter create --platforms=web` when this directory was missing, which
-    was fine while the page was Flutter's default one — but the OAuth client
-    needs a script of its own beside the bundle, and a generated runner is no
-    place to keep one.
-
-    `$FLUTTER_BASE_HREF` is the token `flutter build web` rewrites; leave it.
+    The whole page. Nothing generates it and nothing rewrites it: `just
+    build web` copies this directory beside the compiled `frq.js`, and that
+    is the bundle.
   -->
-  <base href="$FLUTTER_BASE_HREF">
-
   <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="freeq client">
 
   <meta name="mobile-web-app-capable" content="yes">
@@ -23,37 +17,26 @@
 
   <link rel="icon" type="image/png" href="frq-favicon-v2.png"/>
 
-  <!-- The browser chrome around an installed window, matching `nim_theme.bg`
-       rather than the blue the Flutter template shipped. -->
+  <!-- The browser chrome around an installed window, matching the dark
+       palette's background in `nim/kit/frqkit/theme.nim`. -->
   <meta name="theme-color" content="#202833">
 
   <title>frq</title>
   <link rel="manifest" href="manifest.json">
 
   <!--
-    The core, and the half of the web build that owns the I/O. Both before
-    the bundle and neither `async`: Flutter reaches `globalThis.frq` as soon
-    as it starts, and a core that might not have parsed yet is a race nobody
-    would enjoy debugging.
-
-    `frq_dpop.js` is the same WebCrypto helper the ClojureDart build loaded,
-    unchanged: ES256 keys, DPoP proofs, PKCE. `frq_oauth.js` is the flow that
-    uses it, which this page needs because freeq's broker will only redirect
-    back to loopback or its own origins — and this is neither.
-  -->
-  <!--
     Installable, and ours rather than Flutter's.
 
     A browser offers to install a page only when it has a service worker
-    with a fetch handler, so a PWA needs one -- and the bundle is still
-    built `--pwa-strategy=none`, because the worker Flutter ships is the one
-    that held deploys back: offline-first, and a new copy of it waits for
-    every tab on the origin to close before it takes over.
+    with a fetch handler, so a PWA needs one -- and not an offline-first
+    one, which is what held deploys back while this page was Flutter's: a
+    new copy of it waited for every tab on the origin to close before it
+    took over.
 
     `frq_sw.js` is network-first and claims its clients immediately. See
     that file for what it does and does not promise.
 
-    Registered after load, so it never competes with the bundle for the
+    Registered after load, so it never competes with the app for the
     connection on a first visit.
   -->
   <script>
@@ -73,12 +56,23 @@
     mints at sign-in is a real one — see nim/web/frq/crypto.nim.
   -->
   <script src="nacl-fast.min.js"></script>
-  <script src="frq_core.js"></script>
+</head>
+<body>
+  <!--
+    The app, and the half of the web build that owns the I/O, at the end of
+    the body and none of them `async`. `frq.js` is the core and its renderer,
+    compiled by `nim js`: it needs a body to put the window in, and it
+    defines `globalThis.frq`, which `frq_host.js` reaches for the moment it
+    runs.
+
+    `frq_dpop.js` is a WebCrypto helper: ES256 keys, DPoP proofs, PKCE.
+    `frq_oauth.js` is the flow that uses it, which this page needs because
+    freeq's broker will only redirect back to loopback or its own origins —
+    and this is neither.
+  -->
+  <script src="frq.js"></script>
   <script src="frq_dpop.js"></script>
   <script src="frq_oauth.js"></script>
   <script src="frq_host.js"></script>
-</head>
-<body>
-  <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

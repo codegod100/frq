@@ -29,6 +29,9 @@ html, body { margin: 0; height: 100%; font: 15px system-ui, sans-serif; color: #
 .nk-column, .nk-row { display: flex; box-sizing: border-box; min-width: 0; min-height: 0; }
 .nk-column { flex-direction: column; } .nk-row { flex-direction: row; align-items: center; }
 .nk-row.nk-wrap { flex-wrap: wrap; }
+.nk-row > .nk-column, .nk-row > .nk-scroll { align-self: stretch; }
+.nk-column > :not(.nk-expand) { flex-shrink: 0; }
+.nk-column > .nk-expand { flex-basis: auto; }
 .nk-expand { flex: 1 1 0; min-width: 0; min-height: 0; }
 .nk-scroll { overflow-y: auto; min-height: 0; }
 .nk-hscroll { overflow-x: auto; overflow-y: hidden; min-width: 0; scrollbar-width: thin; }
@@ -219,7 +222,8 @@ proc sync(w: Widget) =
   case w.kind
   of wkColumn, wkRow:
     e.style.gap = cstring($w.spacing & "px")
-    e.style.padding = cstring($w.padding & "px")
+    # None of its own leaves a class's padding (a card's, say) standing, as on GTK.
+    e.style.padding = (if w.padding > 0: cstring($w.padding & "px") else: cstring"")
   of wkLabel:
     if w.rich: e.innerHTML = richHtml(w.text).cstring
     else: e.textContent = w.text.cstring
