@@ -10,7 +10,7 @@ src/frq/ui.nim          the widget tree, in the screens' own tag vocabulary
 src/frq/cells.nim       every piece of state the screens read
 src/frq/reducer.nim     every event they can send, and what it does
 src/frq/model.nim       what a message and a room are
-src/frq/rooms.nim       the list, the overview, and the read marker
+src/frq/rooms.nim       the list and the read marker
 src/frq/members.nim     who is in a channel, and what the server says of them
 src/frq/conn.nim        the socket, the TLS, the line framing
 src/frq/ircparse.nim    the IRC wire format
@@ -99,11 +99,10 @@ says "an earlier message" where that happens.
 `frq.profile` came back — recovered from the commit that deleted it and
 ported, since a face that opens nothing is worse than no face.
 
-The emoji picker, the overview strip, the lightbox and the profile card all
-have screens — the picker under the message it is for, the overview
-as a pane above the compose bar, the lightbox as a panel over the
-conversation — so the 🙂 chip, the Overview toggle and clicking a picture all
-do what they look like they do.
+The emoji picker, the lightbox and the profile card all have screens — the
+picker under the message it is for, the lightbox as a panel over the
+conversation — so the 🙂 chip and clicking a picture both do what they look
+like they do.
 
 Untested against a real account: nobody has watched freeq accept a SASL
 challenge response or a signature. The shapes are checked and the curve is

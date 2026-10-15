@@ -138,15 +138,6 @@ suite "the prefs file":
     app = initState()
     restore()
     check app.hideUsers
-  test "the overview is not one of them":
-    # It is a way of looking at the moment you are in rather than a
-    # preference, and reopening into it would answer a question nobody asked
-    # twice.
-    restore()
-    dispatch(%*{"id": "overview.toggle"})
-    app = initState()
-    restore()
-    check not app.overview
   test "and a prefs file that is not there is a first run, not an error":
     check loadPrefs().len == 0
     restore()

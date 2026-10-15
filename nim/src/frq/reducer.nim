@@ -41,7 +41,7 @@ var
     ##
     ## A flag and not a check of the screen, because 001 arrives more than
     ## once: a dropped socket reconnects and registers again, and a reader
-    ## who had deliberately gone out to the overview should not be thrown
+    ## who had deliberately gone back to the room list should not be thrown
     ## back into a room by a network blip. The restore is a thing this run
     ## does once, on the first connection it makes.
   registered: bool
@@ -157,8 +157,7 @@ proc restorePrefs() =
   ## window the people panel is not beside the conversation, it *is* the
   ## pane — so a saved "on" meant opening a room and being shown a list of
   ## names instead of the room, every launch, having asked for it once. It is
-  ## a way of looking at the moment you are in, like the overview, and those
-  ## start off.
+  ## a way of looking at the moment you are in, and those start off.
   let prefs = loadPrefs()
   app.hideJoinPart = prefs.getOrDefault("hideJoinPart", app.hideJoinPart)
   app.hideChatList = prefs.getOrDefault("hideChatList", app.hideChatList)
@@ -858,11 +857,6 @@ proc apply(event: JsonNode) =
       rememberPrefs()
     else:
       app.showUsers = not app.showUsers
-  of "overview.toggle":
-    # Not kept: the overview is a way of looking at the moment you are in
-    # rather than a preference, and a client that reopened into it would be
-    # answering a question nobody asked twice.
-    app.overview = not app.overview
   of "join-part.toggle":
     app.hideJoinPart = not app.hideJoinPart
     rememberPrefs()
@@ -1052,23 +1046,6 @@ proc apply(event: JsonNode) =
     # message and take scrolling away from the reader — the highlight stays,
     # since that is what says "this is the one you asked for".
     app.jumpTo = ""
-
-  of "overview.goto":
-    # The overview is the one place that moves the reader without their having
-    # asked to leave where they were, so it is the one place that owes them
-    # the way back. `room:id`.
-    let (room, mid) = split2(arg)
-    if room.len > 0 and app.rooms.hasKey(room):
-      app.overviewReturn = app.current
-      openRoom(room)
-      app.jumpTo = mid
-      app.highlight = mid
-      app.overview = false
-
-  of "overview.back":
-    if app.overviewReturn.len > 0:
-      openRoom(app.overviewReturn)
-      app.overviewReturn = ""
 
   of "profile.open":
     # `nick:actor`, and the actor may be empty — a guest has no identity to
@@ -1433,7 +1410,7 @@ proc drain*() =
       #
       # Only on this run's first connection — see `landed`. And only where
       # there is one: a first run has a list of rooms it has never opened,
-      # and lands on the overview as it always did.
+      # and lands on the room list as it always did.
       if not landed:
         landed = true
         let last = app.rooms.lastVisited

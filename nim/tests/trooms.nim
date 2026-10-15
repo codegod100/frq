@@ -1,4 +1,4 @@
-## The list, the overview and the read marker.
+## The list and the read marker.
 import std/algorithm
 import std/strutils
 ##
@@ -129,43 +129,6 @@ suite "the read marker":
   test "no mention where the reader is not named":
     ch.messages = @[msg("alice", "nothing here", at = 100)]
     check not ch.recount("me").mention
-
-suite "recentEverywhere":
-  setup:
-    var chans = initOrderedTable[string, Room]()
-    for n in ["#a", "#b"]:
-      var c = initRoom(n)
-      for i in 1 .. 3:
-        c.messages.add msg("u", n & $i, at = i.int64 * 10)
-      chans[n] = c
-
-  test "the room being read is left out":
-    let names = recentEverywhere(chans, "#a").mapIt(it.text)
-    check names.allIt(it.startsWith("#b"))
-
-  test "system lines are left out":
-    var c = initRoom("#c")
-    c.messages = @[msg("*", "joined", at = 99, system = true)]
-    chans["#c"] = c
-    check recentEverywhere(chans, "").allIt(it.text != "joined")
-
-  test "oldest first, the way a conversation runs":
-    # The strip scrolls now, so the newest belongs at the bottom where the
-    # eye finishes and where it is in every backlog beside it. Newest-first
-    # was right while nothing here scrolled and the top was all there was.
-    let ats = recentEverywhere(chans, "").mapIt(it.at)
-    check ats == ats.sorted(SortOrder.Ascending)
-
-  test "a turn each, so a busy room cannot crowd a quiet one out":
-    # The reason for round-robin: taking the newest N outright would answer
-    # about whichever room is busiest, which is the one you can already see.
-    var busy = initRoom("#busy")
-    for i in 1 .. 200:
-      busy.messages.add msg("u", "spam" & $i, at = i.int64)
-    chans["#busy"] = busy
-    let got = recentEverywhere(chans, "")
-    check got.anyIt(it.text.startsWith("#a"))
-    check got.len <= overviewLimit
 
 suite "adoptEcho":
   setup:

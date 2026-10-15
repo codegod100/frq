@@ -15,9 +15,6 @@ import std/[algorithm, sequtils, strutils, tables]
 import frq/[model, clock]
 
 const
-  overviewLimit* = 100
-    ## How many lines the overview strip holds in all.
-
   freshRoomGraceMs* = 60_000'i64
     ## How far back a room nobody has seen before counts as already read.
     ##
@@ -63,7 +60,7 @@ func lastVisited*(channels: OrderedTable[string, Room]): string =
   ##
   ## Zero is never-opened rather than long-ago: a channel the server put us
   ## in, or a DM that arrived while we were reading something else. A list
-  ## with nothing but those has no last room, and the overview is the honest
+  ## with nothing but those has no last room, and the room list is the honest
   ## answer for a reader who has not yet been anywhere.
   var best: int64 = 0
   for _, ch in channels:
@@ -106,62 +103,6 @@ func seenMessage*(msgs: seq[Message], id, frm, text, me: string): bool =
     for m in msgs:
       if m.id.len == 0 and m.frm == frm and m.text == text: return true
     false
-
-func roundRobin(colls: seq[seq[Message]]): seq[Message] =
-  ## The colls' firsts, then their seconds, and so on until they are spent.
-  ##
-  ## This is how the overview stays about every room while still being a fixed
-  ## number of lines. Taking the newest hundred outright would be the strip
-  ## answering about whichever room is busiest — which is the one you can
-  ## already see. A turn each means a room that said one thing all day is in
-  ## the first handful, beside the room that has said a hundred.
-  var live = colls.filterIt(it.len > 0)
-  var i = 0
-  while live.len > 0:
-    var next: seq[seq[Message]]
-    for c in live:
-      if i < c.len:
-        result.add c[i]
-        next.add c
-    if next.len == 0: break
-    live = next
-    i += 1
-
-func recentEverywhere*(channels: OrderedTable[string, Room],
-                       current: string): seq[Message] =
-  ## The newest lines from every buffer at once, oldest first, and at most
-  ## `overviewLimit` of them — a turn to each room until they run out.
-  ##
-  ## Bounded per room before anything else, so the cost is the number of rooms
-  ## rather than the length of their backlogs: a channel with a week of
-  ## history must not make this the most expensive thing on the screen.
-  ##
-  ## Joins, parts and the system's own chatter are left out — they are the
-  ## noise this strip would drown in. So is the room being read: it is on the
-  ## screen already, in full, directly above, and what the strip is for is the
-  ## rooms you are not looking at.
-  var colls: seq[seq[Message]]
-  for name, ch in channels:
-    if name == current: continue
-    var said = ch.messages.filterIt(not it.system)
-    for i in 0 ..< said.len: said[i].room = name
-    if said.len > overviewLimit:
-      said = said[^overviewLimit .. ^1]
-    if said.len == 0: continue
-    colls.add said.reversed          # newest first, the order a turn needs
-  result = roundRobin(colls)
-  if result.len > overviewLimit:
-    result = result[0 ..< overviewLimit]
-  # Oldest at the top, the way a conversation runs, now that the strip
-  # scrolls: the newest is at the bottom where the eye finishes, and where
-  # it is in every backlog on the screen. It read newest-first while nothing
-  # here scrolled, when the top was all there was and the bottom was
-  # wherever the list happened to be cut off.
-  #
-  # The turn-taking above is untouched, and the distinction matters: it
-  # decides *which* lines are here -- the newest from each room, a turn each
-  # -- and this decides only where they sit.
-  result.sort(proc (a, b: Message): int = cmp(a.at, b.at))
 
 func afterMarker*(ch: Room): seq[Message] =
   ## The messages the reader has not seen: everything after the read marker.

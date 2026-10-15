@@ -142,7 +142,6 @@ type
     hideUsers*: bool
       ## The people panel on a wide one, where it is up unless folded away.
     hideChatList*: bool
-    overview*: bool
     atPresent*: bool
     hideJoinPart*: bool
       ## Comings and goings, hidden or not. A quiet room reads better with
@@ -162,11 +161,6 @@ type
       ## it and taken off again — a target that stayed set would pin the view
       ## there and take scrolling away from the reader.
     jumpTick*: int
-    overviewReturn*: string
-      ## The room the reader was in when a line in the overview took them
-      ## somewhere else. The strip is the one place in the app that moves you
-      ## without your having asked to leave where you were, so it is the one
-      ## place that owes you the way back.
 
     lightbox*: Lightbox
     savedTo*: string

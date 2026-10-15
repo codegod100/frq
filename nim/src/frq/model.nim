@@ -63,10 +63,6 @@ type
       ## carries eight characters of a DID, too few to resolve.
     avatar*: string       ## their thumbnail, once a profile has been fetched
     pending*: bool        ## sent, not yet echoed
-    room*: string
-      ## Which room this was said in. Empty on a stored message — a room
-      ## already knows its own name — and filled in by `recentEverywhere`,
-      ## where a line taken out of its conversation no longer says for itself.
     task*: TaskEvent
       ## Empty unless this is the visible companion of a task action.
     taskRef*: string

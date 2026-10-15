@@ -242,9 +242,7 @@ proc frq_ui_demo*() {.exportc, dynlib.} =
     Message(id: "8", frm: "alice", text: "next day", at: t0 + 200_000_000)]
   app.rooms["#test"] = r
 
-  # Somewhere else, because the overview is about every room but this one and
-  # with a single room there was nothing for it to show. The test that laid
-  # the overview out was laying out "Nothing has happened anywhere else."
+  # Somewhere else, so the chat list has more than one room in it.
   #
   # Awkward on purpose, like the rest: a long bot line that has to be cut,
   # and a short one that must not look different for it.
@@ -259,9 +257,7 @@ proc frq_ui_demo*() {.exportc, dynlib.} =
             at: t0 + 200_000)]
   app.rooms["#tasks"] = other
 
-  # A third room, and enough in it that the overview is taller than a phone.
-  # Without one nothing here would ever need to scroll, and a test that the
-  # overview scrolls would pass on a list that fits.
+  # A third room, and a busy one.
   app.rooms.ensureRoom("#busy")
   var busy = app.rooms["#busy"]
   busy.joined = true

@@ -25,7 +25,6 @@ const
   memberFaceSize = 20
   pillSize = 20
   chipGap = 4
-  overviewLines* = 40
 
 
   sidePanelWidth = 150
@@ -405,63 +404,6 @@ proc visible(s: State, messages: seq[Message]): seq[Message] =
     if s.hideJoinPart and m.system and m.frm == "*": continue
     result.add m
 
-proc overviewPane(s: State): Node =
-  ## What is happening in every room but this one, oldest first.
-  ##
-  ## A turn to each room rather than the newest lines outright — see
-  ## `rooms.recentEverywhere`. Taking the newest hundred would be the strip
-  ## answering about whichever room is busiest, which is the one already on
-  ## screen.
-  # One card a line, and the card is the control.
-  #
-  # This was a single card holding rows of [room, sender, text, →]. In a
-  # Wrap on a phone that is three lines an entry: the sender on the first,
-  # the text on the second, and the arrow alone on a third -- a full-height
-  # button carrying no more meaning than the row it had been pushed off.
-  # Eight entries filled the screen with mostly furniture.
-  #
-  # So the arrow is gone and the whole card takes the press, which is both
-  # the larger target and the smaller thing to draw. What is left is what a
-  # reader actually skims: who said it and where, then what they said.
-  var list = vbox(%*{"spacing": 4})
-  var n = 0
-  for m in recentEverywhere(s.rooms, s.current):
-    if n >= overviewLines: break
-    n += 1
-    # Each line carries the room it was said in, since that is the one thing a
-    # line taken out of its own conversation no longer says for itself.
-    list.children.add card(
-      %*{"onClick": "overview.goto:" & m.room & ":" & rowId(m),
-         "spacing": 2},
-      hbox(%*{"spacing": 6}, dimLabel(m.room), label(m.frm)),
-      # Two lines, and the cap is in lines rather than characters. How much
-      # fits on one is a fact about the font and the width, and a character
-      # count knows neither: 96 of them are two lines on a phone and five in
-      # a widget test. `summarise` still bounds what crosses the wire, but
-      # what a reader sees is bounded by the thing they are looking at.
-      text(summarise(m.text, 160), lines = 2))
-  if n == 0:
-    list.children.add dimLabel("Nothing has happened anywhere else.")
-
-  # The whole pane scrolls, heading and all. There were eight entries
-  # because eight was all that could be seen: nothing here scrolled, so
-  # what fell below the fold could not be reached at all.
-  #
-  # The heading scrolls with them rather than staying put, and that is not
-  # the nicer arrangement -- it is the one that works. A fixed heading over
-  # a scrolling list wants an `Expanded` inside this pane, and `expand` is
-  # already how the pane claims its own share of the column; a second one
-  # nested in the first asks a Column to shrink-wrap and fill at once.
-  # Opened at its end, where the newest is. The entries read oldest-first
-  # now, the way a conversation does, and a conversation is not something
-  # you join at the beginning: what you came to the strip for is what has
-  # just happened, and it should be under your eyes without scrolling for
-  # it. `fromBottom` and not `stickToBottom` -- the latter also reports
-  # whether the reader is at the present, and only the backlog has one.
-  result = scroll(%*{"scrollKey": "overview", "orientation": "vertical",
-                     "fromBottom": true},
-    vbox(%*{"spacing": 4}, title2("Overview"), list))
-
 proc lightboxPane(s: State): Node =
   ## The picture being looked at, as large as the window allows.
   ##
@@ -551,7 +493,7 @@ proc chatScreen*(s: State, connected: bool): Node =
   # What shares a line, and what gets one to itself.
   #
   # Every control used to sit beside the room's name and the row wrapped,
-  # which put Overview alone on a second line looking like an orphan. The
+  # which put a chip alone on a second line looking like an orphan. The
   # measurements say why nothing subtler works: a chip here is 160.8 points,
   # of which 48 is Material's padding, so the three of them are 385 before
   # the name is drawn on a screen 360 wide. No amount of shrinking the name
@@ -588,7 +530,7 @@ proc chatScreen*(s: State, connected: bool): Node =
   if not s.wide:
     # The arrow without the word. "← Chats" measures 111 points of the 360
     # there are, and the row is 35 over with it; what dropping it buys is
-    # People and Overview side by side, which is what this row is for. A
+    # People beside the back arrow, which is what this row is for. A
     # lone back arrow at the top left is not a thing anybody has to learn.
     back.children.add chip("←", "screen.chats", false)
   headRow.children.add back
@@ -619,10 +561,6 @@ proc chatScreen*(s: State, connected: bool): Node =
     people.children.add chip("People " & $room.users.len, "users.toggle",
                              s.usersOpen)
   headRow.children.add people
-
-  # Not in a conditional wrapper: the overview is about every room rather than
-  # this one, so it is offered in a DM and in a channel alike.
-  headRow.children.add chip("Overview", "overview.toggle", s.overview)
 
   # The name, under the controls and across the whole width, on a narrow
   # window only.
@@ -711,11 +649,6 @@ proc chatScreen*(s: State, connected: bool): Node =
   # wrapper claiming a share of the column would take half the screen to
   # show nothing. Open, it splits the height with the backlog above it --
   # both scroll, so neither has to be given up for the other.
-  var overview = vbox(%*{"key": "overview-pane"})
-  if s.overview:
-    overview.props["expand"] = %true
-    overview.children.add overviewPane(s)
-
   var profile = vbox(%*{"key": "profile-pane"})
   if s.profileViewing.has:
     profile.children.add profilePane(s)
@@ -725,11 +658,6 @@ proc chatScreen*(s: State, connected: bool): Node =
   var lightbox = vbox(%*{"key": "lightbox-pane", "fill": true})
   if s.lightbox.has:
     lightbox.children.add lightboxPane(s)
-
-  var returnRow = vbox(%*{"key": "overview-back"})
-  if s.overviewReturn.len > 0:
-    returnRow.children.add button("← back to " & s.overviewReturn,
-                                  "overview.back")
 
   # The same bar the other three screens carry, which this one did not have.
   # On a narrow window that was survivable: `← Chats` goes back to a screen
@@ -827,9 +755,7 @@ proc chatScreen*(s: State, connected: bool): Node =
       n("hbox", %*{"spacing": 8, "wrap": false, "expand": true},
         @[chatListPane, messages, peoplePane]),
       jump, lightbox),
-    overview,
     profile,
-    returnRow,
     banners,
     separator(),
     compose,
