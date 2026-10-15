@@ -1,17 +1,21 @@
 # frq
 
 A **[freeq](https://github.com/codegod100/freeq)** client written in **Nim**,
-painted by Flutter. Nim owns the state, the screens, the IRC connection and
-the message signing; Flutter is a renderer over the widget tree it emits.
+from the socket to the pixels. Nim owns the state, the screens, the IRC
+connection and the message signing, and nimkit — a small retained-mode
+toolkit, vendored — paints the widget tree they emit: as GTK 3 widgets on the
+desktop, and as DOM in a browser.
 
 It is a proof of concept port of [sleek](../sleek), which is the same client in
 Rust against egui directly. The screens are sleek's — connect, chats, chat,
 discover, settings, under a tab bar.
 
 ```
-nim/           the program: state, screens, IRC, signing
-dart/frq_core  the FFI binding — plain Dart, not a Flutter package
-flutter/lib    the renderer, and the app's entry point
+nim/src            the program: state, screens, IRC, signing
+nim/web            the same program's host half for a browser, and its app
+nim/kit            the renderer and the palette over nimkit, and the GTK host
+nim/vendor/nimkit  the widget toolkit: GTK 3 and the DOM, behind one API
+web/               the page, and the JavaScript that owns the socket
 ```
 
 ```
@@ -25,33 +29,46 @@ nim/src/frq/atproto.nim     handle → DID → PDS → session
 nim/src/frq/crypto.nim      OpenSSL, bound: SHA-256 and Ed25519
 nim/src/frq/msgsig.nim      signing a mutation so freeq will accept it
 nim/src/frq/screens/        connect, chats, chat, discover, settings
-flutter/lib/nim_renderer.dart   the tags, as Flutter widgets
+nim/kit/frqkit/render.nim   the tags, as nimkit widgets, reconciled by key
+nim/kit/frqkit/theme.nim    the palette, as a GTK sheet and a web one
+nim/kit/frq_desktop.nim     the GTK host: the window, files, clipboard, uploads
+nim/web/frq_app.nim         the browser host, compiled by `nim js`
 ```
 
-There were two other clients here. `src/` was jolt with a libcosmic window and
+There were other clients here. `src/` was jolt with a libcosmic window and
 a terminal; `common/` and `flutter/src/` were ClojureDart, compiled for
-Android, Linux and the web. Both are gone. The APK and the web target went with
-the second: a browser has no `dart:ffi`, so the web needs the core compiled to
-wasm rather than ClojureDart restored.
+Android, Linux and the web; `dart/` and `flutter/` were a Flutter renderer
+over this same core through `dart:ffi`. All are gone. The web target went and
+came back: not as wasm, which is what a browser without `dart:ffi` seemed to
+want, but as `nim js` compiling the core and its renderer together.
 
 ## Running
 
 ```bash
-just run desktop     # build and open the window
-just test            # nim, dart and the layout suite
+just run desktop     # build build/frq and open the window
+just run web         # build build/web and serve it on :8000
+just test            # nim, web and desktop
+just test nim        # the core alone, in about a second
 ```
 
-`tools/toolchain.sh` fetches Flutter and Nim by sha256; there is no nix and no
-JVM. The host brings `just`, Python 3 and Node.js, plus a C compiler, OpenSSL,
-GTK and the usual CMake/Ninja/pkg-config. The Modal development environment
-installs that complete host-side set, so an attached shell can run every
-command above without additional setup.
+`just build desktop|web|lib|core-js` builds without running; `lib` is the
+core alone as `libfrqcore.so`, which still builds but which nothing in the
+tree loads any more.
 
-Two switches, because a Wayland window cannot be clicked from a script:
+`tools/toolchain.sh` fetches Nim by sha256, and nothing else; there is no nix,
+no JVM and no Flutter. The host brings `just`, a C compiler, OpenSSL, curl,
+tar and Python 3, plus GTK 3 and pkg-config for the desktop and Node.js for
+`just test web`. The Modal development environment installs that complete
+host-side set, so an attached shell can run every command above without
+additional setup.
+
+A few switches, because a Wayland window cannot be clicked from a script:
 
 ```bash
-FRQ_TRACE=1 just run desktop        # every line in and out, both languages
-FRQ_AUTOCONNECT=1 just run desktop  # press Connect at startup
+FRQ_TRACE=1 just run desktop        # every line in and out
+FRQ_AUTOCONNECT=1 just run desktop  # press Connect at startup (FRQ_NICK= sets the nick)
+FRQ_DEMO=1 just run desktop         # open on a representative room, no server
+FRQ_THEME=light just run desktop    # or dark; otherwise the desktop's own
 ```
 
 frq connects to `irc.freeq.at:6697` over TLS and joins `#test`. Untick TLS on
@@ -96,14 +113,20 @@ A refused sign-in is reported and the connection carries on as a guest.
 
 ## Targets
 
-One: the Linux desktop.
+Two: the Linux desktop on GTK 3, and the web.
 
-There were three, and losing two is the cost of the port rather than an
-accident. **The web** needs the core compiled to wasm — a browser has no
-`dart:ffi`, so there is no way for Dart to call a native library there, and
-that was true of this design from the first day. **Android** needs
-`libfrqcore.so` cross-compiled for its ABIs; `dart:ffi` works there, so this
-is a build problem rather than a design one.
+**The desktop** is one binary, `build/frq`, with the core linked in and
+nimkit's GTK backend over it. **The web** is `build/web`: the page in `web/`,
+and `frq.js` beside it — the same core and the same renderer compiled by
+`nim js` over nimkit's DOM backend. The page's own JavaScript owns the socket,
+the OAuth and the uploads. It has no app-password tab, because that wants a
+blocking call to the reader's own PDS, and it keeps no broker token, because
+`localStorage` is readable by every script the origin runs. It signs with
+TweetNaCl (`web/nacl-fast.min.js`), since WebCrypto's Ed25519 is a Promise.
+
+**Android** is the one that has not come back. It went with ClojureDart, and
+would want nimkit's Android backend — dropped when nimkit was vendored — and
+the core cross-compiled for its ABIs.
 
 ## What the PoC covers
 
@@ -139,7 +162,7 @@ is a build problem rather than a design one.
 
 ## Limits
 
-* **TLS and plain TCP only** — no WebSocket, no iroh. On Android, plain only.
+* **TLS and plain TCP on the desktop, a WebSocket in the browser** — no iroh.
 * **No `did:key` signing, no credential gates, no E2EE.**
 * **Only the broker token is persisted**, and only for OAuth. An app-password
   sign-in is not remembered.
@@ -147,9 +170,8 @@ is a build problem rather than a design one.
 * **Nothing evicts the media cache.**
 * **No calls.** The AV signaling is still in the screens, but the media plane
   it drove was `libjoltmoq` under the retired jolt half — Opus, H.264, V4L2 and
-  ALSA, none of which crosses to Flutter. The Call controls are wired to
-  actions no target installs. Flutter's camera and audio plugins are the way
-  back in, and that is its own project.
+  ALSA. The Call controls are wired to actions no target installs. Bringing
+  a media plane back is its own project.
 * **Attaching a picture needs a sign-in.** The upload is filed under the DID
   of a live session, so a guest cannot make one. It also shares nothing to your
   PDS and posts nothing to Bluesky — those fields are opt-in and this client

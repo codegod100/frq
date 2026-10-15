@@ -2,21 +2,23 @@
 
 ## The toolchain, and where builds happen
 
-There is no nix in the build. `tools/toolchain.sh` fetches Flutter (which
-carries Dart) and Nim as sha256-pinned tarballs into `.toolchain/`, and every
-`just` recipe runs inside the environment that script prints. The host brings
-a C compiler, OpenSSL, git, curl, unzip and python3 — and GTK with the usual
-CMake/Ninja/pkg-config for the Linux target.
+There is no nix in the build. `tools/toolchain.sh` fetches Nim as a
+sha256-pinned tarball into `.toolchain/`, and every `just` recipe runs inside
+the environment that script prints. The host brings a C compiler, OpenSSL,
+curl, tar and python3 — GTK 3 and pkg-config for the desktop, and node for
+`just test web`.
 
-It used to carry a JDK, the Clojure CLI, a maven repo and an Android SDK as
-well. Those were ClojureDart's and the APK's, and both are gone.
+It used to carry Flutter (which carried Dart), a JDK, the Clojure CLI, a maven
+repo and an Android SDK as well. Those were the Flutter renderer's,
+ClojureDart's and the APK's, and all three are gone.
 
-**Prefer Modal for a long build.** A cold Flutter toolchain plus a full
-compile is a lot of laptop, and the containers in `.modal/` do it on a real
-machine:
+**Prefer Modal for a long build.** A cold toolchain plus a full GTK compile is
+still a fair amount of laptop, and the containers in `.modal/` do it on a real
+machine. `dev` builds the GTK desktop app — `just build desktop`, out of the
+same toolchain:
 
 ```bash
-just modal dev    # the incremental Flutter loop
+just modal dev    # the incremental desktop build
 ```
 
 The containers in `.modal/` are not a third source tree: they are CI config
@@ -73,28 +75,28 @@ file instead.
 ## The Nim core
 
 `nim/` is the program. It owns the state, the screens, the IRC connection and
-the signing; Flutter is a renderer over the widget tree it emits. Read
-`nim/README.md` before touching it.
+the signing, and now the pixels too: nimkit paints the widget tree it emits,
+on GTK and in a page, so there is one language from the socket to the window.
+Read `nim/README.md` before touching it.
 
-Two rules the ABI has, both of which cost a segfault to rediscover:
+The C ABI in `nim/src/frq_core.nim` still builds, as `just build lib`, though
+nothing in the tree loads it any more — the desktop links the core directly.
+Two rules it has, both of which cost a segfault to rediscover:
 
 * Every string the core returns is the **caller's** to free, with `frq_free`.
-  Nim's allocator is not Dart's.
+  Nim's allocator is not the caller's.
 * `frq_init` runs once before anything else.
 
-`dart/frq_core` is the other half of that seam. It is a plain Dart package and
-not a Flutter one, deliberately: `flutter/pubspec.yaml` depends on the Flutter
-SDK, so anything living there needs a Flutter toolchain to check one assertion
-about a string, where this resolves and tests on its own.
-
 The rule that used to be here said new Dart-side code is written in Dart
-rather than ClojureDart. There is no ClojureDart left for it to rule against,
-but the reasoning it rested on still holds for the next thing: logic goes in
-Nim, the platform goes in Dart, and neither is written in a third language
-because it is already open.
+rather than ClojureDart. There is no Dart left either, but the reasoning it
+rested on still holds for the next thing: logic goes in Nim, the platform goes
+in the host — nimkit's backends, and the page's JavaScript in `web/` — and
+neither is written in a third language because it is already open.
 
-`just test nim` and `just test dart` need no Flutter, which is most of the
-point: the whole boundary is checkable in about a second.
+`just test nim` needs no GTK and no browser, which is most of the point: the
+core is checkable in about a second. `just test web` drives the JavaScript
+build of the same core under node, and `just test desktop` compiles the GTK
+app, which is the check that nimkit and the renderer still agree.
 
 There is no `common/` any more, and that rule went with it. It said a module
 stays until there is a wasm build of the core, because a browser has no
@@ -108,40 +110,58 @@ search path (`--path:../src --path:.`, resolved from `nim/web`; later wins),
 so `frq/conn` is a queue a
 WebSocket fills rather than two socket threads, `frq/store` is localStorage,
 and `frq/crypto` signs through TweetNaCl rather than OpenSSL. The shared code above them
-imports the same names either way and never learns which host it is on. Dart
-does the same thing one layer up, in `dart/frq_core/lib/src/host.dart`.
+imports the same names either way and never learns which host it is on.
+nimkit does the same one layer up: one widget API over a GTK backend and a DOM
+one, so the renderer is written once. The two entry points are
+`nim/kit/frq_desktop.nim` and `nim/web/frq_app.nim`.
 
 ## The source trees
 
 ```
-nim/src        the program: state, screens, IRC, signing
-nim/web        the same program's host half, for a browser
-dart/frq_core  the binding — plain Dart, not a Flutter package
-flutter/lib    the renderer, and the app's entry point
-flutter/web    the page, and the JavaScript that owns the socket
+nim/src            the program: state, screens, IRC, signing
+nim/web            the same program's host half for a browser, and its app
+nim/kit            the renderer and the palette over nimkit, and the GTK host
+nim/vendor/nimkit  the widget toolkit: GTK 3 and the DOM, behind one API
+web                the page, and the JavaScript that owns the socket
 ```
 
-`nim/src/frq/ui.nim` builds a widget tree; `frq_core` carries it across the
-FFI as JSON; `flutter/lib/nim_renderer.dart` walks it into Flutter widgets.
-The renderer knows the tag vocabulary and nothing else — no screens, no state,
-no idea what "connect" means. If a feature ever needs a change on both sides,
-the boundary is in the wrong place.
+`nim/src/frq/ui.nim` builds a widget tree, a `ui.Node`;
+`nim/kit/frqkit/render.nim` walks it into nimkit widgets, reconciling by key
+so a repaint touches what changed rather than rebuilding the window. The
+renderer knows the tag vocabulary and nothing else — no screens, no state, no
+idea what "connect" means. If a feature ever needs a change on both sides, the
+boundary is in the wrong place. One exception it makes on purpose: an entry
+carrying a `rev` is patched in place, and a keystroke goes to the core through
+`input` with no tree back, because a whole tree per keystroke was the typing
+latency.
 
-The widgets that walk paints with are flatkit's
-([`codegod100/flutterkit`](https://github.com/codegod100/flutterkit), a git
-dependency in `flutter/pubspec.yaml`): flat buttons, fields and checkboxes
-with instant hover and press, and no ripples. Colours come from `KitTheme`,
-never from the renderer: `flutter/lib/nim_theme.dart` holds frq's dark palette
-as a `KitColors`, and `KitSystemTheme` picks it, the kit's light one, or the
-KDE scheme. A control flatkit lacks is built on its `Pressable` rather than
-reached for in Material; Material stays only for text editing, selection and
-scrollbars.
+nimkit is a retained-mode widget toolkit, vendored into `nim/vendor/nimkit`
+from [`nandi-conda/webby`](https://github.com/nandi-conda/webby)
+(`framework/src` at `31482f9`) with its Android backend dropped. It has two
+backends: GTK 3, where every widget is a real GtkWidget styled by CSS classes
+named `nk-<cls>` and the flags come from pkg-config; and the web, under
+`nim js`, as DOM and flexbox. frq has added to it — a `picture` (a URL or
+bytes, fit and rounding, fetched and cached), wrapping rows (`wrapping`: a
+GtkFlowBox, or flex-wrap), an entry's caret, `reveal` to scroll a widget into
+view, `onFollow` for a scroll held at its end, `onWindowSize` — and fixed it
+in two places. On GTK, ancestors are re-measured bottom-up after an add
+(`resizeUp`), because GTK caches a container's height-for-width request mode.
+On the web, a column's non-expanding children do not shrink and its expanding
+ones start from their content's size, and a box with no padding of its own
+leaves its class's padding standing.
 
-There used to be two more trees. `src/` was jolt and libcosmic; `common/` and
-`flutter/src/` were ClojureDart, compiled for Android, Linux and the web. Both
-are gone. The APK went with them and has not come back — it wants
-`libfrqcore.so` cross-compiled for Android's ABIs — but the web target has,
-by a different road than the one that was expected: `just build web`.
+Colours come from `nim/kit/frqkit/theme.nim`, never from the renderer: frq's
+dark palette and flatkit's light one, written once as a GTK CSS sheet and once
+as a web sheet. The desktop takes `FRQ_THEME=dark|light`, or else the
+desktop's own; the page follows `prefers-color-scheme`.
+
+There used to be more trees. `src/` was jolt and libcosmic; `common/` and
+`flutter/src/` were ClojureDart, compiled for Android, Linux and the web; and
+after them `dart/` and `flutter/` were a Flutter renderer over the core
+through `dart:ffi`, painting with flatkit. All of them are gone. The APK went
+with the ClojureDart and has not come back — it wants the core cross-compiled
+for Android's ABIs — but the web target has, by a different road than the one
+that was expected: `just build web`.
 
 Two things the web build does not do, both of them written down where they
 are done rather than only here. It has no app-password tab, because that
@@ -151,7 +171,7 @@ token, because `localStorage` is readable by every script the origin runs.
 It used to be three: it could not sign, because WebCrypto's Ed25519 is a
 Promise and every signature here is wanted inline, so a signed-in reader was
 refused every edit, delete and reaction. It signs now with TweetNaCl,
-vendored as `flutter/web/nacl-fast.min.js` — synchronous, one file, no
+vendored as `web/nacl-fast.min.js` — synchronous, one file, no
 bundler — and `nim/web/tcrypto.nim` checks it under node, since the Nim
 suite builds for C and cannot see the browser's crypto at all.
 

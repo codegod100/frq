@@ -1,8 +1,8 @@
 # The Nim core
 
 The program. It owns the state, the screens, the IRC connection and the
-message signing; Flutter is a renderer over the widget tree it emits, and
-`dart/frq_core` is the FFI binding between them.
+message signing, and the widget tree the screens emit is painted in Nim too:
+`kit/` walks it into nimkit widgets, on GTK or in a page.
 
 ```
 src/frq_core.nim        the C ABI: every exported symbol, and nothing else
@@ -23,9 +23,28 @@ src/frq/glyphs.nim      a line split into words and pictures
 src/frq/clock.nim       server time in the reader's own zone
 src/frq/store.nim       what survives a restart
 src/frq/screens/        connect, chats, chat, discover, settings
+
+kit/frqkit/render.nim   the tag vocabulary, as nimkit widgets, keyed
+kit/frqkit/theme.nim    the palette, as a GTK CSS sheet and a web one
+kit/frq_desktop.nim     the GTK host, built as ../build/frq
+web/frq/                the browser's conn, store and crypto, by search path
+web/frq_app.nim         the browser app: the seam, the renderer, nimkit's DOM
+web/frq_web.nim         the seam alone (`globalThis.frq`), for the node tests
+vendor/nimkit/          nimkit, vendored from nandi-conda/webby, with frq's
+                        additions; GTK 3 and web backends, no Android
 ```
 
+`nim.cfg` puts `vendor/nimkit` and `kit` on the search path for every compile
+here. The core and its tests import neither; they are there so no recipe has
+to spell them out. Changes to nimkit are made in `vendor/nimkit` — it is frq's
+copy now, and the additions (pictures, wrapping rows, the caret, `reveal`,
+`onFollow`, `onWindowSize`, GTK's bottom-up `resizeUp`) are not upstream.
+
 ## The ABI
+
+The app no longer goes through it: the desktop links the core directly and
+the page calls `globalThis.frq`. It still builds, as `just build lib`, and
+`frq_ui_demo` in it is what the desktop's `FRQ_DEMO=1` opens on.
 
 Strings in, strings out, and JSON where the answer is not a single string —
 deliberately, against a struct-based ABI: a struct means both sides agreeing
@@ -35,7 +54,7 @@ instead of failing.
 Two rules, both of which cost a segfault to rediscover:
 
 * Every string the core returns is the **caller's** to free, with `frq_free`.
-  Nim's allocator is not Dart's.
+  Nim's allocator is not the caller's.
 * `frq_init` exists and does nothing. It used to call `NimMain`, and on Linux
   `--app:lib` already runs the module initialisers from a library constructor
   — so calling it again ran every module's top-level code a second time, which
@@ -65,6 +84,8 @@ Two rules, both of which cost a segfault to rediscover:
 ```bash
 just test nim              # the whole suite
 just test nim tircparse    # one file
+just test web              # the JavaScript build, under node
+just test desktop          # the GTK app compiled: nimkit and the renderer agree
 just build lib             # libfrqcore.so into build/nim
 ```
 
