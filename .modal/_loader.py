@@ -172,7 +172,7 @@ class Container:
         # in the tree invalidates them. `warm` + `setup` are the same step
         # moved in front of the source: `warm` names only the files the step
         # actually reads, and `setup` runs against those alone, so editing
-        # `flutter/src` invalidates nothing above the final copy. A container
+        # `nim/src` invalidates nothing above the final copy. A container
         # whose setup is an `apt-get` needs no `warm` at all -- it reads
         # nothing out of the tree, so nothing in the tree can invalidate it.
         for rel in build.get("warm", []):
@@ -185,8 +185,8 @@ class Container:
         if setup := build.get("setup", []):
             image = image.run_commands(*setup, volumes=self.volumes)
         # `ignore` is what keeps a build tree out of the image. A checkout that
-        # has been built in locally carries its output -- flutter/build and the
-        # caches beside it were 395MB of a 441MB repo -- and all of it would be
+        # has been built in locally carries its output -- a Flutter build and
+        # its caches were once 395MB of a 441MB repo -- and all of it would be
         # uploaded on every start only to be thrown away, since the container
         # builds into a volume of its own. Patterns are relative to the copied
         # directory, as in .dockerignore.

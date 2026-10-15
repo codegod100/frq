@@ -1,20 +1,15 @@
-# Build output — `just nim-lib` writes build/nim, the Flutter targets the rest.
+# Build output — build/frq, build/web and build/nim. Nothing under web/ is
+# generated: `just build web` copies it into build/web and writes beside it.
 /build/
 
 # Nim's own object/cache tree, and the test binaries `nim c -r` leaves beside
 # the sources — one per tests/t*.nim, named without an extension.
 /nim/nimcache/
-
-# Dart's per-package resolution output.
-/dart/*/.dart_tool/
-/dart/*/pubspec.lock
 /nim/tests/t*
 !/nim/tests/t*.nim
 
-# The pinned Flutter/JDK/Clojure/Nim tarballs and the Android SDK that
-# `tools/toolchain.sh` fetches, plus
-# the pub cache, gitlibs and maven repo it keeps beside them. A gigabyte of
-# SDK, reproducible from the hashes in that script.
+# The pinned Nim tarball `tools/toolchain.sh` fetches, unpacked.
+# Reproducible from the hash in that script.
 /.toolchain/
 
 # Tool caches.
@@ -34,5 +29,3 @@ __pycache__/
 
 # The mirror `just serve` keeps of the Modal-built web bundle.
 .web-local/
-flutter/web/frq_core.js
-flutter/web/client-metadata.json
