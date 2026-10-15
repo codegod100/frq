@@ -554,9 +554,22 @@ proc chatScreen*(s: State, connected: bool): Node =
   # for it there, and a heading on a line of its own above four chips would
   # be a lot of empty space.
   if not compact:
-    headRow.children.add title(name, shrink = true)
+    # In a row that takes the slack, because the name stops growing at forty
+    # characters and the chips after it have to reach the far edge -- where
+    # the people panel's chip sits over the panel.
+    headRow.children.add hbox(%*{"spacing": 0, "wrap": false, "expand": true},
+                              title(name, shrink = true))
 
-  var people = vbox(%*{"key": "people"})
+  # Last in the row, and while the panel is up its slot is the panel's width,
+  # so the chip sits over the people the way `☰ Chats` sits over the rooms.
+  # On a narrow window nothing in the row stretches, so while the panel is up
+  # a gap does it; it makes the row a Row rather than a Wrap, which the few
+  # compact chips here never needed.
+  var gap = vbox(%*{"key": "people-gap", "expand": compact and showUsers})
+  headRow.children.add gap
+  var people = if showUsers:
+                 vbox(%*{"key": "people", "widthRequest": sidePanelWidth})
+               else: vbox(%*{"key": "people"})
   if isChannel:
     people.children.add chip("People " & $room.users.len, "users.toggle",
                              s.usersOpen)
