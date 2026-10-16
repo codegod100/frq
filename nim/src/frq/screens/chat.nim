@@ -401,7 +401,7 @@ proc visible(s: State, messages: seq[Message]): seq[Message] =
   ## drowns in them, so it is the reader's call. Only those: a notice, or
   ## what a `/help` answered, is still something the reader wants to see.
   for m in messages:
-    if s.hideJoinPart and m.system and m.frm == "*": continue
+    if not s.showJoinPart and m.system and m.frm == "*": continue
     result.add m
 
 proc lightboxPane(s: State): Node =

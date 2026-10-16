@@ -143,10 +143,14 @@ type
       ## The people panel on a wide one, where it is up unless folded away.
     hideChatList*: bool
     atPresent*: bool
-    hideJoinPart*: bool
-      ## Comings and goings, hidden or not. A quiet room reads better with
+    showJoinPart*: bool
+      ## Comings and goings, shown or not. A quiet room reads better with
       ## them — they are how you notice someone arriving — and a busy one
-      ## drowns in them, so it is the reader's call.
+      ## drowns in them, so it is the reader's call. Off until asked for:
+      ## most rooms are busier than they are quiet. The pref was
+      ## `hideJoinPart` until then, and is a new key so that a remembered
+      ## "not hidden", saved alongside some other toggle, does not outvote
+      ## the new default.
 
     # Emoji picker.
     emojiGroup*: string

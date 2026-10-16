@@ -190,7 +190,7 @@ suite "settings":
   test "the join/part switch reflects the cell":
     let off = ss.settingsScreen(s, false, true).find("checkbutton")[0]
     check not off.props{"active"}.getBool()
-    s.hideJoinPart = true
+    s.showJoinPart = true
     let on = ss.settingsScreen(s, false, true).find("checkbutton")[0]
     check on.props{"active"}.getBool()
 

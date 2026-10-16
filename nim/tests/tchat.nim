@@ -187,14 +187,14 @@ suite "the chat screen":
     s.rooms["#test"] = r
     check "↩ (an earlier message)" in cs.chatScreen(s, true).labels("dim-label")
 
-  test "hiding join/part takes the system lines out":
+  test "join/part lines are hidden until asked for":
     var r = s.rooms["#test"]
     r.messages.add Message(frm: "*", text: "bob joined", system: true,
                            at: 1_700_000_120_000)
     s.rooms["#test"] = r
-    check "bob joined" in cs.chatScreen(s, true).texts
-    s.hideJoinPart = true
     check "bob joined" notin cs.chatScreen(s, true).texts
+    s.showJoinPart = true
+    check "bob joined" in cs.chatScreen(s, true).texts
 
   test "the three banners hold their place whether or not they show":
     let bare = cs.chatScreen(s, true).find("vbox").mapIt(it.props{"key"}.getStr())

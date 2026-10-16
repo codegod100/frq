@@ -111,12 +111,12 @@ suite "the prefs file":
   setup: clean()
   test "the display toggles outlive the run":
     restore()
-    let wasJoinPart = app.hideJoinPart
+    let wasJoinPart = app.showJoinPart
     dispatch(%*{"id": "join-part.toggle"})
     dispatch(%*{"id": "chat-list.toggle"})
     app = initState()
     restore()
-    check app.hideJoinPart == not wasJoinPart
+    check app.showJoinPart == not wasJoinPart
     check app.hideChatList
 
   test "but the member list does not":
@@ -141,7 +141,7 @@ suite "the prefs file":
   test "and a prefs file that is not there is a first run, not an error":
     check loadPrefs().len == 0
     restore()
-    check not app.hideJoinPart
+    check not app.showJoinPart
 
 suite "connecting at launch":
   setup: clean()

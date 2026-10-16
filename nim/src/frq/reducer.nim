@@ -159,14 +159,14 @@ proc restorePrefs() =
   ## names instead of the room, every launch, having asked for it once. It is
   ## a way of looking at the moment you are in, and those start off.
   let prefs = loadPrefs()
-  app.hideJoinPart = prefs.getOrDefault("hideJoinPart", app.hideJoinPart)
+  app.showJoinPart = prefs.getOrDefault("showJoinPart", app.showJoinPart)
   app.hideChatList = prefs.getOrDefault("hideChatList", app.hideChatList)
   # Folding it away on a wide window is, though: there it is beside the room
   # rather than instead of it, so a saved "off" costs nothing on a phone.
   app.hideUsers = prefs.getOrDefault("hideUsers", app.hideUsers)
 
 proc rememberPrefs() =
-  discard savePrefs({"hideJoinPart": app.hideJoinPart,
+  discard savePrefs({"showJoinPart": app.showJoinPart,
                      "hideChatList": app.hideChatList,
                      "hideUsers": app.hideUsers}.toTable)
 
@@ -858,7 +858,7 @@ proc apply(event: JsonNode) =
     else:
       app.showUsers = not app.showUsers
   of "join-part.toggle":
-    app.hideJoinPart = not app.hideJoinPart
+    app.showJoinPart = not app.showJoinPart
     rememberPrefs()
   of "jump.present":
     app.atPresent = true

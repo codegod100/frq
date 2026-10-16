@@ -52,8 +52,8 @@ func settingsScreen*(s: State, connected: bool, desktop: bool): Node =
       action),
     card(
       title2("Messages"),
-      checkbutton("Hide join/part messages", s.hideJoinPart,
+      checkbutton("Show join/part messages", s.showJoinPart,
                   "join-part.toggle"),
-      dimLabel("Hides other people arriving, leaving and quitting. The " &
-               "people panel still follows who is here.")),
+      dimLabel("Shows other people arriving, leaving and quitting. The " &
+               "people panel follows who is here either way.")),
     about])
